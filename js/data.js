@@ -133,19 +133,25 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
   HF.children = id => Object.values(HF.DOCT).filter(d => d.parent === id);
   HF.roots = letter => Object.values(HF.DOCT).filter(d => d.level === 1 && d.id[0] === letter);
 
-  // Etiquetas con efecto real en el motor v1
+  // Descripciones funcionales; las 18 doctrinas nuevas tienen su gancho en engine.js
   HF.IMPL = {
     Alma: {
       CIV_TYPE_SEDENTARY: 'Ciudades fijas. +3 oro por turno.',
       CIV_TYPE_NOMAD: 'Caballería sin penalización de colina y menor coste de mantenimiento.',
-      GOV_BUREAUCRACY: 'Sin efecto extra en v1.',
       EXTRACTIVE_ENCLAVE: 'Talar da +20 madera en lugar de +10.',
       ASCETIC_COMMUNE: 'Las fusiones solo llegan a nivel 2; -1 de mantenimiento en infantería.',
       ZEALOT_MARTYRDOM: 'Con déficit tienes 2 turnos de gracia, luego pierdes todas las unidades.',
       INTEGRATION_PRESERVE: 'Con déficit, las casillas conquistadas se rebelan.',
       SERFDOM_CHAIN: '-50% de madera en mejoras.',
       GOV_FEUDAL_NOBILITY: '-20% coste de infantería.',
-      KNIGHTLY_ORDER: 'Caballería defensa 2 y mantenimiento x2.'
+      KNIGHTLY_ORDER: 'Caballería defensa 2 y mantenimiento x2.',
+      // --- logística, entorno y asentamientos ---
+      CIV_TYPE_THALASSOCRACY: 'Las unidades de tierra se hacen a la mar sin puerto ni barco: entrar en río o mar cuesta 1 paso y la unidad aún puede atacar.',
+      SCOUT_NETWORK: 'La infantería cruza montañas a coste normal (1 paso) sin camino de piedra.',
+      SACRED_SWAMP: 'La unidad enemiga que entra en un río propio agota allí su turno: no puede moverse ni atacar más ese turno.',
+      FORTIFIED_ESTATE: 'El bastión se erige al instante: no consume acción de unidad ni requiere esperar al turno siguiente.',
+      PACKABLE_YURTS: 'Sobre un campamento propio la unidad puede Empacar: lo retira y devuelve 15 de madera para reubicarlo.',
+      SCORCHED_EARTH: 'Al abandonar una casilla propia hacia territorio seguro, la casilla queda en cenizas 4 turnos: el enemigo no puede capturarla ni construir en ella.'
     },
     Arma: {
       TACTIC_HEAVY_LINE: 'Infantería con alcance de movimiento 1.',
@@ -153,16 +159,129 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
       TESTUDO_SHIELD: '+1 defensa por infantería adyacente (máx. 2).',
       PIKE_WALL: 'La caballería enemiga pierde su carga.',
       MIL_LEVY_SWARM: 'Infantería nivel 1 a mitad de coste.',
-      CHISEL_TIP_ARROWS: 'Los arqueros degradan 2 de defensa.'
+      CHISEL_TIP_ARROWS: 'Los arqueros degradan 2 de defensa.',
+      // --- combate, tácticas y fusión ---
+      PRAETORIAN_GUARD: 'Fusiona dos infanterías Tier 3 en un Pretoriano Tier 4 (4/4). Solo puede haber uno vivo por facción.',
+      PARTHIAN_RETREAT: 'La caballería que ataca, a distancia o en combate, y sobrevive conserva 1 de movimiento para retroceder un hexágono si tiene una casilla propia libre al lado.',
+      AMBUSH_CAMOUFLAGE: 'Atacar desde una casilla con bosque suma +2 al ataque de ese choque.',
+      VANGUARD_SACRIFICE: 'Cuando un recluta Tier 1 propio muere defendiendo, el atacante enemigo sufre -1 de ataque hasta el final de ese turno.',
+      WALL_EMBRASURES: 'Los bastiones disparan solos al primer enemigo que termina su movimiento a 2 casillas: le aplican 1 de degradación una vez por turno.',
+      LAST_STAND_FORT: 'Una ciudad con guarnición absorbe el primer asalto que supere su defensa: la guarnición baja a Tier 1 y la ciudad defiende 1 durante ese turno.',
+      PHOSPHORUS_FIRE: 'Los arqueros pueden incendiar bosques enemigos a su alcance: el árbol desaparece y la casilla arde 2 turnos como intransitable, expulsando a quien se oculte en ella.',
+      CALTROP_SNARE: 'La infantería coloca una trampa invisible (5 oro) en una casilla neutra contigua; el primer enemigo que la pisa muere y deja una tumba.'
     },
     Victoria: {
       WIN_BLITZKRIEG: 'Ganas dominando; si pasa el turno 15 pierdes.',
       WIN_SURVIVAL_T50: 'Sobrevive hasta el turno 50.',
       WIN_GOLD_ACCUMULATE: 'Acumula 500 de oro.',
       WIN_HEGEMONY_MAP: 'Controla el 75% de la tierra.',
-      GOLDEN_ERA_STREAK: 'Saldo positivo 30 turnos seguidos.'
+      GOLDEN_ERA_STREAK: 'Saldo positivo 30 turnos seguidos.',
+      // --- condiciones de victoria y guerra económica ---
+      PYRAMID_STAND_15T: 'Sobre un bastión propio se erige la Pirámide (150 oro). Si resiste intacta 15 turnos, la partida termina con victoria automática.',
+      DECAPITATION_STRIKE: 'Capturar la capital (ciudad con cap) de un rival elimina al instante todas sus tropas restantes en el mapa.',
+      HOSTILE_TAKEOVER: 'Con 40 de oro en la provincia conectada soborna un pueblo o bastión enemigo adyacente (nunca la capital): pasa a tu color sin combate.',
+      INDUCED_BANKRUPTCY: 'Cada tropa rival que muere de hambruna o deserción estando aislada suma 1; al llegar a 3, victoria por asfixia financiera.'
     }
   };
+
+  // Texto de catálogo (regla abierta de rules.md) para los nodos aún sin gancho de motor.
+  // La UI muestra HF.IMPL (efecto real) cuando existe y cae a HF.CATALOG en el resto.
+  HF.CATALOG = {
+    GOV_BUREAUCRACY: "Cada 4 casillas conectadas a la capital dan +1 oro.",
+    SETTLER_PURGE: "Las casillas propias son 100% inmunes a revueltas y cortes.",
+    GOV_THEOCRACY: "Unidades dentro del territorio tienen +1 de defensa moral.",
+    INQUISITION_PURITY: "Eliminar una unidad enemiga en tu tierra otorga +10 de oro.",
+    GOV_MARITIME_TRADE: "Rutas comerciales de agua dan un +15% del oro global.",
+    SILK_SEA_ROUTE: "Cada puerto conectado a otra ciudad da +3 de oro.",
+    PORT_MONOPOLY: "Comprar barcos y puertos cuesta 30% menos.",
+    COASTAL_FACTORY: "Se pueden fundar factorías en islas neutrales al instante.",
+    GOV_CORSAIR_RAID: "Saquear una casilla costera roba el 100% de su producción.",
+    SHORE_PILLAGE: "Desembarcar y quemar una granja otorga +15 de oro inmediato.",
+    DRAKKAR_STRIKE: "Los barcos pueden atacar casillas de tierra a 1 hexágono.",
+    COVE_BLAZE: "Prender fuego a un puerto enemigo bloquea su tesorería 1 turno.",
+    GOV_AMPHIBIOUS: "Las marismas y pantanos cuentan como casillas de llanura fértil.",
+    HOME_FLOTILLA: "Cada barco en tu costa genera +1 de comida y estabilidad.",
+    ISLAND_SANCTUARY: "Ciudades en islas son inmunes a sabotajes y catapultas.",
+    GOV_PASTORAL_CLAN: "Cada hexágono libre de árboles y estructuras da +1 comida.",
+    SEASONAL_MIGRATION: "Mover el campamento a un nuevo bioma da +20 oro inmediato.",
+    WILD_HERDS: "Los rebaños capturan automáticamente hexágonos neutrales adyacentes.",
+    GOV_HORDE_SHOCK: "Cortar una línea de suministro otorga +5 de oro por casilla aislada.",
+    BOOTY_ECONOMY: "El 80% de tus ingresos provienen de matar tropas rivales.",
+    TERROR_DOCTRINE: "Capturar una capital enemiga hace huir a las tropas vecinas.",
+    TRIBUTE_RIDERS: "Las facciones menores te pagan 2 oro/turno si no las atacas.",
+    GOV_FOREST_GUERRILLA: "Las tropas son invisibles en bosques y colinas hasta atacar.",
+    BORDER_AMBUSH: "Atacar desde un bosque ignora la defensa del rival.",
+    MIL_LEGION_DISCIPLINE: "La infantería no sufre penalización al defender contra caballería.",
+    CASTRAMETATION: "Unidades de infantería pueden erigir un fuerte provisional.",
+    PEASANT_TIDE: "Puedes mover hasta 3 reclutas a una misma casilla para fusionar gratis.",
+    MIL_SIEGE_ENGINEERING: "Las catapultas destruyen murallas y torres a 2 casillas de distancia.",
+    INCENDIARY_BALLISTICS: "Los proyectiles prenden fuego a las granjas enemigas impactadas.",
+    MINING_SAPPERS: "Ignora defensas de empalizada cruzando por debajo del hexágono.",
+    CIRCUMVALLATION: "Rodear una ciudad enemiga bloquea todo su reclutamiento.",
+    MIL_HORSE_ARCHERS: "Atacan a 2 casillas de distancia usando arcos ecuestres.",
+    STEPPE_BARRAGE: "3 jinetes disparando a la misma casilla aniquilan la tropa enemiga.",
+    CANTABRIAN_CIRCLE: "Los jinetes adyacentes a un enemigo le reducen la defensa a 0.",
+    MIL_SHOCK_CAVALRY: "Carga frontal demoledora: Derriba unidades Tier 2 sin fusionar.",
+    CATAPHRACT_LANCE: "La caballería pesada tiene Ataque 3 y Defensa 2.",
+    WAR_STAMPEDE: "Empujan al defensor a la casilla trasera al atacarlo.",
+    PURSUIT_FRENZY: "Si derrotan a una tropa, avanzan inmediatamente a su casilla gratis.",
+    MIL_LIGHT_SCOUTS: "Ignoran la niebla de guerra: ven a 3 hexágonos de distancia.",
+    SUPPLY_RAID: "Cortar una línea enemiga paraliza el movimiento rival 1 turno.",
+    STEPPE_GHOST: "El explorador no puede ser atacado si tiene un hexágono libre de huida.",
+    FEIGNED_RETREAT: "Atraen a la tropa enemiga hacia adelante forzando su movimiento.",
+    TACTIC_AREA_DENIAL: "Los arqueros proyectan una zona de amenaza de 2 hexágonos.",
+    MIL_BALLISTIC_MASTERY: "El alcance de arqueros aumenta a 3 casillas desde colinas.",
+    OVERWATCH_INTERDICTION: "Disparan automáticamente en el turno del rival si este entra a su rango.",
+    MIL_SHADOW_WAR: "Las unidades aliadas son invisibles en su propio territorio.",
+    NEUROTOXIC_VENOM: "Las unidades enemigas heridas pierden 1 tier al final de su turno.",
+    MIL_STATIC_GARRISON: "Las torres y empalizadas duplican su resistencia pasiva.",
+    BEACON_ALERT: "Revela el mapa completo alrededor de las torres en un radio de 4.",
+    VICTORY_DOMINATION: "Conquistar capitales enemigas es el objetivo prioritario.",
+    DOMINO_COLLAPSE: "Capturar una ciudad hace que las granjas vecinas se rindan solas.",
+    SHOCK_SURRENDER: "Si destruyes 3 tropas enemigas en un turno, el rival cede 2 casillas.",
+    WIN_ATTRITION_TOTAL: "Ganas al destruir el 100% de los cuarteles y tropas enemigas.",
+    BASTION_ERADICATION: "Demoler todas las torres enemigas activa la victoria inmediata.",
+    TRENCH_SUFFOCATION: "Reducir el territorio enemigo a <5 casillas gana la partida.",
+    STARVATION_WIN: "Si el rival sufre bancarrota 2 turnos seguidos, ganas la partida.",
+    EXPANSION_VORACIOUS: "Capturar una casilla neutra es gratis (no consume oro).",
+    GEOGRAPHIC_RING: "Rodear completamente el territorio enemigo activa la victoria.",
+    PAX_IMPERIALIS: "Tras alcanzar el 60% del mapa, empieza una cuenta atrás de 10 turnos.",
+    VICTORY_WONDER: "Ganas construyendo y protegiendo un Monumento Histórico.",
+    WIN_WONDER_BUILD: "Desbloquea la construcción de la Maravilla (150 oro, 4 casillas).",
+    TOWER_OF_WISDOM: "Se construye en una sola casilla; acelera tecnologías al máximo.",
+    AGRARIAN_UTOPIA: "Ganas al alcanzar 10 Granjas de Nivel 3 contiguas e intactas.",
+    WIN_CULTURAL_ABSORB: "Ganas si tu influencia territorial absorbe la capital enemiga.",
+    JUBILEE_POINTS: "Generas puntos de cultura por cada turno con la tesorería llena.",
+    SACRED_PILGRIMAGE: "Los enemigos que pisen tu templo se vuelven neutrales pacifistas.",
+    CONTINENTAL_BEACON: "El faro revela el mapa entero; si dura 20 turnos ganas la partida.",
+    UNSHAKABLE_KEEP: "La capital resiste cualquier ataque si tiene al menos 1 granja viva.",
+    CONCORDIA_TREATY: "Ofreces oro a los rivales; si mantienes la paz 20 turnos, ganas.",
+    VICTORY_FINANCIAL: "Ganas quebrando la tesorería rival o monopolizando el oro.",
+    MERCANTILE_CARTEL: "Controlar todos los nodos de comercio del mapa gana la partida.",
+    DEBT_SPECULATION: "Prestas oro a los rivales; si no pagan con intereses en 5 turnos, ganas.",
+    WIN_LOGISTIC_CHOKE: "Ganas si el 70% del territorio enemigo entra en estado AISLADO.",
+    ARTERY_BLOCKADE: "Bloquear los 3 caminos principales del rival durante 5 turnos gana.",
+    CORSAIR_DOMINANCE: "Saquear todos los convoyes marítimos del rival gana la partida.",
+    WIN_VASSALAGE_PACT: "Obligar al enemigo a firmar un pacto de tributo gana la partida.",
+    EXTORTION_NETWORK: "Exiges la mitad del ingreso del rival si tienes mayor ejército.",
+    BORDER_EMBARGO: "Prohíbes al rival construir granjas si controlas sus fronteras.",
+    GOLDEN_PROTECTORATE: "Pagas el mantenimiento del rival a cambio de que no pueda atacar."
+  };
+
+  // Nodos intermedios que llevan a una doctrina con efecto real.
+  HF.ROUTE = {};
+  for (const pillar of Object.keys(HF.IMPL)) {
+    for (const tag of Object.keys(HF.IMPL[pillar])) {
+      let d = Object.values(HF.DOCT).find(x => x.tag === tag);
+      while (d && d.parent) { const p = HF.DOCT[d.parent]; if (!p) break; HF.ROUTE[p.tag] = 1; d = p; }
+    }
+  }
+  HF.doctrineInfo = (pillar, d) => {
+    const eff = HF.IMPL[pillar] && HF.IMPL[pillar][d.tag];
+    if (eff) return { status: 'on', text: eff };
+    return { status: HF.ROUTE[d.tag] ? 'route' : 'catalog', text: HF.CATALOG[d.tag] || '' };
+  };
+
   HF.defaultTribe = () => ({
     tribe_id: 'local', name: 'Mi Tribu', color: '#3b82f6', crest: '🦅',
     alma_path: ['A1', 'A1.1', 'A1.1.1'], arma_path: ['B1', 'B1.1', 'B1.1.1'], victoria_path: ['C1', 'C1.3', 'C1.3.1'],

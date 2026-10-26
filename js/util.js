@@ -90,16 +90,50 @@
   HF.settings = () => Object.assign({ sound: true, vibrate: true, grid: true, speed: 1 }, HF.store.get('settings', {}));
   HF.vibrate = ms => { if (HF.settings().vibrate && G.navigator && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) { } };
   let ac = null;
+  // Crea o reanuda el AudioContext. Las políticas de autoplay lo dejan en
+  // 'suspended' hasta que se invoca dentro de un gesto del usuario.
+  function audioCtx() {
+    try {
+      if (!ac) ac = new (G.AudioContext || G.webkitAudioContext)();
+      if (ac && (ac.state === 'suspended' || ac.state === 'interrupted') && ac.resume) {
+        const p = ac.resume();
+        if (p && p.catch) p.catch(() => { });
+      }
+      return ac;
+    } catch (e) { return null; }
+  }
+  // Desbloqueo global de primer gesto (iOS Safari / Chrome Android). Se registra
+  // en captura para que el contexto ya esté en marcha cuando corra el handler.
+  let audioReady = false;
+  function unlockAudio() {
+    if (audioReady) return;
+    try {
+      const a = audioCtx();
+      if (!a) return;
+      // buffer mudo de 1 frame: algunos navegadores necesitan un source real
+      const b = a.createBuffer(1, 1, a.sampleRate || 22050);
+      const s = a.createBufferSource();
+      s.buffer = b; s.connect(a.destination); s.start(0);
+      audioReady = true;
+    } catch (e) { }
+  }
+  HF.unlockAudio = unlockAudio;
+  if (G.addEventListener) {
+    for (const ev of ['pointerdown', 'touchstart', 'keydown']) {
+      try { G.addEventListener(ev, unlockAudio, { once: true, capture: true, passive: true }); } catch (e) { }
+    }
+  }
   HF.sfx = kind => {
     if (!HF.settings().sound) return;
     try {
-      ac = ac || new (G.AudioContext || G.webkitAudioContext)();
+      const a = audioCtx();
+      if (!a) return;
       const T = { click: [[440, .05]], error: [[160, .12]], good: [[520, .06], [660, .08]], win: [[523, .1], [659, .1], [784, .2]], lose: [[300, .15], [200, .3]], star: [[880, .1]] }[kind] || [];
-      let t = ac.currentTime;
+      let t = a.currentTime;
       for (const [f, d] of T) {
-        const o = ac.createOscillator(), g = ac.createGain();
+        const o = a.createOscillator(), g = a.createGain();
         o.type = 'square'; o.frequency.value = f; g.gain.value = 0.04;
-        o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + d); t += d;
+        o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + d); t += d;
       }
     } catch (e) { }
   };

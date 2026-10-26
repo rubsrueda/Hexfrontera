@@ -46,15 +46,24 @@
     }
     return comp;
   }
-  // distancia por agua hasta una costa de tierra ajena en una masa de tierra donde no tengo nada; null si no hay objetivos
+  // Distancia por agua hasta una costa útil; null si no hay objetivos.
+  // Una masa de tierra sigue siendo objetivo mientras conserve casillas
+  // enemigas, aunque la IA ya tenga presencia en ella (refuerzos y asedio).
   function waterField(g, me, type) {
-    const gr = g._grid, comp = landComps(g), mine = new Set();
-    for (const c of g.cells) if (c && c.o === me && comp[c.i] >= 0) mine.add(comp[c.i]);
+    const gr = g._grid, comp = landComps(g), hostileMass = new Set();
+    for (const c of g.cells) if (c && comp[c.i] >= 0 && c.o >= 0 && c.o !== me) hostileMass.add(comp[c.i]);
     const wf = new Int16Array(g.cells.length).fill(999), q = [];
     for (const d of gr.list) {
       const c = g.cells[d.i];
       if (!isW(c)) continue;
-      if (gr.nb[c.i].some(j => { const n = g.cells[j]; return !isW(n) && n.o !== me && !mine.has(comp[j]) && HF.canStep({ type }, n); })) { wf[c.i] = 0; q.push(c.i); }
+      const useful = gr.nb[c.i].some(j => {
+        const n = g.cells[j];
+        if (isW(n)) return false;
+        const target = n.o !== me || hostileMass.has(comp[j]);
+        // un bosque costero es desembarcable: la unidad entra talando
+        return target && (n.b === B.ARBOL || HF.canStep({ type }, n));
+      });
+      if (useful) { wf[c.i] = 0; q.push(c.i); }
     }
     if (!q.length) return null;
     for (let h = 0; h < q.length; h++) {
@@ -63,6 +72,33 @@
     }
     return wf;
   }
+
+  // Primer paso de una ruta por agua que rodea barcos ocupados hasta una
+  // casilla de costa objetivo (wf === 0). Devuelve null si no hay ruta.
+  function navStep(g, from, wf) {
+    const gr = g._grid, prev = new Map([[from, -1]]), q = [from];
+    for (let h = 0; h < q.length; h++) {
+      const x = q[h];
+      if (x !== from && wf[x] === 0) {
+        let cur = x;
+        while (prev.get(cur) !== from) {
+          const p = prev.get(cur);
+          if (p == null || p < 0) return null;
+          cur = p;
+        }
+        return cur;
+      }
+      for (const y of gr.nb[x]) {
+        if (prev.has(y)) continue;
+        const n = g.cells[y];
+        if (!isW(n) || n.u) continue;   // otro barco (o tierra) bloquea el paso
+        prev.set(y, x); q.push(y);
+      }
+    }
+    return null;
+  }
+  HF.waterField = waterField;   // expuesto para depuración y pruebas de la IA naval
+  HF.navStep = navStep;
 
   function playShips(g, me, df) {
     const hard = g.difficulty === 'hard', gr = g._grid;
@@ -73,12 +109,17 @@
         if (!u || u.type !== 'BAR' || !HF.ready(u)) break;
         const wf = waterField(g, me, u.cargo ? u.cargo.type : 'CAB');
         const opts = HF.options(g, ci);
-        // combate o desembarco con ataque
+        // combate, desembarco (con o sin ataque) o disparo
         let best = null, bs = 0;
         for (const [to, o] of opts) {
           let s = 0;
-          if (o.k === 'atk' && o.ok) s = scoreAtk(g, me, o, to, hard);
-          else if (o.k === 'shoot') s = 14 + g.cells[to].u.tier * 2;
+          if (o.ship) {
+            // desembarcos desde el barco: ataque, tala o playa segura
+            if (o.k === 'atk' && o.ok) s = scoreAtk(g, me, o, to, hard) + 20;
+            else if (o.k === 'chop') s = 35;
+            else if (o.k === 'move') s = 30;
+          } else if (o.k === 'atk' && o.ok) s = scoreAtk(g, me, o, to, hard);
+          else if (o.k === 'shoot') s = 14 + (g.cells[to].u ? g.cells[to].u.tier * 2 : 0);
           if (s > bs) { bs = s; best = to; }
         }
         if (best != null) {
@@ -93,6 +134,11 @@
           if (u.mv <= 0) break;
           let mv = null, mw = wf[ci];
           for (const [to, o] of opts) if (o.k === 'move' && !o.ship && wf[to] < mw) { mw = wf[to]; mv = to; }
+          // si el descenso directo está bloqueado, rodear por otra ruta de agua
+          if (mv == null) {
+            const alt = navStep(g, ci, wf), oa = alt != null ? opts.get(alt) : null;
+            if (oa && oa.k === 'move' && !oa.ship) mv = alt;
+          }
           if (mv == null || !HF.act(g, ci, mv).ok) break;
           ci = mv;
           continue;

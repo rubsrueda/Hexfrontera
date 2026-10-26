@@ -71,7 +71,11 @@
         ${HF.PILLARS.map(p => {
           const path = t[p.key + '_path'];
           return `<div class="card"><div class="row"><b>${p.icon} ${p.name}</b><span class="dim grow">${p.q}</span><button data-p="${p.key}">Editar</button></div>
-          ${path.map(id => { const d = HF.DOCT[id], eff = HF.IMPL[p.name][d.tag]; return `<div class="small">• <b>${d.id}</b> ${HF.esc(d.name)} <span class="dim">${eff ? '— ' + HF.esc(eff) : '(en desarrollo)'}</span></div>`; }).join('')}</div>`;
+          ${path.map(id => {
+            const d = HF.DOCT[id], inf = HF.doctrineInfo(p.name, d);
+            const badge = inf.status === 'on' ? '✔ En juego' : inf.status === 'route' ? 'Ruta' : 'Catálogo';
+            return `<div class="small">• <b>${d.id}</b> ${HF.esc(d.name)} <span class="${inf.status === 'on' ? 'pos' : 'dim'}">${badge}${inf.text ? ' — ' + HF.esc(inf.text) : ''}</span></div>`;
+          }).join('')}</div>`;
         }).join('')}
       </div></div>`;
       wireBack(el);
@@ -82,16 +86,32 @@
     };
     const wizard = p => {
       const path = [];
+      let showAll = false;
       const step = () => {
-        const opts = path.length ? HF.children(path[path.length - 1]) : HF.roots(p.root);
+        const all = path.length ? HF.children(path[path.length - 1]) : HF.roots(p.root);
+        const playable = all.filter(d => showAll || HF.doctrineInfo(p.name, d).status !== 'catalog');
+        const fallback = !showAll && !playable.length && all.length > 0;
+        const opts = showAll || fallback ? all : playable;
+        const legend = fallback
+          ? 'Esta rama solo tiene nodos de catálogo: se muestran para poder completar el nivel.'
+          : showAll
+            ? '✔ En juego = efecto de motor activo · Ruta = nodo intermedio · Catálogo = doctrina diseñada sin gancho aún.'
+            : '✔ En juego = efecto de motor activo · Ruta = nodo intermedio hacia una doctrina en juego.';
         HF.modal(`<h3>${p.icon} ${p.name} — nivel ${path.length + 1}/3</h3>
+          <div class="dim small" style="margin:-4px 0 8px">${legend}</div>
+          <div class="row" style="margin:0 0 6px"><span class="dim small grow">${showAll ? 'Catálogo completo' : fallback ? 'Rama sin hijas con efecto' : 'Solo doctrinas jugables'}</span><button id="all">${showAll ? '◀ Solo jugables' : 'Ver catálogo'}</button></div>
           <div class="crumbs">${path.map(id => `<span class="chip">${id} ${HF.esc(HF.DOCT[id].name)}</span>`).join('')}</div>
-          ${opts.map(d => { const eff = HF.IMPL[p.name][d.tag]; return `<button class="node" data-id="${d.id}" style="margin:5px 0"><b>[${d.id}] ${HF.esc(d.name)}</b><div class="t">${eff ? HF.esc(eff) : 'En desarrollo: se guarda, sin efecto aún'}</div></button>`; }).join('')}
+          ${opts.length ? opts.map(d => {
+            const inf = HF.doctrineInfo(p.name, d);
+            const badge = inf.status === 'on' ? '<span class="pos">✔ En juego</span>' : inf.status === 'route' ? '<span class="dim">Ruta</span>' : '<span class="dim">Catálogo</span>';
+            return `<button class="node" data-id="${d.id}" style="margin:5px 0"><b>[${d.id}] ${HF.esc(d.name)}</b><div class="t">${badge}${inf.text ? ' — ' + HF.esc(inf.text) : ''}</div></button>`;
+          }).join('') : '<div class="dim small">No hay más doctrinas en esta rama.</div>'}
           <div class="row"><button id="bk">${path.length ? '◀ Atrás' : 'Cancelar'}</button></div>`, m => {
           m.querySelectorAll('[data-id]').forEach(b => b.onclick = () => {
             HF.sfx('click'); path.push(b.dataset.id);
             if (path.length === 3) { t[p.key + '_path'] = path.slice(); persist(); HF.closeModal(); draw(); HF.toast('Doctrina guardada'); } else step();
           });
+          m.querySelector('#all').onclick = () => { showAll = !showAll; step(); };
           m.querySelector('#bk').onclick = () => { if (path.length) { path.pop(); step(); } else HF.closeModal(); };
         });
       };
@@ -196,7 +216,7 @@
     el.innerHTML = `<div class="screen">${header('Ajustes')}<div class="scroll">
       ${row('sound', '🔊 Sonido')}${row('vibrate', '📳 Vibración')}${row('grid', '▦ Rejilla del mapa')}
       <div class="card"><div class="dim small">Todos los datos se guardan localmente en este dispositivo.</div><br><button id="reset">🗑 Borrar todos los datos</button></div>
-      <div class="dim small">HexFrontier v1.0 · sin multijugador</div></div></div>`;
+      <div class="dim small">HexFrontier v1.0 · build 40 · sin multijugador</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); HF.go('settings'); });
     el.querySelector('#reset').onclick = () => { if (confirm('¿Borrar todos los datos locales?')) { ['tribe_profile', 'campaign_progress', 'daily_challenge', 'player_statistics', 'savegame_active', 'maps', 'newgame_opts'].forEach(k => HF.store.del(k)); HF.go('hub'); } };

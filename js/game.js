@@ -56,8 +56,18 @@
           else if (o.k === 'chop') board.over.set(i, { fill: 'rgba(74,222,128,.35)', stroke: '#4ade80', label: '+🧱' });
           else if (o.k === 'fuse') board.over.set(i, { fill: 'rgba(59,130,246,.45)', stroke: '#60a5fa', label: '+FUSIÓN' });
           else if (o.k === 'board') board.over.set(i, { fill: 'rgba(56,189,248,.45)', stroke: '#38bdf8', label: '⚓' });
-          else if (o.k === 'atk') board.over.set(i, o.ok ? { fill: 'rgba(250,204,21,.38)', stroke: '#facc15', label: `⚔${o.A}${o.A > o.D ? '>' : '≥'}${o.D}` } : { fill: 'rgba(127,29,29,.55)', stroke: '#b91c1c', label: `🔒${o.D}` });
+          else if (o.k === 'atk') board.over.set(i, o.lastStand ? { fill: 'rgba(59,130,246,.45)', stroke: '#60a5fa', label: `🛡${o.D}` } : o.ok ? { fill: 'rgba(250,204,21,.38)', stroke: '#facc15', label: `⚔${o.A}${o.A > o.D ? '>' : '≥'}${o.D}` } : { fill: 'rgba(127,29,29,.55)', stroke: '#b91c1c', label: `🔒${o.D}` });
           else if (o.k === 'shoot' || o.k === 'siege') board.over.set(i, { fill: 'rgba(249,115,22,.45)', stroke: '#fb923c', label: o.k === 'shoot' ? '🏹' : '💣' });
+          else if (o.k === 'trap') board.over.set(i, { fill: 'rgba(168,85,247,.45)', stroke: '#c084fc', label: '🪤' });
+          else if (o.k === 'fire') board.over.set(i, { fill: 'rgba(239,68,68,.5)', stroke: '#f87171', label: '🔥' });
+          else if (o.k === 'takeover') board.over.set(i, { fill: 'rgba(234,179,8,.45)', stroke: '#fde047', label: '💰' });
+          else if (o.k === 'pack_camp') board.over.set(i, { fill: 'rgba(34,197,94,.4)', stroke: '#4ade80', label: '⛺↩' });
+          else if (o.k === 'wonder') board.over.set(i, { fill: 'rgba(234,179,8,.5)', stroke: '#fde047', label: '🏛' });
+          if (o.alt && o.alt.length) {
+            const icon = { trap: '🪤', fire: '🔥', takeover: '💰' };
+            const cur = board.over.get(i);
+            if (cur) cur.label = (cur.label || '') + o.alt.map(a => icon[a.k] || '+').join('');
+          }
         }
       }
       board.draw();
@@ -94,16 +104,36 @@
       if (c.u && c.u.owner === 0) t += ` · 👣${c.u.mv > 0 ? '✔' : '✖'} ⚔${c.u.at > 0 ? '✔' : '✖'}`;
       if (c.u && c.u.owner === 0) { const D = HF.UNITS[c.u.type], k = Math.min(c.u.tier, D.up.length) - 1; t += ` · paga 💰${D.upGold[k]} 🌾${D.up[k]}`; }
       if (c.u && c.u.cargo && (c.u.owner === 0 || HF.visible(g, i))) { const k = c.u.cargo; t += ` · ⚓ lleva ${HF.UNITS[k.type].icon}${HF.UNITS[k.type].name} N${k.tier}${c.u.owner === 0 ? ' 👣' + (k.mv > 0 ? '✔' : '✖') : ''}`; }
+      if (c.wonder) t += ` · 🏛 Pirámide${c.o >= 0 ? ' ' + (g.f[c.o].wonderTurns || 0) + '/' + HF.CFG.doctrine.wonderStandTurns : ''}`;
+      if (c.burn > 0) t += ` · 🕳 cenizas ${c.burn}`;
+      if (c.fire > 0) t += ` · 🔥 arde ${c.fire}`;
+      if (c.trap === 0) t += ' · 🪤 trampa propia';
       if (c.o !== 0 || HF.visible(g, i)) t += ` · 🛡${HF.defenseAt(g, i)}`;
       return t;
     }
 
-    function act(from, to) {
-      const r = HF.act(g, from, to);
+    // acciones alternativas sobre la misma casilla (mover/atacar vs. trampa/incendiar/sobornar)
+    function chooseAction(from, to, o) {
+      const D = HF.CFG.doctrine;
+      const lbl = {
+        atk: '⚔ Atacar', move: '➡ Mover', chop: '🪓 Talar', fuse: '🔷 Fusionar', shoot: '🏹 Disparar', siege: '💣 Asediar', board: '⚓ Embarcar',
+        trap: `🪤 Colocar trampa (${D.caltropCost.gold}💰)`, fire: '🔥 Incendiar bosque',
+        takeover: `💰 Sobornar (${D.takeoverCost.gold}💰)`, pack_camp: '⛺ Empacar campamento', wonder: `🏛 Erigir pirámide (${D.wonderCost.gold}💰)`
+      };
+      const all = [o].concat(o.alt || []);
+      HF.modal(`<h3>Elige acción</h3><div class="grid3" style="grid-template-columns:1fr">${all.map((x, k) => `<button data-k="${k}" class="pri" style="width:100%">${lbl[x.k] || x.k}</button>`).join('')}</div><br><button id="x" style="width:100%">Cancelar</button>`, m => {
+        m.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { const x = all[+b.dataset.k]; HF.closeModal(); act(from, to, x.k); });
+        m.querySelector('#x').onclick = HF.closeModal;
+      });
+    }
+
+    function act(from, to, kind) {
+      const r = HF.act(g, from, to, kind);
       if (!r.ok) { HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); return; }
       HF.sfx(r.kind === 'atk' ? 'good' : 'click');
-      const u = g.cells[to].u;
-      if (u && u.owner === 0 && HF.ready(u) && r.kind !== 'fuse') select(to); else clearSel();
+      // el disparo parto no avanza: la unidad sigue en la casilla de origen y puede retirarse
+      const u = g.cells[to].u || (r.shot ? g.cells[from].u : null);
+      if (u && u.owner === 0 && HF.ready(u) && r.kind !== 'fuse') select(r.shot ? from : to); else clearSel();
       pumpEvents(); refresh(); afterAction();
     }
     function afterAction() { if (g.over) showEnd(); }
@@ -123,7 +153,12 @@
         }
         HF.vibrate(50); HF.sfx('error'); st.pending = null; refresh(); return;
       }
-      if (st.sel >= 0 && st.opts.has(i)) { act(st.sel, i); return; }
+      if (st.sel >= 0 && st.opts.has(i)) {
+        const o = st.opts.get(i);
+        if (o.alt && o.alt.length) { chooseAction(st.sel, i, o); return; }
+        act(st.sel, i);
+        return;
+      }
       if (c.u && c.u.owner === 0 && HF.ready(c.u) && st.sel !== i) { select(i); info(describe(i) + ` · alcance ${st.opts.size} acciones`); refresh(); return; }
       if (st.sel >= 0 && !st.opts.has(i) && i !== st.sel) HF.vibrate(30);
       clearSel(); st.focus = i; info(describe(i)); refresh();

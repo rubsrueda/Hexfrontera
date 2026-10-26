@@ -155,6 +155,8 @@
         ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, fs * .12); hexPath(ctx, x, y, fs * .92); ctx.stroke();
         if (!c.sup) { ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1; for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(x - fs * .5 + k * fs * .3, y - fs * .6); ctx.lineTo(x - fs * .9 + k * fs * .3, y + fs * .5); ctx.stroke(); } }
       }
+      if (c.fire > 0) { ctx.fillStyle = 'rgba(239,68,68,.32)'; hexPath(ctx, x, y, fs); ctx.fill(); }
+      else if (c.burn > 0) { ctx.fillStyle = 'rgba(30,25,20,.42)'; hexPath(ctx, x, y, fs); ctx.fill(); }
       if (grid) { ctx.strokeStyle = 'rgba(0,0,0,.22)'; ctx.lineWidth = 1; hexPath(ctx, x, y, fs); ctx.stroke(); }
       items.push([c, x, y, f]);
     }
@@ -190,6 +192,13 @@
         }
       }
       if (c.deg) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('💔', x - fs * .5, y - fs * .5); }
+      // estados de doctrina visibles en el tablero
+      ctx.fillStyle = '#fff'; ctx.font = fs * .45 + 'px sans-serif';
+      if (c.wonder) { ctx.globalAlpha = .95; ctx.fillText('🏛', x, y - fs * .55); ctx.globalAlpha = 1; }
+      if (c.fire > 0) ctx.fillText('🔥', x + fs * .55, y - fs * .5);
+      else if (c.burn > 0) { ctx.globalAlpha = .8; ctx.fillText('🕳', x + fs * .55, y + fs * .5); ctx.globalAlpha = 1; }
+      if (c.trap === 0 && f === 2) { ctx.globalAlpha = .8; ctx.fillText('🪤', x - fs * .55, y + fs * .5); ctx.globalAlpha = 1; }
+      ctx.font = em + 'px sans-serif';
       if (f === 1) {
         hexPath(ctx, x, y, fs); ctx.fillStyle = 'rgba(8,14,28,.35)'; ctx.fill();
         if (fogPat) { ctx.globalAlpha = .5; ctx.fillStyle = fogPat; ctx.fill(); ctx.globalAlpha = 1; }

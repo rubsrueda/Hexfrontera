@@ -60,6 +60,37 @@
 
     deficit: { tombTurns: 3, martyrGrace: 2 },
 
+    // --- parámetros de las doctrinas con gancho en el motor ---
+    // Cada constante se lee desde engine.js; los tags viven en data.js (HF.DOCT).
+    doctrine: {
+      // B1.1.2 · PRAETORIAN_GUARD: Tier 4 (4/4), máximo de pretorianos por facción
+      pretorianTier: 4, pretorianAtk: 4, pretorianDef: 4, pretorianMax: 1,
+      // B2.1.1 · PARTHIAN_RETREAT: movimiento residual para retroceder un hexágono
+      parthianRetreatMv: 1,
+      // B3.2.1 · AMBUSH_CAMOUFLAGE: ataque extra al golpear desde un bosque
+      ambushBonus: 2,
+      // B3.2.2 · VANGUARD_SACRIFICE: ataque que pierde el agresor al matar un recluta
+      vanguardDebuff: 1,
+      // B3.3.1 · WALL_EMBRASURES: degradación que aplica un bastión al disparar
+      wallEmbrasuresDeg: 1,
+      // B3.3.3 · LAST_STAND_FORT: defensa de la ciudad durante el turno del último bastión
+      lastStandDef: 1,
+      // A3.3.2 · SCORCHED_EARTH: turnos que la casilla abandonada queda en cenizas
+      scorchedTurns: 4,
+      // B3.1.3 · PHOSPHORUS_FIRE: turnos que arde el bosque incendiado
+      phosphorusBurn: 2,
+      // B3.2.2 · CALTROP_SNARE: coste de colocar la trampa y turnos de la tumba resultante
+      caltropCost: { gold: 5 }, caltropTomb: 3,
+      // A3.1.2 · PACKABLE_YURTS: madera devuelta al empacar el campamento
+      packRefund: 15,
+      // C3.1.1 · HOSTILE_TAKEOVER: oro del soborno de un pueblo/bastión enemigo
+      takeoverCost: { gold: 40 },
+      // C2.1.1 · PYRAMID_STAND_15T: coste de la pirámide y turnos que debe resistir
+      wonderCost: { gold: 150 }, wonderStandTurns: 15,
+      // C3.2.1 · INDUCED_BANKRUPTCY: tropas rivales muertas por cerco que dan la victoria
+      inducedDeaths: 3
+    },
+
     // condiciones de victoria por doctrina
     win: { survivalTurn: 50, gold: 500, hegemony: 0.75, goldenEra: 30, blitzTurn: 15 },
 
