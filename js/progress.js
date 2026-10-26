@@ -15,9 +15,11 @@
     const n = Math.max(2, Math.min(spec.n || 2, sz.maxF));
     const factions = HF.buildFactions(tribe, n, spec.seed);
     if (spec.aiPreset != null) { for (let k = 1; k < factions.length; k++) Object.assign(factions[k], HF.PRESETS[(spec.aiPreset + k - 1) % HF.PRESETS.length]); }
+    const hasUnits = !!(spec.customCells && spec.customCells.some(d => d && d.u));
     return HF.newGame({
       mode: spec.mode, seed: spec.seed, R: spec.R || sz.R, biome: spec.biome, fog: spec.fog, difficulty: spec.difficulty, goal: spec.goal,
-      startRes: spec.startRes, meta: spec.meta, factions, customCells: spec.customCells, giveUnits: !!spec.customCells
+      startRes: spec.startRes, meta: spec.meta, factions, customCells: spec.customCells,
+      giveUnits: spec.giveUnits != null ? spec.giveUnits : !hasUnits
     });
   };
 

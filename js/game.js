@@ -13,12 +13,12 @@
     HF.lastGame = { mode: g.mode, meta: g.meta };
     const el = HF.$('#app');
     el.innerHTML = `<div class="screen game">
-      <div class="hud-top"><button id="menu">☰</button><span id="turn"></span><div class="res" id="res"></div><button id="board">📊</button></div>
+      <div class="hud-top"><button id="menu">☰</button><span id="turn"></span><div class="res" id="res"></div><button id="bView">🗺️<small>${HF.t('VIEW_NORMAL')}</small></button><button id="board">📊</button></div>
       <div class="boardwrap"><canvas id="cv"></canvas><div class="info" id="info"></div></div>
       <div class="drawer hidden" id="drawer"></div>
       <div class="hud-bot">
-        <button id="bBuild">🏗<small>Construir</small></button><button id="bRec">💂<small>Reclutar</small></button>
-        <button id="bUndo">↩<small>Deshacer</small></button><button id="bEnd" class="pri">⏭<small>Fin turno</small></button>
+        <button id="bBuild">🏗<small>${HF.t('GAME_BUILD')}</small></button><button id="bRec">💂<small>${HF.t('GAME_RECRUIT')}</small></button>
+        <button id="bUndo">↩<small>${HF.t('GAME_UNDO')}</small></button><button id="bEnd" class="pri">⏭<small>${HF.t('GAME_END')}</small></button>
       </div></div>`;
     const q = s => el.querySelector(s);
     const st = { sel: -1, opts: new Map(), pending: null, drawer: null, busy: false, focus: -1, evPtr: g.events.length, bubbles: [] };
@@ -29,6 +29,7 @@
     board.game = g;
     board.mode = 'play';
     board.startAnim();
+    if (HF.bgm) { HF.bgm.start(); HF.bgm.update(g); }
     cur.board = board; HF.cur = () => cur;
 
     const sync = () => { board.cells = g.cells; board.R = g.R; board.fogMap = g.fog === 'NONE' ? null : g.fogMap; };
@@ -75,7 +76,7 @@
       }
       board.draw();
     }
-    function refresh() { sync(); hud(); overlay(); }
+    function refresh() { sync(); hud(); overlay(); if (HF.bgm) HF.bgm.update(g); }
     function clearSel() { st.sel = -1; st.opts = new Map(); }
     function select(i) { st.sel = i; st.focus = i; st.opts = HF.options(g, i); st.pending = null; closeDrawer(); }
 
@@ -112,14 +113,16 @@
       if (c.fire > 0) t += ` · 🔥 arde ${c.fire}`;
       if (c.trap === 0) t += ' · 🪤 trampa propia';
       if (c.cap && c.b === B.CIUDAD && c.o === 0 && g.f[0].loan) t += ` · 💳 deuda ${g.f[0].loan.turns} turnos`;
-      if (c.o !== 0 || HF.visible(g, i)) t += ` · 🛡${HF.defenseAt(g, i)}`;
       return t;
     }
 
     // Panel contextual: describe la casilla y ofrece el empréstito en la capital.
     function renderInfo(i, extra) {
       const c = g.cells[i], canLoan = !!(c && c.cap && c.b === B.CIUDAD && c.o === 0 && !g.f[0].loan);
+      const unitVisible = c && c.u && (c.u.owner === 0 || HF.visible(g, i));
+      const bd = c && (unitVisible || (c.b && HF.BDEF[c.b])) ? HF.defenseBreakdown(g, i) : null;
       q('#info').innerHTML = describe(i) + (extra || '') +
+        (bd && bd.parts.length ? `<div class="defbreak">🛡 <b>${bd.total}</b> · ${HF.esc(bd.detail)}</div>` : '') +
         (canLoan ? ' <button class="loanbtn" id="loanBtn">💰 Solicitar empréstito</button>' : '');
       const b = q('#info #loanBtn');
       if (b) b.onclick = e => {
@@ -275,6 +278,27 @@
     }
     q('#bBuild').onclick = () => toggleDrawer('build');
     q('#bRec').onclick = () => toggleDrawer('unit');
+    // Modos de vista del mapa: normal -> combate -> político -> recursos
+    const VIEWS = [
+      { key: 'normal', icon: '🗺️', name: HF.t('VIEW_NORMAL') },
+      { key: 'combat', icon: '⚔️', name: HF.t('VIEW_COMBAT') },
+      { key: 'politic', icon: '🏳️', name: HF.t('VIEW_POLITIC') },
+      { key: 'resource', icon: '💎', name: HF.t('VIEW_RESOURCE') }
+    ];
+    let viewIdx = 0;
+    q('#bView').onclick = () => {
+      viewIdx = (viewIdx + 1) % VIEWS.length;
+      const v = VIEWS[viewIdx];
+      board.viewMode = v.key;
+      q('#bView').innerHTML = `${v.icon}<small>${v.name}</small>`;
+      HF.sfx('click');
+      HF.toast(v.key === 'combat' ? (HF.lang() === 'en' ? 'Combat view · tap a unit to see its defense' : 'Vista: Combate · toca una unidad para ver su defensa') : (HF.lang() === 'en' ? 'View: ' : 'Vista: ') + v.name, v.key === 'combat' ? 2600 : 1500);
+      if (v.key === 'combat') {
+        if (st.sel >= 0) renderInfo(st.sel);
+        else info(HF.lang() === 'en' ? '⚔️ Combat · tap a unit to see tier and defense breakdown' : '⚔️ Combate · toca una unidad para ver nivel y desglose de defensa');
+      } else if (st.sel < 0) info(goalText(g));
+      board.draw();
+    };
     q('#bUndo').onclick = () => { if (HF.undo(g)) { HF.sfx('click'); clearSel(); st.pending = null; refresh(); drawerRender(); } };
 
     // ----- turnos -----
@@ -294,7 +318,7 @@
     };
     const onHide = () => { if (document.visibilityState === 'hidden' && cur && cur.g === g) save(); };
     document.addEventListener('visibilitychange', onHide); G.addEventListener('pagehide', save);
-    HF.onLeave = () => { board.stopAnim(); document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null; };
+    HF.onLeave = () => { board.stopAnim(); if (HF.bgm) HF.bgm.stop(); document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null; };
 
     // ----- menús -----
     function scoreboard() {
@@ -304,16 +328,18 @@
       }).join('')}</table><div class="dim small">🎯 ${goalText(g)}</div><br><button id="x" class="pri">Cerrar</button>`, m => m.querySelector('#x').onclick = HF.closeModal);
     }
     q('#board').onclick = scoreboard;
-    q('#menu').onclick = () => HF.modal(`<h3>Pausa</h3><div class="dim small">🎯 ${goalText(g)}</div><br>
-      <div class="grid3" style="grid-template-columns:1fr"><button id="r" class="pri">▶ Continuar</button><button id="c">⌖ Centrar mapa</button><button id="s">💾 Guardar y salir</button><button id="a">🏳 Abandonar</button></div>`, m => {
+    q('#menu').onclick = () => HF.modal(`<h3>${HF.t('GAME_MENU')}</h3><div class="dim small">🎯 ${goalText(g)}</div><br>
+      <div class="grid3" style="grid-template-columns:1fr"><button id="r" class="pri">${HF.t('GAME_CONTINUE')}</button><button id="c">${HF.t('GAME_CENTER')}</button><button id="w">${HF.t('GAME_CODEX')}</button><button id="s">${HF.t('GAME_SAVE_EXIT')}</button><button id="a">${HF.t('GAME_ABANDON')}</button></div>`, m => {
       m.querySelector('#r').onclick = HF.closeModal;
       m.querySelector('#c').onclick = () => { board.fit(); HF.closeModal(); };
+      m.querySelector('#w').onclick = () => HF.codex();
       m.querySelector('#s').onclick = () => { save(); HF.go('hub'); };
-      m.querySelector('#a').onclick = () => { if (confirm('¿Abandonar la partida? Se perderá el progreso.')) { HF.store.del('savegame_active'); HF.go('hub'); } };
+      m.querySelector('#a').onclick = () => { if (confirm(HF.lang() === 'en' ? 'Surrender the game? Progress will be lost.' : '¿Abandonar la partida? Se perderá el progreso.')) { HF.store.del('savegame_active'); HF.go('hub'); } };
     });
 
     function showEnd() {
       HF.store.del('savegame_active');
+      if (HF.bgm) HF.bgm.stop();
       const res = HF.recordResult(g) || {};
       const won = g.over.won;
       HF.sfx(won ? 'win' : 'lose');
@@ -324,27 +350,125 @@
         <div class="small">★ Victoria<br>${g.turn <= m.par ? '★' : '☆'} En ≤ ${m.par} turnos<br>${res.stars === 3 || (res.stars === 2 && g.turn > m.par) ? '★' : '☆'} ${HF.CHTXT[m.challenge]}</div>`;
       }
       if (g.mode === 'daily') extra = `<div style="text-align:center;font-size:20px">${res.official ? (won ? 'Resultado oficial ' + HF.medal(g.turn) : 'Intento oficial fallido') : 'Práctica (no cuenta)'}</div>`;
+      const me = g.f[0], kd = s.lost ? (s.kills / s.lost).toFixed(2) : (s.kills ? '∞' : '0.00');
+      const surplus = (me.gold || 0) + (me.food || 0) + (me.wood || 0);
       HF.modal(`<h2 style="text-align:center">${won ? '🏆 ¡Victoria!' : '💀 Derrota'}</h2><div style="text-align:center" class="dim">${HF.esc(g.over.reason)} · Turno ${g.turn}</div>${extra}
+        <div class="kpis">
+          <div class="kpi"><span>⚔️</span><b>${kd}</b><small>Eficiencia militar</small><em>${s.kills} bajas / ${s.lost} pérdidas</em></div>
+          <div class="kpi"><span>🔗</span><b>${s.cuts}</b><small>Asfixia logística</small><em>hexágonos aislados</em></div>
+          <div class="kpi"><span>🌾</span><b>${surplus}</b><small>Superávit</small><em>💰${me.gold} · 🌾${me.food} · 🧱${me.wood}</em></div>
+        </div>
         <canvas class="chart" id="ch"></canvas>
-        <table><tr><td>Unidades eliminadas</td><td>${s.kills}</td></tr><tr><td>Unidades perdidas</td><td>${s.lost}</td></tr><tr><td>Casillas conquistadas</td><td>${s.captured}</td></tr><tr><td>Edificios construidos</td><td>${s.built}</td></tr><tr><td>Aislamientos provocados</td><td>${s.cuts}</td></tr><tr><td>Deserciones</td><td>${s.deserts}</td></tr></table><br>
+        <div class="chart-legend">${g.f.map(f => `<span><i style="background:${f.color}"></i>${HF.esc(f.name)}</span>`).join('')}</div>
+        <div class="dim small" style="text-align:center">Conquistadas ${s.captured} · Edificios ${s.built} · Deserciones ${s.deserts}</div><br>
+        <button id="btnShareReplay" class="pri" style="width:100%;margin-bottom:6px">🎬 Compartir Repetición</button>
         <div class="row"><button id="menu2" class="grow">Menú</button>${g.mode === 'campaign' && won && m.idx < 29 ? '<button id="nx" class="pri grow">Siguiente ▶</button>' : '<button id="again" class="pri grow">Repetir</button>'}</div>`, mm => {
         chart(mm.querySelector('#ch'));
         mm.querySelector('#menu2').onclick = () => HF.go(g.mode === 'campaign' ? 'campaign' : 'hub');
         const nx = mm.querySelector('#nx'), ag = mm.querySelector('#again');
         if (nx) nx.onclick = () => HF.startGame(HF.makeGame(HF.campaign[m.idx + 1], HF.loadTribe()));
         if (ag) ag.onclick = () => HF.go(g.mode === 'campaign' ? 'campaign' : g.mode === 'daily' ? 'daily' : 'newgame');
+        const sh = mm.querySelector('#btnShareReplay');
+        if (sh) sh.onclick = async () => {
+          sh.disabled = true;
+          HF.toast('Generando enlace de repetición…', 1200);
+          let code;
+          try { code = await HF.encodeReplay(HF.replayPayload(g)); }
+          catch (e) { console.error(e); sh.disabled = false; return HF.toast('No se pudo generar la repetición'); }
+          const url = location.href.split('#')[0] + '#replay=' + code;
+          const host = location.hostname;
+          const local = location.protocol === 'file:' || !host || host === 'localhost' || host === '127.0.0.1' ||
+            /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+          const show = why => HF.modal(`<h3>🎬 Repetición de la partida</h3>
+            ${why ? `<p class="neg small">${why}</p>` : ''}
+            <div class="dim small">Enlace</div><textarea readonly id="repUrl" style="min-height:80px">${HF.esc(url)}</textarea>
+            <div class="dim small">Código (pégalo en 🎬 desde el Hub)</div><textarea readonly id="repCode" style="min-height:64px">${HF.esc(code)}</textarea>
+            <div class="row"><button id="cpUrl">Copiar enlace</button><button id="cpCode" class="pri grow">Copiar código</button><button id="x">Cerrar</button></div>`, m2 => {
+            const copy = (txt, msg) => {
+              const done = () => HF.toast(msg, 2600);
+              try { navigator.clipboard.writeText(txt).then(done).catch(() => { m2.querySelector('#repCode').select(); }); }
+              catch (e) { m2.querySelector('#repCode').select(); }
+            };
+            m2.querySelector('#cpUrl').onclick = () => copy(url, 'Enlace copiado');
+            m2.querySelector('#cpCode').onclick = () => copy(code, 'Código copiado');
+            m2.querySelector('#x').onclick = HF.closeModal;
+          });
+          if (local) { sh.disabled = false; return show('Este enlace apunta a un archivo o servidor local: en otro teléfono no abrirá. Comparte el código y usa el botón 🎬 del Hub, o publica el juego en una URL accesible.'); }
+          if (url.length > 1800) { sh.disabled = false; return show('El enlace es largo; algunos navegadores móviles lo truncan. Comparte el código si el enlace falla.'); }
+          const ok = () => HF.toast('¡Enlace de repetición copiado al portapapeles!', 2800);
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok).catch(() => show('No se pudo copiar automáticamente. Copia el enlace o el código.'));
+            else show('Copia el enlace o el código para compartir.');
+          } catch (e) { show('Copia el enlace o el código para compartir.'); }
+          sh.disabled = false;
+        };
       });
     }
     function chart(cv) {
-      const w = cv.clientWidth || 300, h = 150, d = 2; cv.width = w * d; cv.height = h * d;
-      const x = cv.getContext('2d'); x.scale(d, d);
-      const tl = g.timeline, mx = Math.max(1, ...tl.flatMap(t => t.terr));
+      const w = Math.max(260, cv.clientWidth || 320), h = 210, d = Math.min(2, G.devicePixelRatio || 1);
+      cv.width = w * d; cv.height = h * d; cv.style.height = h + 'px';
+      const x = cv.getContext('2d');
+      x.setTransform(d, 0, 0, d, 0, 0);
+      const tl = g.timeline, land = Math.max(1, g.cells.filter(c => c && c.t !== HF.T.MAR).length);
+      const padL = 34, padR = 8, padT = 16, padB = 18, base = h - padB, top = padT;
+      const bg = x.createLinearGradient(0, 0, 0, h);
+      bg.addColorStop(0, '#10243f'); bg.addColorStop(1, '#0a1424');
+      x.fillStyle = bg; x.fillRect(0, 0, w, h);
+      // cuadrícula de referencia
+      x.font = '9px monospace'; x.textBaseline = 'middle'; x.textAlign = 'right';
+      for (const p of [0, 25, 50, 75, 100]) {
+        const py = base - (base - top) * p / 100;
+        x.strokeStyle = 'rgba(138,160,200,.14)'; x.lineWidth = 1;
+        x.beginPath(); x.moveTo(padL, py); x.lineTo(w - padR, py); x.stroke();
+        x.fillStyle = '#8aa0c8'; x.fillText(p + '%', padL - 4, py);
+      }
+      const tmax = tl.length > 1 ? tl[tl.length - 1].t : 1;
+      x.textAlign = 'center'; x.textBaseline = 'top';
+      for (let i = 0; i < 5; i++) {
+        const px = padL + (w - padL - padR) * i / 4;
+        x.strokeStyle = 'rgba(138,160,200,.08)';
+        x.beginPath(); x.moveTo(px, top); x.lineTo(px, base); x.stroke();
+        x.fillStyle = '#8aa0c8'; x.fillText('T' + Math.round(1 + (tmax - 1) * i / 4), px, base + 4);
+      }
+      x.fillStyle = '#8aa0c8'; x.font = '10px monospace'; x.textAlign = 'left'; x.textBaseline = 'top';
+      x.fillText('Territorio por turno', padL, 2);
+      x.lineJoin = 'round'; x.lineCap = 'round';
       g.f.forEach((f, k) => {
-        x.strokeStyle = f.color; x.lineWidth = 2; x.beginPath();
-        tl.forEach((t, i) => { const px = 8 + (w - 16) * (tl.length > 1 ? i / (tl.length - 1) : 0), py = h - 10 - (h - 20) * t.terr[k] / mx; i ? x.lineTo(px, py) : x.moveTo(px, py); });
-        x.stroke();
+        if (!tl.length) return;
+        const pts = tl.map((t, i) => ({
+          x: padL + (w - padL - padR) * (tl.length > 1 ? i / (tl.length - 1) : 0),
+          y: base - (base - top) * Math.min(1, (t.terr[k] || 0) / land)
+        }));
+        // área translúcida bajo la curva
+        x.beginPath(); x.moveTo(pts[0].x, base); x.lineTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1], b = pts[i];
+          x.quadraticCurveTo(a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2);
+        }
+        const last = pts[pts.length - 1];
+        x.lineTo(last.x, last.y); x.lineTo(last.x, base); x.closePath();
+        x.fillStyle = f.color; x.globalAlpha = .25; x.fill(); x.globalAlpha = 1;
+        // línea suavizada
+        x.beginPath(); x.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1], b = pts[i];
+          x.quadraticCurveTo(a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2);
+        }
+        x.lineTo(last.x, last.y);
+        x.strokeStyle = f.color; x.lineWidth = 2; x.stroke();
+        // hito de eliminación de un rival
+        if (k > 0) {
+          let elim = -1;
+          for (let i = 1; i < tl.length; i++) if ((tl[i].terr[k] || 0) === 0 && (tl[i - 1].terr[k] || 0) > 0) { elim = i; break; }
+          if (elim >= 0) {
+            const p = pts[elim];
+            x.beginPath(); x.arc(p.x, p.y, 3, 0, Math.PI * 2); x.fillStyle = f.color; x.fill();
+            x.font = '11px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'bottom';
+            x.fillText('💀', p.x, p.y - 3);
+            x.textAlign = 'left'; x.textBaseline = 'top'; x.font = '10px monospace';
+          }
+        }
       });
-      x.fillStyle = '#8aa0c8'; x.font = '10px monospace'; x.fillText('Territorio por turno', 8, 12);
     }
 
     refresh();

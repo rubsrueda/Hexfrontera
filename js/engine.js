@@ -47,13 +47,20 @@
       v: 1, mode: o.mode || 'skirmish', seed: o.seed >>> 0, R: o.R, biome: o.biome, fog: o.fog || 'FULL', difficulty: o.difficulty || 'normal',
       turn: 1, cur: 0, over: null, goal: o.goal || { type: 'conquer' }, meta: o.meta || {}, rs: (o.seed * 7 + 13) >>> 0,
       f: [], cells: null, fogMap: null, timeline: [], events: [], undo: [],
+      replayLog: o.isReplay ? null : [], isReplay: !!o.isReplay, noReplay: !!o.isReplay,
+      startRes: o.startRes || HF.CFG.start, _customCells: o.customCells || null,
       stat: { kills: 0, lost: 0, cuts: 0, deserts: 0, isolatedEver: false, built: 0, captured: 0, recruited: 0 }
     };
     let caps;
+    const hasCustomUnits = !!(o.customCells && o.customCells.some(d => d && d.u));
     if (o.customCells) {
       const gr = grid(g);
       g.cells = gr.cells.map(c => c ? HF.newCell(c) : null);
-      for (const d of o.customCells) Object.assign(g.cells[d.i], d);
+      for (const d of o.customCells) {
+        const c = g.cells[d.i];
+        Object.assign(c, d);
+        if (d.u) c.u = Object.assign({}, d.u, { mv: 1, at: 1, tier: Math.max(1, Math.min(4, d.u.tier || 1)) });
+      }
       caps = [];
       for (const c of gr.list) { const cc = g.cells[c.i]; if (cc.cap && cc.o >= 0) caps[cc.o] = cc.i; }
     } else {
@@ -66,11 +73,13 @@
       HF.compileTribe(t);
       g.f.push({
         id: k, name: fo.name, color: fo.color, crest: fo.crest, human: !!fo.human, tags: t.active_rules,
+        alma_path: fo.alma_path, arma_path: fo.arma_path, victoria_path: fo.victoria_path,
         gold: sr.gold, food: sr.food, wood: sr.wood, alive: true, grace: 0, wonderTurns: 0, wonderCell: -1,
         starvationsInduced: 0, goodStreak: 0, deficit: false, loan: null
       });
     });
-    if (!o.customCells || o.giveUnits) {
+    // Si el mapa ya trae ejércitos, no se generan reclutas iniciales: la batalla empieza tal cual.
+    if (!o.customCells || o.giveUnits || !hasCustomUnits) {
       caps.forEach((ci, k) => {
         if (ci == null) return;
         const n = HF.nbs(g, ci).map(j => g.cells[j]).find(c => passableT(c) && !c.u && c.o === k);
@@ -390,6 +399,62 @@
     }
     return Math.max(0, base - (c.deg || 0));
   };
+  // Desglose para la UI: de dónde sale exactamente la defensa de una casilla.
+  // No sustituye a defenseAt (que se llama mucho en options()); replica su fórmula.
+  HF.defenseBreakdown = function (g, ci) {
+    const c = g.cells[ci];
+    if (!c) return { total: 0, detail: '', parts: [], override: null, deg: 0 };
+    if (c.lastStand && c.lastStandTurn === g.turn) {
+      return { total: HF.CFG.doctrine.lastStandDef, detail: 'Último Bastión', parts: [{ label: 'Último Bastión', value: HF.CFG.doctrine.lastStandDef }], override: null, deg: 0 };
+    }
+    const bd = isSettle(c.b) ? HF.BDEF[c.b] : 0;
+    const parts = []; let base = 0;
+    if (c.u) {
+      const u = c.u, f = g.f[u.owner], D = HF.UNITS[u.type];
+      if (u.type === 'INF') {
+        const elite = u.tier >= HF.CFG.doctrine.pretorianTier;
+        const n = elite ? HF.CFG.doctrine.pretorianDef : u.tier;
+        parts.push({ label: 'Inf N' + u.tier + (elite ? ' pretoriana' : ''), value: n }); base = n;
+        if (c.t === T.COLINA) { parts.push({ label: 'colina', value: HF.CFG.combat.hillDef }); base += HF.CFG.combat.hillDef; }
+        if (c.t === T.MONTANA) { parts.push({ label: 'montaña', value: HF.CFG.combat.mountainDef }); base += HF.CFG.combat.mountainDef; }
+        if (has(f, 'TESTUDO_SHIELD')) {
+          let n2 = 0;
+          for (const j of HF.nbs(g, c.i)) { const x = g.cells[j]; if (x.u && x.u.owner === u.owner && x.u.type === 'INF') n2++; }
+          const bonus = Math.min(HF.CFG.combat.testudoMax, n2);
+          if (bonus > 0) { parts.push({ label: 'testudo', value: bonus }); base += bonus; }
+        }
+      } else if (u.type === 'CAB' && has(f, 'KNIGHTLY_ORDER')) {
+        const n = D.defKnight + u.tier - 1;
+        parts.push({ label: D.name + ' N' + u.tier + ' (orden)', value: n }); base = n;
+      } else {
+        const n = D.def + u.tier - 1;
+        parts.push({ label: D.name + ' N' + u.tier, value: n }); base = n;
+      }
+      if (bd > 0) { parts.push({ label: HF.BNAME[c.b] || 'edificio', value: bd }); base += bd; }
+    } else if (bd > 0) {
+      parts.push({ label: HF.BNAME[c.b] || 'edificio', value: bd }); base = bd;
+    }
+    let total = base, override = null;
+    if (c.o >= 0) for (const j of HF.nbs(g, ci)) {
+      const n = g.cells[j];
+      if (n.o !== c.o) continue;
+      if (n.u) {
+        const nd = unitDef(g, n.u, n);
+        if (nd > total) { total = nd; override = { label: HF.UNITS[n.u.type].name + ' N' + n.u.tier, value: nd }; }
+      }
+      if (n.b === B.BASTION) {
+        const aura = HF.CFG.combat.bastionAura;
+        if (aura > total) { total = aura; override = { label: 'aura de bastión', value: aura }; }
+      }
+    }
+    const deg = c.deg || 0;
+    if (deg) total = Math.max(0, total - deg);
+    let detail;
+    if (override) detail = 'base ' + base + ' · ' + override.label + ' ' + override.value + ' prevalece';
+    else detail = parts.map(p => p.label + ' ' + p.value).join(' + ') || '0';
+    if (deg) detail += ' · −' + deg + ' degradación';
+    return { total, detail, parts, override, deg };
+  };
   // empate: la unidad que ya está en el nivel máximo gana al atacar a otra del mismo poder
   const beats = (g, u, A, D) => A > D || (A === D && u.tier >= (has(g.f[u.owner], 'ASCETIC_COMMUNE') ? HF.CFG.fuseMaxAscetic : HF.CFG.fuseMax));
   // from = casilla desde la que parte el golpe (para AMBUSH_CAMOUFLAGE y la carga)
@@ -657,7 +722,7 @@
   function dirBetween(g, a, b) { return grid(g).nb[a].indexOf(b); }
 
   function snap(g) {
-    g.undo.push(JSON.stringify({ cells: g.cells.map(c => c && stripCell(c)), f: g.f, stat: g.stat, fogMap: g.fogMap ? Array.from(g.fogMap) : null }));
+    g.undo.push(JSON.stringify({ cells: g.cells.map(c => c && stripCell(c)), f: g.f, stat: g.stat, fogMap: g.fogMap ? Array.from(g.fogMap) : null, rl: g.replayLog ? g.replayLog.length : null }));
     if (g.undo.length > 30) g.undo.shift();
   }
   function stripCell(c) { const o = Object.assign({}, c); return o; }
@@ -667,6 +732,7 @@
     const s = JSON.parse(g.undo.pop());
     g.cells = s.cells; g.f = s.f; g.stat = s.stat;
     if (s.fogMap) g.fogMap = Int8Array.from(s.fogMap);
+    if (s.rl != null && g.replayLog) g.replayLog.length = s.rl;
     HF.supply(g); HF.updateFog(g);
     return true;
   };
@@ -678,7 +744,7 @@
     c.u = null;
   }
 
-  HF.act = function (g, from, to, kind) {
+  function actRaw(g, from, to, kind) {
     if (g.over) return { ok: false, msg: 'Partida terminada' };
     const c = g.cells[from];
     let u = c.u;
@@ -860,6 +926,12 @@
     HF.updateFog(g);
     HF.checkEnd(g);
     return { ok: true, kind: opt.k };
+  }
+  // Grabador determinista: solo las acciones exitosas entran al log.
+  HF.act = function (g, from, to, kind) {
+    const r = actRaw(g, from, to, kind);
+    if (r && r.ok && g.replayLog && !g.noReplay) g.replayLog.push(kind ? [1, from, to, kind] : [1, from, to]);
+    return r;
   };
 
   // ---------- doctrinas: efectos de resolución ----------
@@ -970,7 +1042,7 @@
   }
   HF.recruitCells = (g, type, tier) => Array.from(recruitScan(g, type, tier).keys());
   HF.recruitScan = recruitScan;
-  HF.recruit = function (g, type, ci, comp, tier) {
+  function recruitRaw(g, type, ci, comp, tier) {
     const f = g.f[g.cur], t = clampTier(tier);
     if (g.over) return { ok: false, msg: 'Partida terminada' };
     if (t > 2 && has(f, 'ASCETIC_COMMUNE')) return { ok: false, msg: 'El dogma ascético prohíbe el Tier 3' };
@@ -986,6 +1058,14 @@
     if (f.human) g.stat.recruited++;
     HF.updateFog(g);
     return { ok: true };
+  }
+  HF.recruit = function (g, type, ci, comp, tier) {
+    const r = recruitRaw(g, type, ci, comp, tier);
+    if (r && r.ok && g.replayLog && !g.noReplay) {
+      const t = tier || 1;
+      g.replayLog.push(t > 1 ? [3, type, ci, comp == null ? null : comp, t] : [3, type, ci, comp == null ? null : comp]);
+    }
+    return r;
   };
   HF.buildCells = function (g, b) {
     const f = g.f[g.cur], out = [], cost = HF.buildCost(g, f, b);
@@ -998,7 +1078,7 @@
     }
     return out;
   };
-  HF.build = function (g, b, ci) {
+  function buildRaw(g, b, ci) {
     const f = g.f[g.cur];
     if (g.over || !HF.buildCells(g, b).includes(ci)) return { ok: false, msg: 'Casilla no válida o provincia sin recursos' };
     const cost = HF.buildCost(g, f, b);
@@ -1011,9 +1091,14 @@
     g._trade = null;   // una calzada nueva puede abrir rutas comerciales
     HF.supply(g); HF.updateFog(g);
     return { ok: true };
+  }
+  HF.build = function (g, b, ci) {
+    const r = buildRaw(g, b, ci);
+    if (r && r.ok && g.replayLog && !g.noReplay) g.replayLog.push([2, b, ci, g.cells[ci] ? g.cells[ci].comp : null]);
+    return r;
   };
   // Expansión acuario: préstamo de emergencia desde la capital.
-  HF.loan = function (g, ci) {
+  function loanRaw(g, ci) {
     const f = g.f[g.cur], c = g.cells[ci];
     if (!f || !f.alive || g.over) return { ok: false, msg: 'Partida terminada' };
     if (!c || c.o !== f.id || !c.cap || c.b !== B.CIUDAD) return { ok: false, msg: 'Solo en una ciudad capital' };
@@ -1027,6 +1112,11 @@
     if (f.human) ev(g, ci, 'Empréstito: +' + HF.CFG.loan.amount + ' oro · deuda ' + HF.CFG.loan.perTurn + '/turno', 'good');
     HF.updateFog(g);
     return { ok: true, amount: HF.CFG.loan.amount, turns: HF.CFG.loan.turns, perTurn: HF.CFG.loan.perTurn };
+  }
+  HF.loan = function (g, ci) {
+    const r = loanRaw(g, ci);
+    if (r && r.ok && g.replayLog && !g.noReplay) g.replayLog.push([5, ci]);
+    return r;
   };
 
   // ---------- niebla ----------
@@ -1102,22 +1192,7 @@
   };
 
   // ---------- turnos ----------
-  HF.endTurn = function (g, aiPlay) {
-    if (g.over) return;
-    clearDeg(g, 0);
-    noUndo(g);
-    for (let i = 1; i < g.f.length; i++) {
-      const f = g.f[i];
-      if (!f.alive || g.over) continue;
-      g.cur = i;
-      startTurn(g, f);
-      if (aiPlay) aiPlay(g, i);
-      clearDeg(g, i);
-      checkElim(g);
-      HF.checkEnd(g);
-    }
-    g.cur = 0;
-    if (g.over) { save_rs(g); return; }
+  function roundEnd(g) {
     // fin de ronda: tumbas, cenizas y fuegos
     for (const c of g.cells) if (c) {
       if (c.tomb > 0) c.tomb--;
@@ -1149,6 +1224,47 @@
     HF.recordTimeline(g);
     HF.checkEnd(g);
     save_rs(g);
+  }
+  // Marca [4] con el estado RNG exacto. Así la repetición no depende de las
+  // tiradas internas de la IA: al llegar a cada frontera de fase se restaura.
+  const markPhase = g => { if (g.replayLog && !g.noReplay) g.replayLog.push([4]); };
+  HF.endTurn = function (g, aiPlay) {
+    if (g.over) return;
+    clearDeg(g, 0);
+    noUndo(g);
+    markPhase(g);
+    for (let i = 1; i < g.f.length; i++) {
+      const f = g.f[i];
+      if (!f.alive || g.over) continue;
+      g.cur = i;
+      startTurn(g, f);
+      if (aiPlay) aiPlay(g, i);
+      clearDeg(g, i);
+      checkElim(g);
+      HF.checkEnd(g);
+      if (aiPlay) markPhase(g);   // fase de IA ejecutada; sin IA no hace falta un límite extra
+    }
+    g.cur = 0;
+    if (g.over) { save_rs(g); return; }
+    roundEnd(g);
+  };
+  // En reproducción no se ejecuta la IA: las acciones ya vienen en el log.
+  // [4, rng] avanza exactamente una fase (jugador o rival) y restaura el RNG.
+  HF.replayPhase = function (g, rngState) {
+    if (!g) return;
+    if (rngState != null) { g.rs = rngState >>> 0; g._rng = null; }
+    const who = g.cur;
+    if (who === 0) { clearDeg(g, 0); noUndo(g); }
+    else {
+      clearDeg(g, who);
+      checkElim(g);
+      HF.checkEnd(g);
+      if (g.over) { save_rs(g); return; }
+    }
+    let next = -1;
+    for (let i = who + 1; i < g.f.length; i++) if (g.f[i].alive) { next = i; break; }
+    if (next < 0) { g.cur = 0; if (!g.over) roundEnd(g); }
+    else { g.cur = next; startTurn(g, g.f[next]); }
   };
   function clearDeg(g, who) { for (const c of g.cells) if (c && c.deg && c.degBy === who) { c.deg = 0; } }
 
@@ -1156,7 +1272,7 @@
   HF.serialize = g => {
     const o = {};
     save_rs(g);
-    for (const k of Object.keys(g)) if (k[0] !== '_' && k !== 'undo' && k !== 'fogMap') o[k] = g[k];
+    for (const k of Object.keys(g)) if (k[0] !== '_' && k !== 'undo' && k !== 'fogMap' && k !== 'replayLog' && k !== 'isReplay' && k !== 'noReplay') o[k] = g[k];
     o.fogMap = g.fogMap ? Array.from(g.fogMap) : null;
     o.cells = g.cells.map(c => {
       if (!c) return null;

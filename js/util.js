@@ -87,7 +87,7 @@
     }
   };
 
-  HF.settings = () => Object.assign({ sound: true, vibrate: true, grid: true, speed: 1 }, HF.store.get('settings', {}));
+  HF.settings = () => Object.assign({ sound: true, vibrate: true, grid: true, speed: 1, lang: 'es' }, HF.store.get('settings', {}));
   HF.vibrate = ms => { if (HF.settings().vibrate && G.navigator && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) { } };
   let ac = null;
   // Crea o reanuda el AudioContext. Las políticas de autoplay lo dejan en
@@ -123,6 +123,108 @@
       try { G.addEventListener(ev, unlockAudio, { once: true, capture: true, passive: true }); } catch (e) { }
     }
   }
+  // también sobre document (algunos WebViews no propagan el primer gesto al window)
+  if (G.document && G.document.addEventListener) {
+    for (const ev of ['pointerdown', 'touchstart']) {
+      try { G.document.addEventListener(ev, unlockAudio, { once: true, capture: true, passive: true }); } catch (e) { }
+    }
+  }
+  // ---------- música ambiental procedural ----------
+  // Progresión pentatónica lenta con delay; se activa durante la partida.
+  let bgmOn = false, bgmTimer = 0, bgmNext = 0, bgmStep = 0, bgmTension = false;
+  let bgmMaster = null, bgmCtx = null;
+  const BGM_ROOTS = [45, 48, 43, 50];   // A2, C3, G2, D3
+  const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+  function bgmEnsure() {
+    const a = audioCtx();
+    if (!a) return null;
+    bgmCtx = a;
+    if (!bgmMaster) {
+      try {
+        bgmMaster = a.createGain();
+        bgmMaster.gain.value = 0;
+        const delay = a.createDelay(1);
+        delay.delayTime.value = .32;
+        const fb = a.createGain(); fb.gain.value = .22;
+        const wet = a.createGain(); wet.gain.value = .18;
+        bgmMaster.connect(a.destination);
+        bgmMaster.connect(delay);
+        delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(a.destination);
+      } catch (e) { bgmMaster = null; return null; }
+    }
+    return a;
+  }
+  function bgmNote(a, freq, t, dur, type, vol) {
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(.0001, t);
+    g.gain.linearRampToValueAtTime(vol || .4, t + Math.min(.8, dur * .35));
+    g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+    o.connect(g); g.connect(bgmMaster);
+    o.start(t); o.stop(t + dur + .05);
+  }
+  function bgmSchedule() {
+    if (!bgmOn || !HF.settings().sound) return;
+    const a = bgmEnsure();
+    if (!a || a.state !== 'running' || !bgmMaster) return;
+    try { bgmMaster.gain.setTargetAtTime(.02, a.currentTime, .35); } catch (e) { }
+    const now = a.currentTime;
+    if (bgmNext < now + .05) bgmNext = now + .05;
+    while (bgmNext < now + 1.6) {
+      const t = bgmNext, step = bgmStep++;
+      const root = BGM_ROOTS[step % BGM_ROOTS.length];
+      const dur = bgmTension ? 1.8 : 2.8;
+      bgmNote(a, mtof(root), t, dur, 'sine', .42);
+      bgmNote(a, mtof(root + 7), t + .08, dur * .9, 'triangle', .22);
+      bgmNote(a, mtof(root + 12), t + .16, dur * .8, 'sine', .14);
+      if (step % 4 === 3) bgmNote(a, mtof(root + 3), t + .4, dur * .55, 'triangle', .12);
+      if (bgmTension) {
+        bgmNote(a, mtof(root - 12), t, .55, 'sine', .55);
+        bgmNote(a, mtof(root - 12), t + .9, .45, 'triangle', .3);
+      }
+      bgmNext += dur;
+    }
+  }
+  function bgmTimerStart() {
+    if (bgmTimer) return;
+    bgmTimer = G.setInterval(bgmSchedule, 250);
+    bgmSchedule();
+  }
+  function bgmSilence() {
+    if (bgmTimer) { G.clearInterval(bgmTimer); bgmTimer = 0; }
+    bgmNext = 0;   // al reactivar, la siguiente frase entra de inmediato
+    if (bgmMaster && bgmCtx && bgmCtx.state === 'running') {
+      try { bgmMaster.gain.setTargetAtTime(0, bgmCtx.currentTime, .25); } catch (e) { }
+    }
+  }
+  function bgmRefresh() {
+    if (!bgmOn || !HF.settings().sound) { bgmSilence(); return; }
+    const a = bgmEnsure();
+    if (!a) { bgmTimerStart(); return; }   // el desbloqueo creará el contexto y el timer reintentará
+    if (a.state !== 'running') { bgmTimerStart(); return; }   // el desbloqueo la pondrá en marcha
+    try { bgmMaster.gain.setTargetAtTime(.02, a.currentTime, .4); } catch (e) { }
+    bgmTimerStart();
+  }
+  function threatNearCapital(g) {
+    const B = HF.B;
+    if (!g || !g.cells || !HF.nbs || !B) return false;
+    for (const c of g.cells) {
+      if (!c || c.o !== 0 || !c.cap || c.b !== B.CIUDAD) continue;
+      for (const j of HF.nbs(g, c.i)) {
+        const n = g.cells[j];
+        if (n && n.u && n.u.owner !== 0) return true;
+      }
+    }
+    return false;
+  }
+  HF.bgm = {
+    start() { bgmOn = true; bgmRefresh(); },
+    stop() { bgmOn = false; bgmSilence(); },
+    refresh: bgmRefresh,
+    update(g) { bgmTension = threatNearCapital(g); if (bgmOn) bgmRefresh(); },
+    tension: () => bgmTension,
+    playing: () => bgmOn
+  };
   HF.sfx = kind => {
     if (!HF.settings().sound) return;
     try {

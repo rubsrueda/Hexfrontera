@@ -9,7 +9,7 @@
     this.cv = canvas; this.h = h; this.ctx = canvas.getContext('2d');
     this.cam = { x: 0, y: 0, z: 1 }; this.size = 24;
     this.R = 7; this.cells = null; this.fogMap = null; this.over = new Map(); this.sel = -1; this.drag = null;
-    this.mode = 'play';
+    this.mode = 'play'; this.viewMode = 'normal';
     this.parts = null; this._raf = 0; this._animLast = 0; this._drawT = 0;
     this.ptrs = new Map(); this._bind();
     this._zoomUI();
@@ -188,6 +188,8 @@
     const now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
     const season = g && HF.season ? HF.season(g) : 0;
     const winter = season === 3;
+    const view = this.viewMode || 'normal';
+    const politic = view === 'politic', resource = view === 'resource', combat = view === 'combat';
     const fogPat = fog ? HF.art.fogPattern(ctx, this.cam, this.W, this.H, .6) : null;
     const items = [];
     for (const c of this.cells) {
@@ -212,15 +214,16 @@
         if (fogPat) { ctx.globalAlpha = .55; ctx.fillStyle = fogPat; ctx.fill(); ctx.globalAlpha = 1; }
         continue;
       }
+      ctx.globalAlpha = politic ? .2 : combat ? .4 : 1;
       ctx.fillStyle = TCOL[c.t]; ctx.fill();
-      // brillo de agua procedural
-      if (c.t === T.MAR || c.t === T.RIO) {
+      // brillo de agua procedural (se omite en las vistas analíticas)
+      if (!politic && !combat && (c.t === T.MAR || c.t === T.RIO)) {
         const wave = (Math.sin(now * .002 + c.q * .9 + c.r * .5) + 1) * .5;
         ctx.globalAlpha = (winter ? .08 : .03) + wave * (winter ? .12 : .09);
         ctx.fillStyle = winter ? '#cbe6ff' : '#aee6ff';
         hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
       }
-      if (winter) {
+      if (winter && !politic && !combat) {
         ctx.globalAlpha = .12; ctx.fillStyle = '#9fc4e8'; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
         if (c.t === T.RIO) {
           ctx.globalAlpha = .34; ctx.fillStyle = '#dff3ff'; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
@@ -230,17 +233,33 @@
       }
       if (c.t === T.COLINA || c.t === T.MONTANA) {
         ctx.fillStyle = TCOL2[c.t]; ctx.beginPath(); ctx.moveTo(x - fs * .5, y + fs * .35); ctx.lineTo(x, y - fs * (c.t === T.MONTANA ? .6 : .35)); ctx.lineTo(x + fs * .5, y + fs * .35); ctx.closePath(); ctx.fill();
-        if (c.t === T.MONTANA && winter) {
+        if (c.t === T.MONTANA && winter && !politic && !combat) {
           ctx.fillStyle = 'rgba(255,255,255,.52)';
           ctx.beginPath(); ctx.moveTo(x - fs * .18, y - fs * .2); ctx.lineTo(x, y - fs * .6); ctx.lineTo(x + fs * .18, y - fs * .2); ctx.closePath(); ctx.fill();
         }
       }
       if (c.t === T.RIO) { ctx.strokeStyle = winter ? '#e6f7ff' : '#a5d8f5'; ctx.lineWidth = fs * .25; ctx.beginPath(); ctx.moveTo(x - fs * .6, y - fs * .2); ctx.quadraticCurveTo(x, y + fs * .5, x + fs * .6, y - fs * .1); ctx.stroke(); }
+      ctx.globalAlpha = 1;
       if (c.o >= 0) {
         const col = this.colors[c.o];
-        ctx.globalAlpha = c.sup ? .38 : .2; ctx.fillStyle = col; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
-        ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, fs * .12); hexPath(ctx, x, y, fs * .92); ctx.stroke();
+        // político: soberanía a máxima saturación; recursos: facción atenuada
+        ctx.globalAlpha = resource ? .15 : politic ? .8 : combat ? .3 : (c.sup ? .38 : .2);
+        ctx.fillStyle = col; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, fs * (politic ? .2 : combat ? .14 : .12)); hexPath(ctx, x, y, fs * .92); ctx.stroke();
         if (!c.sup) { ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1; for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(x - fs * .5 + k * fs * .3, y - fs * .6); ctx.lineTo(x - fs * .9 + k * fs * .3, y + fs * .5); ctx.stroke(); } }
+      }
+      if (politic && c.b >= B.CAMPAMENTO) {
+        ctx.globalAlpha = .12; ctx.fillStyle = '#fff'; hexPath(ctx, x, y, fs * .9); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = Math.max(2, fs * .1);
+        hexPath(ctx, x, y, fs * .84); ctx.stroke();
+      }
+      if (resource && c.res) {
+        const rc = ['', 'rgba(245,185,66,', 'rgba(74,222,128,', 'rgba(181,122,74,'][c.res] || 'rgba(245,185,66,';
+        const grd = ctx.createRadialGradient(x, y, fs * .1, x, y, fs * .95);
+        grd.addColorStop(0, rc + '.42)'); grd.addColorStop(1, rc + '0)');
+        ctx.fillStyle = grd; hexPath(ctx, x, y, fs); ctx.fill();
+        ctx.strokeStyle = rc + '.9)'; ctx.lineWidth = Math.max(1.5, fs * .08);
+        hexPath(ctx, x, y, fs * .9); ctx.stroke();
       }
       // borde superior iluminado: grosor de ficha física
       ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1;
@@ -253,23 +272,58 @@
     for (const [c, x, y, f] of items) {
       const em = Math.max(8, fs * .85);
       ctx.font = em + 'px sans-serif';
-      if (c.res) { ctx.globalAlpha = .9; ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText(['', '💰', '🌾', '🧱'][c.res], x - fs * .5, y + fs * .55); ctx.globalAlpha = 1; ctx.font = em + 'px sans-serif'; }
+      if (c.res && !politic && !combat) {
+        ctx.globalAlpha = resource ? 1 : .9;
+        ctx.font = fs * (resource ? .7 : .5) + 'px sans-serif';
+        ctx.fillText(['', '💰', '🌾', '🧱'][c.res], x - fs * .5, y + fs * .55);
+        ctx.globalAlpha = 1; ctx.font = em + 'px sans-serif';
+      }
       if (c.b) {
+        const treeDim = (politic || combat) && c.b === B.ARBOL;
+        if (treeDim) ctx.globalAlpha = politic ? .2 : .4;
         const bw = c.b === B.CAMINO ? fs * 1.5 : fs * 1.7;
         if (!HF.art.draw(ctx, 'build', c.b, x, y - (c.b === B.CAMINO ? 0 : fs * .08), bw, bw)) {
-          if (c.b === B.CAMINO) { ctx.font = fs * .6 + 'px sans-serif'; ctx.globalAlpha = .8; }
+          if (c.b === B.CAMINO) { ctx.font = fs * .6 + 'px sans-serif'; ctx.globalAlpha = treeDim ? .4 : .8; }
           ctx.fillText(HF.BICON[c.b], x, y + (c.b === B.CAMINO ? fs * .35 : 0)); ctx.globalAlpha = 1; ctx.font = em + 'px sans-serif';
         }
+        if (treeDim) ctx.globalAlpha = 1;
         if (c.cap) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('⭐', x + fs * .55, y - fs * .55); ctx.font = em + 'px sans-serif'; }
       }
       if (c.tomb) { ctx.globalAlpha = .6 + .1 * c.tomb; ctx.fillText('⚰️', x, y); ctx.globalAlpha = 1; }
       if (c.u && (f === 2 || c.u.owner === 0)) {
         const u = c.u, hide = this.drag && this.drag.from === c.i;
         if (!hide) {
+          if (resource) ctx.globalAlpha = .15;
           ctx.fillStyle = this.colors[u.owner]; ctx.beginPath(); ctx.arc(x, y + fs * .05, fs * .55, 0, 7); ctx.fill();
           ctx.strokeStyle = HF.ready(u) && u.owner === 0 ? '#fff' : '#0008'; ctx.lineWidth = 2; ctx.stroke();
           if (!HF.art.draw(ctx, 'unit', u.type, x, y, fs * 1.25, fs * 1.25)) { ctx.fillStyle = '#fff'; ctx.font = fs * .75 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.type].icon, x, y + fs * .05); }
-          if (u.tier > 1) { ctx.font = 'bold ' + fs * .5 + 'px monospace'; ctx.fillStyle = '#000'; ctx.fillText(u.tier, x + fs * .55, y + fs * .55); ctx.fillStyle = '#ffd34d'; ctx.fillText(u.tier, x + fs * .53, y + fs * .53); }
+          if (combat) {
+            // anillo de combate + nivel + defensa efectiva (incluye terreno, edificios, auras y deg.)
+            ctx.strokeStyle = 'rgba(255,255,255,.65)'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(x, y + fs * .05, fs * .63, 0, 7); ctx.stroke();
+            const def = g ? HF.defenseAt(g, c.i) : 0;
+            ctx.font = 'bold ' + Math.max(8, fs * .4) + 'px monospace';
+            const tl = 'N' + u.tier, tw = ctx.measureText(tl).width;
+            ctx.fillStyle = 'rgba(8,14,28,.86)';
+            ctx.fillRect(x - fs * .95, y + fs * .58, tw + 5, fs * .44);
+            ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x - fs * .95 + (tw + 5) / 2, y + fs * .8);
+            const dl = '🛡' + def, dw = ctx.measureText(dl).width;
+            ctx.fillStyle = 'rgba(8,14,28,.86)';
+            ctx.fillRect(x + fs * .3, y + fs * .58, dw + 5, fs * .44);
+            ctx.fillStyle = '#bae6fd'; ctx.fillText(dl, x + fs * .3 + (dw + 5) / 2, y + fs * .8);
+            ctx.font = em + 'px sans-serif';
+          } else if (this.mode === 'paint') {
+            const tl = 'N' + u.tier;
+            ctx.font = 'bold ' + Math.max(8, fs * .42) + 'px monospace';
+            const tw2 = ctx.measureText(tl).width;
+            ctx.fillStyle = 'rgba(8,14,28,.85)';
+            ctx.fillRect(x - fs * .95, y + fs * .56, tw2 + 5, fs * .44);
+            ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x - fs * .95 + (tw2 + 5) / 2, y + fs * .78);
+            ctx.font = em + 'px sans-serif';
+          } else if (u.tier > 1) {
+            ctx.font = 'bold ' + fs * .5 + 'px monospace'; ctx.fillStyle = '#000'; ctx.fillText(u.tier, x + fs * .55, y + fs * .55); ctx.fillStyle = '#ffd34d'; ctx.fillText(u.tier, x + fs * .53, y + fs * .53);
+            ctx.font = em + 'px sans-serif';
+          }
           if (u.cargo) {
             const kx = x + fs * .5, ky = y - fs * .5;
             ctx.fillStyle = this.colors[u.cargo.owner]; ctx.beginPath(); ctx.arc(kx, ky, fs * .3, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
@@ -279,6 +333,7 @@
             if (u.mv > 0 || (u.cargo && u.cargo.mv > 0)) { ctx.fillStyle = '#4ade80'; ctx.beginPath(); ctx.arc(x - fs * .6, y - fs * .5, fs * .13, 0, 7); ctx.fill(); }
             if (u.at > 0) { ctx.fillStyle = '#f87171'; ctx.beginPath(); ctx.arc(x - fs * .35, y - fs * .62, fs * .13, 0, 7); ctx.fill(); }
           }
+          if (resource) ctx.globalAlpha = 1;
         }
       }
       if (c.deg) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('💔', x - fs * .5, y - fs * .5); }
@@ -294,6 +349,7 @@
         if (fogPat) { ctx.globalAlpha = .5; ctx.fillStyle = fogPat; ctx.fill(); ctx.globalAlpha = 1; }
       }
     }
+    if (view === 'normal') {
     this._drawClouds(ctx, now);
     if (this.mode === 'play' && this.parts) this._drawParts(ctx, winter);
     if (this.mode === 'play' && this.game && this.game.f && this.game.f[0] && HF.tradeRoutes) {
@@ -309,6 +365,7 @@
         }
         ctx.setLineDash([]); ctx.restore();
       }
+    }
     }
     for (const [i, o] of this.over) {
       const c = this.cells[i]; if (!c) continue;

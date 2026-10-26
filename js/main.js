@@ -3,6 +3,11 @@
   HF.store.recover('savegame_active');
   HF.store.recover('tribe_profile');
   document.addEventListener('contextmenu', e => e.preventDefault());
+  const hash = location.hash || '';
+  if (hash.startsWith('#replay=')) {
+    HF.playReplayFromCode(hash.slice(8));
+    return;
+  }
   HF.go('hub');
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     // al activarse una versión nueva, recargar una vez para no quedarse con JS viejo
