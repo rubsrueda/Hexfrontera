@@ -25,6 +25,12 @@
 
   HF.hasTag = (f, tag) => f.tags.indexOf(tag) >= 0;
   const has = HF.hasTag;
+  // Estaciones globales: 0 primavera, 1 verano, 2 otoño, 3 invierno.
+  const SEASONS = ['Primavera', 'Verano', 'Otoño', 'Invierno'];
+  const seasonOf = g => Math.floor((g.turn - 1) / (HF.CFG.seasons.length || 6)) % 4;
+  HF.season = seasonOf;
+  HF.SEASONS = SEASONS;
+  HF.seasonName = i => SEASONS[i] || SEASONS[0];
   const chopWood = f => has(f, 'EXTRACTIVE_ENCLAVE') ? HF.CFG.chopWoodEnclave : HF.CFG.chopWood;
   const grid = g => g._grid || (g._grid = HF.makeGrid(g.R));
   HF.nbs = (g, i) => grid(g).nb[i];
@@ -61,7 +67,7 @@
       g.f.push({
         id: k, name: fo.name, color: fo.color, crest: fo.crest, human: !!fo.human, tags: t.active_rules,
         gold: sr.gold, food: sr.food, wood: sr.wood, alive: true, grace: 0, wonderTurns: 0, wonderCell: -1,
-        starvationsInduced: 0, goodStreak: 0, deficit: false
+        starvationsInduced: 0, goodStreak: 0, deficit: false, loan: null
       });
     });
     if (!o.customCells || o.giveUnits) {
@@ -84,6 +90,7 @@
   HF.supply = function (g) {
     const cells = g.cells, gr = grid(g), seen = new Set(), infos = [];
     let cuts = 0;
+    g._trade = null;   // un cambio de suministro/provincia puede alterar las rutas comerciales
     for (const c0 of gr.list) {
       const c = cells[c0.i];
       if (c.o < 0 || seen.has(c.i)) { if (c.o < 0) { c.sup = 0; c.comp = -1; } continue; }
@@ -190,12 +197,42 @@
     if (u.type === 'INF' && kind === 'up' && has(f, 'ASCETIC_COMMUNE')) v = Math.max(1, v - 1);
     return v;
   }
+  // Rutas comerciales: dos asentamientos PUEBLO/CIUDAD unidos por camino o agua.
+  // Se cachean por turno; máximo 3 por facción (config.commerce.maxRoutes).
+  function tradeRoutes(g, f) {
+    if (!g._trade) g._trade = {};
+    const cached = g._trade[f.id];
+    if (cached && cached.turn === g.turn) return cached.routes;
+    const gr = grid(g), ends = [];
+    for (const c of g.cells) if (c && c.o === f.id && c.sup && (c.b === B.PUEBLO || c.b === B.CIUDAD)) ends.push(c);
+    const pairs = [];
+    for (const s of ends) {
+      const dist = new Map([[s.i, 0]]), q = [s.i];
+      for (let h = 0; h < q.length; h++) {
+        const x = q[h], cx = g.cells[x];
+        for (const y of gr.nb[x]) {
+          if (dist.has(y)) continue;
+          const n = g.cells[y];
+          if (!n || !(isRoad(n) || isWater(n)) || !(n.o === f.id || n.o === -1)) continue;
+          dist.set(y, dist.get(x) + 1); q.push(y);
+        }
+      }
+      for (const t of ends) if (t.i > s.i && dist.has(t.i)) pairs.push({ a: s.i, b: t.i, d: dist.get(t.i) });
+    }
+    pairs.sort((p, q) => p.d - q.d || p.a - q.a || p.b - q.b);
+    const max = Math.max(0, HF.CFG.commerce.maxRoutes || 3);
+    const routes = pairs.slice(0, max);
+    g._trade[f.id] = { turn: g.turn, routes };
+    return routes;
+  }
+  HF.tradeRoutes = tradeRoutes;
   HF.income = (g, f, comp) => {
     const inc = { gold: 0, food: 0, wood: 0 }, C = HF.CFG.income;
     const mult = has(f, 'EXTRACTIVE_ENCLAVE') ? C.enclaveMult : 1;
     const add = (src, m) => { if (src) for (const k in src) inc[k] += src[k] * m; };
     if (has(f, 'CIV_TYPE_SEDENTARY') && (comp == null || comp === mainComp(g, f))) inc.gold += C.sedentaryGold;
     const tName = Object.keys(T), rName = ['', 'ORO', 'TRIGO', 'MADERA'];
+    const autumn = seasonOf(g) === 2;
     for (const c of g.cells) {
       if (!c || c.o !== f.id || !c.sup || (comp != null && c.comp !== comp)) continue;
       if (c.b === B.ARBOL) continue; // el árbol bloquea toda producción hasta talarlo
@@ -207,12 +244,20 @@
         const R = C.resource[rName[c.res]];
         for (const k in R) inc[k] += R[k] * mult + bonus;
       }
+      // Otoño: la cosecha dorada suma +1 comida por trigo
+      if (autumn && c.res === HF.RES.TRIGO) inc.food += HF.CFG.seasons.autumnWheatFood;
+    }
+    const routes = tradeRoutes(g, f);
+    for (const r of routes) {
+      if (comp == null || g.cells[r.a].comp === comp) inc.gold += HF.CFG.commerce.routeGold;
+      if (comp == null || g.cells[r.b].comp === comp) inc.gold += HF.CFG.commerce.routeGold;
     }
     return inc;
   };
   HF.preview = (g, f, comp) => {
     const i = HF.income(g, f, comp), u = HF.upkeepOf(g, f, 'up', comp), ug = HF.upkeepOf(g, f, 'upGold', comp);
-    return { inc: i, upkeep: u, upkeepGold: ug, netFood: i.food - u, netGold: i.gold - ug };
+    const loan = f.loan && f.loan.turns > 0 && (comp == null || f.loan.comp === comp) ? f.loan.perTurn : 0;
+    return { inc: i, upkeep: u, upkeepGold: ug, loan, netFood: i.food - u, netGold: i.gold - ug - loan };
   };
 
   function degradeUnit(g, c, f) {
@@ -236,6 +281,8 @@
     const provs = HF.provinces(g, f), pm = provMap(g, f), mart = [];
     let anyDef = false, rebel = false;
     const upk = (k, kind) => HF.upkeepOf(g, f, kind, k, pm);
+    const loanActive = !!(f.loan && f.loan.turns > 0);
+    const loanK = loanActive ? (provs.indexOf(f.loan.comp) >= 0 ? f.loan.comp : (provs.length ? provs[0] : -1)) : -1;
     const worstIn = (k, kind) => {
       let w = null, wv = -1;
       for (const c of g.cells) if (c && c.u && c.u.owner === f.id && pm[c.i] === k) { const v = cellUp(f, c, kind); if (v > wv) { wv = v; w = c; } }
@@ -245,7 +292,8 @@
       const s = f.stock[k] || (f.stock[k] = { gold: 0, food: 0, wood: 0 });
       const inc = HF.income(g, f, k);
       s.wood += inc.wood;
-      let gold = s.gold + inc.gold - upk(k, 'upGold'), gg = 60;
+      const debt = (loanActive && k === loanK) ? f.loan.perTurn : 0;
+      let gold = s.gold + inc.gold - upk(k, 'upGold') - debt, gg = 60;
       while (gold < 0 && gg-- > 0) {
         const worst = worstIn(k, 'upGold');
         if (!worst) break;
@@ -253,7 +301,16 @@
         const nm = HF.UNITS[worst.u.type].name, r = degradeUnit(g, worst, f);
         if (r === 'deserta') creditStarvation(g, f.id, worst);
         if (f.human) ev(g, worst.i, 'Sin oro: ' + nm + ' ' + r, 'bad');
-        gold = s.gold + inc.gold - upk(k, 'upGold');
+        // Quiebra durante un préstamo: la deserción se cobra al doble
+        if (debt > 0) {
+          const w2 = worstIn(k, 'upGold');
+          if (w2) {
+            const nm2 = HF.UNITS[w2.u.type].name, r2 = degradeUnit(g, w2, f);
+            if (r2 === 'deserta') creditStarvation(g, f.id, w2);
+            if (f.human) ev(g, w2.i, 'Quiebra: ' + nm2 + ' ' + r2, 'bad');
+          }
+        }
+        gold = s.gold + inc.gold - upk(k, 'upGold') - debt;
       }
       s.gold = Math.max(0, gold);
       let net = s.food + inc.food - upk(k, 'up');
@@ -277,6 +334,10 @@
         net = Math.max(0, net);
       }
       s.food = net;
+    }
+    if (loanActive) {
+      f.loan.turns--;
+      if (f.loan.turns <= 0) f.loan = null;
     }
     if (mart.length) {
       f.grace++;
@@ -353,6 +414,7 @@
   HF.attackOf = attackOf;
   function unitRange(g, u) {
     const f = g.f[u.owner], D = HF.UNITS[u.type];
+    if (u.type === 'BAR') return D.move + (seasonOf(g) === 1 ? HF.CFG.seasons.summerShipMove : 0);
     if (u.retreat > 0) return 1;   // B2.1.1 · PARTHIAN_RETREAT: solo un paso de retirada
     if (u.type === 'INF' && has(f, 'TACTIC_HEAVY_LINE')) return D.moveHeavy;
     return D.move;
@@ -386,14 +448,17 @@
   function shipOptions(g, ci, u, out) {
     const gr = grid(g), c = g.cells[ci];
     unloadOptions(g, ci, u, out);
+    const summer = seasonOf(g) === 1, winter = seasonOf(g) === 3;
+    const barMove = HF.UNITS.BAR.move + (summer ? HF.CFG.seasons.summerShipMove : 0);
     if (u.mv > 0) {
       const dist = new Map([[ci, 0]]), q = [ci];
       while (q.length) {
         const x = q.shift(), d = dist.get(x);
-        if (d >= HF.UNITS.BAR.move) continue;
+        if (d >= barMove) continue;
         for (const y of gr.nb[x]) {
           const n = g.cells[y];
           if (dist.has(y) || !isWater(n)) continue;
+          if (winter && n.t === T.RIO) continue;   // río helado: los barcos no navegan
           if (n.u) {
             if (n.u.owner === u.owner && n.u.type === 'BAR' && !n.u.cargo && !u.cargo && HF.CFG.fuseTypes.includes('BAR') && n.u.tier + u.tier <= (has(g.f[u.owner], 'ASCETIC_COMMUNE') ? HF.CFG.fuseMaxAscetic : HF.CFG.fuseMax)) out.set(y, { k: 'fuse' });
             continue;
@@ -405,6 +470,7 @@
     if (u.at > 0) {
       for (const y of gr.nb[ci]) {
         const n = g.cells[y];
+        if (winter && n.t === T.RIO) continue;
         if (n.u && n.u.owner !== u.owner && n.u.type === 'BAR') { const A = HF.UNITS.BAR.atk + u.tier - 1, D = HF.defenseAt(g, y); out.set(y, { k: 'atk', A, D, ok: beats(g, u, A, D), from: ci, cost: 1 }); }
       }
       for (const d of gr.list) {
@@ -428,36 +494,52 @@
     const f = g.f[u.owner], gr = grid(g);
     const maxFuse = has(f, 'ASCETIC_COMMUNE') ? HF.CFG.fuseMaxAscetic : HF.CFG.fuseMax, fuseTypes = HF.CFG.fuseTypes;
     const thal = has(f, 'CIV_TYPE_THALASSOCRACY');
+    const winter = seasonOf(g) === 3;
     const range = u.mv > 0 ? unitRange(g, u) : 0;
-    const dist = new Map([[ci, 0]]), term = new Set(), q = [ci];
-    while (q.length) {
-      const x = q.shift(), d = dist.get(x);
-      if (d >= range || term.has(x)) continue;
-      for (const y of gr.nb[x]) {
-        const n = g.cells[y];
-        if (dist.has(y) || !canStep(u, n, f)) continue;
-        // CIV_TYPE_THALASSOCRACY: también se navega por agua neutral a 1 paso
-        const sea = thal && isWater(n) && (n.o === u.owner || n.o === -1);
-        if (!sea && n.o !== u.owner) continue;
-        if (u.type === 'SIE' && n.t === T.RIO && !isRoad(n)) continue;
-        if (n.u) {
-          if (fuseTypes.includes(u.type) && n.u.type === u.type && y !== ci) {
-            // B1.1.2 · PRAETORIAN_GUARD: dos Tier 3 propios se funden en Tier 4
-            const elite = has(f, 'PRAETORIAN_GUARD') && !has(f, 'ASCETIC_COMMUNE') && u.type === 'INF' && u.tier === 3 && n.u.tier === 3 && pretorianCount(g, u.owner) < HF.CFG.doctrine.pretorianMax;
-            if (elite) { dist.set(y, d + 1); out.set(y, { k: 'fuse', elite: true }); }
-            else if (n.u.tier + u.tier <= maxFuse) { dist.set(y, d + 1); out.set(y, { k: 'fuse' }); }
+    // Presupuesto en cuartos de PA: una arista camino->camino cuesta 0.25.
+    const budget = Math.max(0, Math.round(range * 4));
+    const roadStep = Math.max(1, Math.round((HF.CFG.roads.fastCost || .25) * 4));
+    const dist = new Map([[ci, 0]]), term = new Set();
+    const buckets = Array.from({ length: budget + 1 }, () => []);
+    buckets[0].push(ci);
+    for (let cost = 0; cost <= budget; cost++) {
+      const list = buckets[cost];
+      for (let bi = 0; bi < list.length; bi++) {
+        const x = list[bi];
+        if (dist.get(x) !== cost || term.has(x)) continue;
+        const xRoad = isRoad(g.cells[x]);
+        for (const y of gr.nb[x]) {
+          const n = g.cells[y];
+          if (!canStep(u, n, f)) continue;
+          // CIV_TYPE_THALASSOCRACY: también se navega por agua neutral a 1 paso
+          const sea = thal && isWater(n) && (n.o === u.owner || n.o === -1);
+          if (!sea && n.o !== u.owner) continue;
+          if (u.type === 'SIE' && n.t === T.RIO && !isRoad(n)) continue;
+          if (n.u) {
+            if (fuseTypes.includes(u.type) && n.u.type === u.type && y !== ci) {
+              // B1.1.2 · PRAETORIAN_GUARD: dos Tier 3 propios se funden en Tier 4
+              const elite = has(f, 'PRAETORIAN_GUARD') && !has(f, 'ASCETIC_COMMUNE') && u.type === 'INF' && u.tier === 3 && n.u.tier === 3 && pretorianCount(g, u.owner) < HF.CFG.doctrine.pretorianMax;
+              if (elite) { dist.set(y, cost + 1); out.set(y, { k: 'fuse', elite: true }); }
+              else if (n.u.tier + u.tier <= maxFuse) { dist.set(y, cost + 1); out.set(y, { k: 'fuse' }); }
+            }
+            continue;
           }
-          continue;
+          const step = (u.retreat > 0) ? 4 : (xRoad && isRoad(n) ? roadStep : 4);
+          const nd = cost + step;
+          if (nd > budget) continue;
+          const old = dist.get(y);
+          if (old !== undefined && old <= nd) continue;
+          dist.set(y, nd);
+          if (n.b === B.ARBOL) { out.set(y, { k: 'chop' }); continue; }
+          out.set(y, { k: 'move' });
+          // SCOUT_NETWORK: la montaña deja de ser terreno lento para la infantería
+          const scoutMtn = u.type === 'INF' && has(f, 'SCOUT_NETWORK') && n.t === T.MONTANA;
+          // Invierno: INF/CAB cruzan el río helado sin quedar atascadas
+          const ice = winter && n.t === T.RIO && (u.type === 'INF' || u.type === 'CAB');
+          const slow = (((n.t === T.RIO && !sea && !ice) || (n.t === T.MONTANA && !scoutMtn)) && !isRoad(n)) ||
+            (u.type === 'CAB' && n.t === T.COLINA && !isRoad(n) && !has(f, 'CIV_TYPE_NOMAD') && !has(f, 'TACTIC_MOBILE_WAR'));
+          if (slow) term.add(y); else buckets[nd].push(y);
         }
-        dist.set(y, d + 1);
-        if (n.b === B.ARBOL) { out.set(y, { k: 'chop' }); continue; }
-        out.set(y, { k: 'move' });
-        // SCOUT_NETWORK: la montaña deja de ser terreno lento para la infantería
-        const scoutMtn = u.type === 'INF' && has(f, 'SCOUT_NETWORK') && n.t === T.MONTANA;
-        const slow = (((n.t === T.RIO && !sea) || (n.t === T.MONTANA && !scoutMtn)) && !isRoad(n)) ||
-          (u.type === 'CAB' && n.t === T.COLINA && !isRoad(n) && !has(f, 'CIV_TYPE_NOMAD') && !has(f, 'TACTIC_MOBILE_WAR'));
-        if (slow) term.add(y);
-        q.push(y);
       }
     }
     // ataques: desde la casilla actual o desde cualquiera alcanzable (consume movimiento)
@@ -684,7 +766,7 @@
           if (wasOwner === 0) g.stat.lost++;
           if (human) g.stat.captured++;
           t.o = u.owner; t.cap = 0; t.noCamp = 0;
-          t.lastStand = 0; t.lastStandTurn = -1;
+          t.lastStand = 0; t.lastStandTurn = -1; g._trade = null;
           // el monumento profanado deja de contar para su dueño
           if (t.wonder) { t.wonder = 0; if (wasOwner >= 0) g.f[wasOwner].wonderTurns = 0; }
           ev(g, to, human ? 'Casilla conquistada' : 'Casilla perdida', human ? 'good' : 'bad');
@@ -713,7 +795,7 @@
     } else if (opt.k === 'siege') {
       noUndo(g);
       const downs = HF.CFG.siegeDowngrade;
-      t.b = downs[t.b]; if (t.b === B.CIUDAD || !t.b) t.cap = 0; u.at = 0;
+      t.b = downs[t.b]; if (t.b === B.CIUDAD || !t.b) t.cap = 0; u.at = 0; g._trade = null;
       if (t.wonder && t.b !== B.BASTION) { t.wonder = 0; if (t.o >= 0) g.f[t.o].wonderTurns = 0; }
       const cuts = HF.supply(g); if (human) g.stat.cuts += cuts;
       checkElim(g);
@@ -744,7 +826,7 @@
       // A3.1.2 · PACKABLE_YURTS
       if (human) snap(g);
       if (t.b !== B.CAMPAMENTO) return { ok: false, msg: 'No hay campamento que empacar' };
-      t.b = B.NINGUNO; t.cap = 0; t.noCamp = 1;   // reubicar no regala otro campamento
+      t.b = B.NINGUNO; t.cap = 0; t.noCamp = 1; g._trade = null;   // reubicar no regala otro campamento
       u.at = 0; u.mv = 0;
       HF.supply(g);
       // la madera se devuelve después de recalcular provincias (puede ir a otra conectada)
@@ -757,7 +839,7 @@
       const wasOwner = t.o;
       pay(f, opt.prov, opt.cost);
       if (t.u) kill(g, t, human);
-      t.o = u.owner; t.cap = 0; t.conq = true; t.deg = 0; t.tomb = 0; t.noCamp = 0;
+      t.o = u.owner; t.cap = 0; t.conq = true; t.deg = 0; t.tomb = 0; t.noCamp = 0; g._trade = null;
       t.lastStand = 0; t.lastStandTurn = -1;
       if (t.wonder) { t.wonder = 0; if (wasOwner >= 0) g.f[wasOwner].wonderTurns = 0; }
       u.at = 0; u.mv = 0;
@@ -851,19 +933,26 @@
     if ((b === B.PUEBLO || b === B.CIUDAD) && has(f, 'SERFDOM_CHAIN')) c.wood = Math.ceil(c.wood / 2);
     return c;
   };
+  const clampTier = t => Math.max(1, Math.min(3, t | 0 || 1));
+  // coste × rango para el reclutamiento directo de T2/T3
+  HF.recruitCost = (g, f, type, tier) => {
+    const c = HF.unitCost(g, f, type), n = clampTier(tier);
+    for (const k in c) c[k] *= n;
+    return c;
+  };
   // casillas donde se puede reclutar y, para cada una, las provincias que podrían pagarlo
-  function recruitScan(g, type) {
-    const f = g.f[g.cur], out = new Map(), def = HF.UNITS[type];
-    if (!def) return out;
+  function recruitScan(g, type, tier) {
+    const f = g.f[g.cur], out = new Map(), def = HF.UNITS[type], t = clampTier(tier);
+    if (!def || (t > 2 && has(f, 'ASCETIC_COMMUNE'))) return out;
     const gr = grid(g), srcs = g.cells.filter(c => c && c.o === f.id && c.sup && def.from.indexOf(c.b) >= 0);
     if (!srcs.length) return out;
-    const cost = HF.unitCost(g, f, type);
+    const cost = HF.recruitCost(g, f, type, t);
     for (const d of gr.list) {
       const c = g.cells[d.i];
       if (c.u || c.trap != null || c.burn > 0 || c.fire > 0) continue;   // trampas y cenizas bloquean el reclutamiento
       let comps;
       if (def.naval) {
-        if (!isWater(c)) continue;
+        if (!isWater(c) || (seasonOf(g) === 3 && c.t === T.RIO)) continue;   // río helado
         comps = srcs.filter(s => gr.nb[c.i].indexOf(s.i) >= 0).map(s => s.comp);
       } else {
         const ownedOk = c.o === f.id && c.sup;
@@ -879,20 +968,21 @@
     }
     return out;
   }
-  HF.recruitCells = (g, type) => Array.from(recruitScan(g, type).keys());
+  HF.recruitCells = (g, type, tier) => Array.from(recruitScan(g, type, tier).keys());
   HF.recruitScan = recruitScan;
-  HF.recruit = function (g, type, ci, comp) {
-    const f = g.f[g.cur];
+  HF.recruit = function (g, type, ci, comp, tier) {
+    const f = g.f[g.cur], t = clampTier(tier);
     if (g.over) return { ok: false, msg: 'Partida terminada' };
-    const comps = recruitScan(g, type).get(ci);
+    if (t > 2 && has(f, 'ASCETIC_COMMUNE')) return { ok: false, msg: 'El dogma ascético prohíbe el Tier 3' };
+    const comps = recruitScan(g, type, t).get(ci);
     if (!comps || (comp != null && comps.indexOf(comp) < 0)) return { ok: false, msg: 'Casilla no válida o provincia sin recursos' };
-    const cost = HF.unitCost(g, f, type);
+    const cost = HF.recruitCost(g, f, type, t);
     if (f.human) snap(g);
     pay(f, comp != null ? comp : comps[0], cost);
     const c = g.cells[ci];
-    c.u = { type, tier: 1, owner: f.id, mv: 1, at: 1 }; c.tomb = 0;
+    c.u = { type, tier: t, owner: f.id, mv: 1, at: 1 }; c.tomb = 0;
     // reclutar en casilla neutral la ocupa y consume el movimiento
-    if (!HF.UNITS[type].naval && c.o !== f.id) { c.o = f.id; c.cap = 0; c.u.mv = 0; HF.supply(g); }
+    if (!HF.UNITS[type].naval && c.o !== f.id) { c.o = f.id; c.cap = 0; c.u.mv = 0; g._trade = null; HF.supply(g); }
     if (f.human) g.stat.recruited++;
     HF.updateFog(g);
     return { ok: true };
@@ -918,8 +1008,25 @@
     // A1.3.3 · FORTIFIED_ESTATE: el bastión queda operativo en el acto, sin esperar turno
     if (b === B.BASTION && has(f, 'FORTIFIED_ESTATE')) c.builtTurn = g.turn;
     if (f.human) g.stat.built++;
+    g._trade = null;   // una calzada nueva puede abrir rutas comerciales
     HF.supply(g); HF.updateFog(g);
     return { ok: true };
+  };
+  // Expansión acuario: préstamo de emergencia desde la capital.
+  HF.loan = function (g, ci) {
+    const f = g.f[g.cur], c = g.cells[ci];
+    if (!f || !f.alive || g.over) return { ok: false, msg: 'Partida terminada' };
+    if (!c || c.o !== f.id || !c.cap || c.b !== B.CIUDAD) return { ok: false, msg: 'Solo en una ciudad capital' };
+    if (f.loan && f.loan.turns > 0) return { ok: false, msg: 'Ya tienes un préstamo activo' };
+    f.loan = null;
+    const comp = HF.provOf(g, f, c), s = stockOf(f, comp);
+    if (!s) return { ok: false, msg: 'La capital no tiene tesorería conectada' };
+    if (f.human) snap(g);
+    s.gold += HF.CFG.loan.amount; syncTotals(f);
+    f.loan = { comp, turns: HF.CFG.loan.turns, perTurn: HF.CFG.loan.perTurn, cell: ci };
+    if (f.human) ev(g, ci, 'Empréstito: +' + HF.CFG.loan.amount + ' oro · deuda ' + HF.CFG.loan.perTurn + '/turno', 'good');
+    HF.updateFog(g);
+    return { ok: true, amount: HF.CFG.loan.amount, turns: HF.CFG.loan.turns, perTurn: HF.CFG.loan.perTurn };
   };
 
   // ---------- niebla ----------
@@ -947,7 +1054,7 @@
     for (const f of g.f) {
       if (!f.alive) continue;
       if (!g.cells.some(c => c && c.o === f.id && c.b === B.CIUDAD)) {
-        f.alive = false; f.wonderTurns = 0; f.wonderCell = -1;
+        f.alive = false; f.wonderTurns = 0; f.wonderCell = -1; f.loan = null; g._trade = null;
         for (const c of g.cells) if (c && c.o === f.id) { c.o = -1; c.cap = 0; c.u = null; c.sup = 0; c.wonder = 0; c.trap = null; c.lastStand = 0; c.noCamp = 0; }
         for (const c of g.cells) if (c && c.trap === f.id) c.trap = null;   // las trampas caen con su dueño
         ev(g, null, f.name + ' ha sido eliminado', f.human ? 'bad' : 'good');
@@ -1026,12 +1133,13 @@
       else { f.wonderTurns = 0; f.wonderCell = -1; }
     }
     const gr = grid(g), r = rnd(g), add = [];
+    const spread = HF.CFG.treeSpreadChance * (seasonOf(g) === 0 ? HF.CFG.seasons.springTreeMult : 1);
     for (const d of gr.list) {
       const c = g.cells[d.i];
       if (c.b !== B.ARBOL) continue;
       for (const j of gr.nb[c.i]) {
         const n = g.cells[j];
-        if ((n.t === T.LLANO || n.t === T.COLINA) && !n.b && !n.u && !(n.burn > 0) && !(n.fire > 0) && n.trap == null && r() < HF.CFG.treeSpreadChance) add.push(n.i);
+        if ((n.t === T.LLANO || n.t === T.COLINA) && !n.b && !n.u && !(n.burn > 0) && !(n.fire > 0) && n.trap == null && r() < spread) add.push(n.i);
       }
     }
     for (const i of add) g.cells[i].b = B.ARBOL;
@@ -1066,7 +1174,12 @@
   };
   HF.deserialize = o => {
     const g = Object.assign({}, o); g.undo = [];
-    for (const f of g.f) { if (f.starvationsInduced == null) f.starvationsInduced = 0; if (f.wonderCell == null) f.wonderCell = -1; if (f.wonderTurns == null) f.wonderTurns = 0; }
+    for (const f of g.f) {
+      if (f.starvationsInduced == null) f.starvationsInduced = 0;
+      if (f.wonderCell == null) f.wonderCell = -1;
+      if (f.wonderTurns == null) f.wonderTurns = 0;
+      if (f.loan == null || !(f.loan.turns > 0)) f.loan = null;
+    }
     g.cells = o.cells.map(c => c && Object.assign(HF.newCell(c), c));
     for (const c of g.cells) if (c && c.u && c.u.pa !== undefined) { c.u.mv = c.u.at = c.u.pa; delete c.u.pa; }
     g.fogMap = o.fogMap ? Int8Array.from(o.fogMap) : null;

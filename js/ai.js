@@ -51,11 +51,12 @@
   // enemigas, aunque la IA ya tenga presencia en ella (refuerzos y asedio).
   function waterField(g, me, type) {
     const gr = g._grid, comp = landComps(g), hostileMass = new Set();
+    const winter = HF.season && HF.season(g) === 3;
     for (const c of g.cells) if (c && comp[c.i] >= 0 && c.o >= 0 && c.o !== me) hostileMass.add(comp[c.i]);
     const wf = new Int16Array(g.cells.length).fill(999), q = [];
     for (const d of gr.list) {
       const c = g.cells[d.i];
-      if (!isW(c)) continue;
+      if (!isW(c) || (winter && c.t === T.RIO)) continue;   // río helado
       const useful = gr.nb[c.i].some(j => {
         const n = g.cells[j];
         if (isW(n)) return false;
@@ -68,7 +69,11 @@
     if (!q.length) return null;
     for (let h = 0; h < q.length; h++) {
       const x = q[h];
-      for (const y of gr.nb[x]) if (wf[y] === 999 && isW(g.cells[y])) { wf[y] = wf[x] + 1; q.push(y); }
+      for (const y of gr.nb[x]) {
+        if (wf[y] !== 999 || !isW(g.cells[y])) continue;
+        if (winter && g.cells[y].t === T.RIO) continue;
+        wf[y] = wf[x] + 1; q.push(y);
+      }
     }
     return wf;
   }
@@ -76,7 +81,7 @@
   // Primer paso de una ruta por agua que rodea barcos ocupados hasta una
   // casilla de costa objetivo (wf === 0). Devuelve null si no hay ruta.
   function navStep(g, from, wf) {
-    const gr = g._grid, prev = new Map([[from, -1]]), q = [from];
+    const gr = g._grid, prev = new Map([[from, -1]]), q = [from], winter = HF.season && HF.season(g) === 3;
     for (let h = 0; h < q.length; h++) {
       const x = q[h];
       if (x !== from && wf[x] === 0) {
@@ -91,7 +96,7 @@
       for (const y of gr.nb[x]) {
         if (prev.has(y)) continue;
         const n = g.cells[y];
-        if (!isW(n) || n.u) continue;   // otro barco (o tierra) bloquea el paso
+        if (!isW(n) || n.u || (winter && n.t === T.RIO)) continue;   // otro barco, tierra o río helado
         prev.set(y, x); q.push(y);
       }
     }

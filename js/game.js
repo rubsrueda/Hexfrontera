@@ -28,6 +28,7 @@
     board.bubbles = st.bubbles;
     board.game = g;
     board.mode = 'play';
+    board.startAnim();
     cur.board = board; HF.cur = () => cur;
 
     const sync = () => { board.cells = g.cells; board.R = g.R; board.fogMap = g.fog === 'NONE' ? null : g.fogMap; };
@@ -39,10 +40,12 @@
       const provs = HF.provinces(g, f);
       let prov = fc && (fc.o === 0 || (fc.u && fc.u.owner === 0)) && provs.length > 1 ? HF.provOf(g, f, fc) : null;
       if (prov != null && prov < 0) prov = null;
-      const pv = HF.preview(g, f, prov), sk = HF.stockFor(g, f, prov);
-      q('#turn').textContent = f.crest + ' T' + g.turn;
+      const pv = HF.preview(g, f, prov), sk = HF.stockFor(g, f, prov), tr = HF.tradeRoutes(g, f).length;
+      const season = HF.season(g), SICON = ['🌸', '☀️', '🍂', '❄️'];
+      q('#turn').textContent = f.crest + ' T' + g.turn + ' ' + (SICON[season] || '');
+      q('#turn').title = HF.seasonName(season);
       q('#res').title = prov != null ? 'Provincia seleccionada' : '';
-      q('#res').innerHTML = (prov != null ? '<span>📍</span>' : '') + `<span>💰${sk.gold}<i class="${pv.netGold >= 0 ? 'pos' : 'neg'}">${fmt(pv.netGold)}</i></span><span>🌾${sk.food}<i class="${pv.netFood >= 0 ? 'pos' : 'neg'}">${fmt(pv.netFood)}</i></span><span>🧱${sk.wood}${pv.inc.wood ? `<i class="pos">${fmt(pv.inc.wood)}</i>` : ''}</span>`;
+      q('#res').innerHTML = (prov != null ? '<span>📍</span>' : '') + `<span>💰${sk.gold}<i class="${pv.netGold >= 0 ? 'pos' : 'neg'}">${fmt(pv.netGold)}</i></span><span>🌾${sk.food}<i class="${pv.netFood >= 0 ? 'pos' : 'neg'}">${fmt(pv.netFood)}</i></span><span>🧱${sk.wood}${pv.inc.wood ? `<i class="pos">${fmt(pv.inc.wood)}</i>` : ''}</span>${tr ? `<span title="Rutas comerciales activas">🛣${tr}</span>` : ''}`;
       q('#bUndo').disabled = !HF.canUndo(g);
       q('#bEnd').disabled = st.busy || !!g.over;
     }
@@ -108,8 +111,55 @@
       if (c.burn > 0) t += ` · 🕳 cenizas ${c.burn}`;
       if (c.fire > 0) t += ` · 🔥 arde ${c.fire}`;
       if (c.trap === 0) t += ' · 🪤 trampa propia';
+      if (c.cap && c.b === B.CIUDAD && c.o === 0 && g.f[0].loan) t += ` · 💳 deuda ${g.f[0].loan.turns} turnos`;
       if (c.o !== 0 || HF.visible(g, i)) t += ` · 🛡${HF.defenseAt(g, i)}`;
       return t;
+    }
+
+    // Panel contextual: describe la casilla y ofrece el empréstito en la capital.
+    function renderInfo(i, extra) {
+      const c = g.cells[i], canLoan = !!(c && c.cap && c.b === B.CIUDAD && c.o === 0 && !g.f[0].loan);
+      q('#info').innerHTML = describe(i) + (extra || '') +
+        (canLoan ? ' <button class="loanbtn" id="loanBtn">💰 Solicitar empréstito</button>' : '');
+      const b = q('#info #loanBtn');
+      if (b) b.onclick = e => {
+        e.stopPropagation();
+        const r = HF.loan(g, i);
+        if (!r.ok) { HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); return; }
+        HF.sfx('good');
+        HF.toast(`Empréstito: +${r.amount} oro · deuda ${r.perTurn}/turno`);
+        refresh(); renderInfo(i, extra);
+      };
+    }
+
+    // Barks diegéticos: 40% al tocar una unidad propia.
+    const BARK = {
+      INF: ['¡Firmes!', 'Listos para el avance.', 'Por la civilización.'],
+      ARC: ['Ojo avizor.', 'Cuerda tensada.', 'Diviso la vanguardia.'],
+      CAB: ['Al galope.', 'No podrán seguirnos.', 'La estepa nos llama.'],
+      SIE: ['Pólvora seca.', 'Ajustando alzas.', 'Los muros caerán.'],
+      BAR: ['Viento en popa.', 'Costas a la vista.', 'Profundidad segura.']
+    };
+    const pickBark = a => a[Math.floor(Math.random() * a.length)];
+    function bark(c) {
+      const u = c && c.u;
+      if (!u || u.owner !== 0 || g.over) return;
+      const now = performance.now();
+      if (st.barkAt && now - st.barkAt < 2500) return;
+      if (Math.random() > HF.CFG.barks.chance) return;
+      let txt, kind = 'info';
+      if (!c.sup || g.f[0].deficit) {
+        txt = pickBark(['Las raciones se acaban...', '¡Líneas cortadas!', 'Necesitamos provisiones.']);
+        kind = 'bad';
+      } else if (u.type === 'INF' && HF.hasTag(g.f[0], 'TESTUDO_SHIELD') && Math.random() < .45) {
+        txt = '¡Cierren filas!';
+      } else {
+        txt = pickBark(BARK[u.type] || BARK.INF);
+      }
+      st.barkAt = now;
+      st.bubbles.push({ i: c.i, txt, kind, life: HF.CFG.barks.life });
+      if (st.bubbles.length > 6) st.bubbles.shift();
+      pumpEvents();
     }
 
     // acciones alternativas sobre la misma casilla (mover/atacar vs. trampa/incendiar/sobornar)
@@ -133,7 +183,8 @@
       HF.sfx(r.kind === 'atk' ? 'good' : 'click');
       // el disparo parto no avanza: la unidad sigue en la casilla de origen y puede retirarse
       const u = g.cells[to].u || (r.shot ? g.cells[from].u : null);
-      if (u && u.owner === 0 && HF.ready(u) && r.kind !== 'fuse') select(r.shot ? from : to); else clearSel();
+      const at = r.shot ? from : to;
+      if (u && u.owner === 0 && HF.ready(u) && r.kind !== 'fuse') { select(at); renderInfo(at); } else clearSel();
       pumpEvents(); refresh(); afterAction();
     }
     function afterAction() { if (g.over) showEnd(); }
@@ -143,11 +194,11 @@
       const c = g.cells[i];
       if (st.pending) {
         if (st.pending.cells.has(i)) {
-          const p = st.pending, r = p.kind === 'unit' ? HF.recruit(g, p.item, i) : HF.build(g, p.item, i);
+          const p = st.pending, tier = p.tier || 1;
+          const r = p.kind === 'unit' ? HF.recruit(g, p.item, i, undefined, tier) : HF.build(g, p.item, i);
           st.focus = i;
           if (!r.ok) { HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); } else { HF.sfx('good'); }
-          if (p.kind === 'unit') p.cells = new Set(HF.recruitCells(g, p.item)); else p.cells = new Set(HF.buildCells(g, p.item));
-          const cost = p.kind === 'unit' ? HF.unitCost(g, g.f[0], p.item) : HF.buildCost(g, g.f[0], p.item);
+          if (p.kind === 'unit') p.cells = new Set(HF.recruitCells(g, p.item, tier)); else p.cells = new Set(HF.buildCells(g, p.item));
           if (!p.cells.size) { st.pending = null; closeDrawer(); }
           refresh(); drawerRender(); return;
         }
@@ -159,15 +210,17 @@
         act(st.sel, i);
         return;
       }
-      if (c.u && c.u.owner === 0 && HF.ready(c.u) && st.sel !== i) { select(i); info(describe(i) + ` · alcance ${st.opts.size} acciones`); refresh(); return; }
+      if (c.u && c.u.owner === 0 && HF.ready(c.u) && st.sel !== i) {
+        select(i); bark(c); renderInfo(i, ` · alcance ${st.opts.size} acciones`); refresh(); return;
+      }
       if (st.sel >= 0 && !st.opts.has(i) && i !== st.sel) HF.vibrate(30);
-      clearSel(); st.focus = i; info(describe(i)); refresh();
+      clearSel(); st.focus = i; renderInfo(i); refresh();
     }
     board.h.onTap = tap;
     board.h.onDragStart = i => {
       if (st.busy || g.over || st.pending) return false;
       const c = g.cells[i];
-      if (c && c.u && c.u.owner === 0 && HF.ready(c.u)) { if (st.sel !== i) { select(i); refresh(); } return true; }
+      if (c && c.u && c.u.owner === 0 && HF.ready(c.u)) { if (st.sel !== i) { select(i); bark(c); renderInfo(i, ` · alcance ${st.opts.size} acciones`); refresh(); } return true; }
       return false;
     };
     board.h.onDrop = (from, to) => { if (st.sel === from && st.opts.has(to)) act(from, to); else { HF.vibrate(50); HF.sfx('error'); refresh(); } };
@@ -180,22 +233,40 @@
       d.classList.remove('hidden');
       const cs = c => Object.entries(c).map(([k, v]) => ({ gold: '💰', food: '🌾', wood: '🧱' }[k] + v)).join(' ');
       const afford = c => HF.affordAny(g, f, c);
-      let items;
       if (st.drawer === 'build') {
-        items = [B.CAMINO, B.CAMPAMENTO, B.PUEBLO, B.BASTION, B.CIUDAD];
-        d.innerHTML = items.map(b => { const c = HF.buildCost(g, f, b); return `<button data-b="${b}" class="${st.pending && st.pending.item === b ? 'sel' : ''}" style="${afford(c) ? '' : 'opacity:.5'}">${HF.art.html('build', b, HF.BICON[b])} ${HF.BNAME[b]}<small>${cs(c)}</small></button>`; }).join('');
-      } else {
-        items = Object.keys(HF.UNITS);
-        d.innerHTML = items.map(t => { const c = HF.unitCost(g, f, t); return `<button data-u="${t}" class="${st.pending && st.pending.item === t ? 'sel' : ''}" style="${afford(c) ? '' : 'opacity:.5'}">${HF.art.html('unit', t, HF.UNITS[t].icon)} ${HF.UNITS[t].name}<small>${cs(c)}</small></button>`; }).join('');
+        const bs = [B.CAMINO, B.CAMPAMENTO, B.PUEBLO, B.BASTION, B.CIUDAD];
+        d.innerHTML = bs.map(b => { const c = HF.buildCost(g, f, b); return `<button data-b="${b}" class="${st.pending && st.pending.item === b ? 'sel' : ''}" style="${afford(c) ? '' : 'opacity:.5'}">${HF.art.html('build', b, HF.BICON[b])} ${HF.BNAME[b]}<small>${cs(c)}</small></button>`; }).join('');
+        d.querySelectorAll('button[data-b]').forEach(b => b.onclick = () => {
+          const item = +b.dataset.b, cells = new Set(HF.buildCells(g, item)), cost = HF.buildCost(g, f, item);
+          if (!afford(cost)) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Recursos insuficientes'); }
+          if (!cells.size) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Ninguna provincia con casillas válidas puede pagarlo'); }
+          clearSel(); st.pending = { kind: 'build', item, cells }; HF.sfx('click');
+          info('Toca una casilla verde'); drawerRender(); refresh();
+        });
+        return;
       }
-      d.querySelectorAll('button').forEach(b => b.onclick = () => {
-        const kind = b.dataset.b ? 'build' : 'unit', item = b.dataset.b ? +b.dataset.b : b.dataset.u;
-        const cells = new Set(kind === 'build' ? HF.buildCells(g, item) : HF.recruitCells(g, item));
-        const cost = kind === 'build' ? HF.buildCost(g, f, item) : HF.unitCost(g, f, item);
+      // Reclutamiento directo: I / II / III (1x, 2x, 3x coste)
+      const pend = st.pending && st.pending.kind === 'unit' ? st.pending : null;
+      d.innerHTML = Object.keys(HF.UNITS).map(t => {
+        const p = pend && pend.item === t ? pend : null, tier = p ? (p.tier || 1) : 1;
+        const c = HF.recruitCost(g, f, t, tier);
+        return `<div class="ucard"><button data-u="${t}" class="${p ? 'sel' : ''}" style="${afford(c) ? '' : 'opacity:.5'}">${HF.art.html('unit', t, HF.UNITS[t].icon)} ${HF.UNITS[t].name}<small>${cs(c)}</small></button>
+          <div class="tierpill">${[1, 2, 3].map(k => `<button data-u="${t}" data-tier="${k}" class="${p && (p.tier || 1) === k ? 'sel' : ''}">${['I', 'II', 'III'][k - 1]}</button>`).join('')}</div></div>`;
+      }).join('');
+      d.querySelectorAll('button[data-u]').forEach(b => b.onclick = () => {
+        const type = b.dataset.u, explicit = !!b.dataset.tier;
+        let tier = explicit ? +b.dataset.tier : 1;
+        if (!explicit) {
+          const now = performance.now();
+          if (st.lastPick && st.lastPick.type === type && now - st.lastPick.t < 420) tier = Math.min(3, (st.lastPick.tier || 1) + 1);
+          st.lastPick = { type, tier, t: now };
+        } else st.lastPick = { type, tier, t: performance.now() };
+        const cost = HF.recruitCost(g, f, type, tier), cells = new Set(HF.recruitCells(g, type, tier));
         if (!afford(cost)) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Recursos insuficientes'); }
         if (!cells.size) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Ninguna provincia con casillas válidas puede pagarlo'); }
-        clearSel(); st.pending = { kind, item, cells }; HF.sfx('click');
-        info('Toca una casilla verde'); drawerRender(); refresh();
+        clearSel(); st.pending = { kind: 'unit', item: type, tier, cells }; HF.sfx('click');
+        info(`Toca una casilla verde · ${HF.UNITS[type].name} ${['I', 'II', 'III'][tier - 1]}`);
+        drawerRender(); refresh();
       });
     }
     function toggleDrawer(k) {
@@ -223,7 +294,7 @@
     };
     const onHide = () => { if (document.visibilityState === 'hidden' && cur && cur.g === g) save(); };
     document.addEventListener('visibilitychange', onHide); G.addEventListener('pagehide', save);
-    HF.onLeave = () => { document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null; };
+    HF.onLeave = () => { board.stopAnim(); document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null; };
 
     // ----- menús -----
     function scoreboard() {

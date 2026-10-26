@@ -216,7 +216,7 @@
     el.innerHTML = `<div class="screen">${header('Ajustes')}<div class="scroll">
       ${row('sound', '🔊 Sonido')}${row('vibrate', '📳 Vibración')}${row('grid', '▦ Rejilla del mapa')}
       <div class="card"><div class="dim small">Todos los datos se guardan localmente en este dispositivo.</div><br><button id="reset">🗑 Borrar todos los datos</button></div>
-      <div class="dim small">HexFrontier v1.0 · build 40 · sin multijugador</div></div></div>`;
+      <div class="dim small">HexFrontier v1.0 · build 44 · sin multijugador</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); HF.go('settings'); });
     el.querySelector('#reset').onclick = () => { if (confirm('¿Borrar todos los datos locales?')) { ['tribe_profile', 'campaign_progress', 'daily_challenge', 'player_statistics', 'savegame_active', 'maps', 'newgame_opts'].forEach(k => HF.store.del(k)); HF.go('hub'); } };

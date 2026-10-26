@@ -32,7 +32,20 @@
 
     // talar un árbol al entrar en su casilla
     chopWood: 10, chopWoodEnclave: 20,
-    treeSpreadChance: 0.05,                   // por árbol y vecino libre (llano/colina, sin edificio ni unidad) cada ronda
+    treeSpreadChance: 0.08,                   // por árbol y vecino libre (llano/colina, sin edificio ni unidad) cada ronda
+
+    // --- expansión "efecto acuario" ---
+    seasons: {
+      length: 6,                              // turnos por estación
+      springTreeMult: 2,                      // primavera duplica la propagación de árboles
+      summerShipMove: 1,                      // verano: +1 casilla de navegación en MAR
+      autumnWheatFood: 1                      // otoño: +1 comida por casilla de trigo
+    },
+    roads: { fastCost: 0.25 },                // camino/asentamiento -> camino/asentamiento
+    commerce: { routeGold: 2, maxRoutes: 3 }, // +2 oro por extremo y ruta, máximo 3
+    loan: { amount: 50, perTurn: 6, turns: 10 }, // +50 oro, -6/turno durante 10 turnos
+    barks: { chance: 0.4, life: 2 },          // probabilidad y duración de las burbujas de tropa
+    ambience: { maxParticles: 25, clouds: 3, fps: 15 }, // límites del tablero animado
 
     // unidades: coste, mantenimiento por turno según nivel (up = comida, upGold = oro), edificios de origen,
     // movimiento (casillas propias) y rango de ataque

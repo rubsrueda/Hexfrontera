@@ -10,6 +10,7 @@
     this.cam = { x: 0, y: 0, z: 1 }; this.size = 24;
     this.R = 7; this.cells = null; this.fogMap = null; this.over = new Map(); this.sel = -1; this.drag = null;
     this.mode = 'play';
+    this.parts = null; this._raf = 0; this._animLast = 0; this._drawT = 0;
     this.ptrs = new Map(); this._bind();
     this._zoomUI();
     this.dpr = Math.min(2, G.devicePixelRatio || 1);
@@ -41,15 +42,68 @@
   P.resize = function () {
     const p = this.cv.parentElement, w = p.clientWidth, hh = p.clientHeight;
     this.cv.width = w * this.dpr; this.cv.height = hh * this.dpr; this.cv.style.width = w + 'px'; this.cv.style.height = hh + 'px';
-    this.W = w; this.H = hh; this.draw();
+    this.W = w; this.H = hh; this.parts = null; this.draw();
   };
-  P.setMap = function (R, cells) { this.R = R; this.cells = cells; this.cam.z = 1; this.fit(); };
+  // --- ambiente del tablero (agua, nubes, partículas) ---
+  P._initParts = function () {
+    const n = Math.max(0, Math.min(40, (HF.CFG.ambience && HF.CFG.ambience.maxParticles) || 25));
+    const winter = this.game && HF.season && HF.season(this.game) === 3;
+    this._partsWinter = winter;
+    const w = Math.max(1, this.W), h = Math.max(1, this.H);
+    this.parts = [];
+    for (let k = 0; k < n; k++) {
+      const bird = !winter && k % 6 === 0;
+      this.parts.push({
+        x: Math.random() * w, y: Math.random() * h,
+        vx: winter ? -6 - Math.random() * 10 : (bird ? 18 + Math.random() * 16 : 3 + Math.random() * 7),
+        vy: winter ? 14 + Math.random() * 20 : (bird ? -2 + Math.random() * 4 : -2 + Math.random() * 4),
+        s: bird ? 5 : (winter ? 1.4 : 1.1 + Math.random() * 1.4),
+        bird
+      });
+    }
+  };
+  P._updateParts = function (dt) {
+    if (!this.parts) return;
+    const w = Math.max(1, this.W), h = Math.max(1, this.H);
+    for (const p of this.parts) {
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.x < -20) p.x = w + 20; else if (p.x > w + 20) p.x = -20;
+      if (p.y < -20) p.y = h + 20; else if (p.y > h + 20) p.y = -20;
+    }
+  };
+  P.startAnim = function () {
+    if (this._raf || !G.requestAnimationFrame) return;
+    if (!this.parts) this._initParts();
+    const me = this;
+    const tick = t => {
+      if (!me._raf) return;
+      me._raf = G.requestAnimationFrame(tick);
+      if (G.document && G.document.hidden) return;
+      const fps = Math.max(6, Math.min(30, (HF.CFG.ambience && HF.CFG.ambience.fps) || 15));
+      if (t - me._drawT < 1000 / fps) return;
+      const dt = me._animLast ? Math.min(.12, (t - me._animLast) / 1000) : .016;
+      me._animLast = t; me._drawT = t;
+      const winterNow = me.game && HF.season && HF.season(me.game) === 3;
+      if (!me.parts || me._partsWinter !== winterNow) me._initParts();
+      me._updateParts(dt);
+      me.draw();
+    };
+    this._raf = G.requestAnimationFrame(tick);
+  };
+  P.stopAnim = function () {
+    if (this._raf && G.cancelAnimationFrame) G.cancelAnimationFrame(this._raf);
+    this._raf = 0;
+  };
+  P.setMap = function (R, cells) { this.R = R; this.cells = cells; this.cam.z = 1; this.parts = null; this.fit(); };
   P.fit = function () {
     const rw = (2 * this.R + 1) * this.size * S3, rh = (2 * this.R + 1) * this.size * 1.5;
     this.cam.z = Math.max(ZMIN, Math.min(2, Math.min(this.W / rw, this.H / rh) * 1.05));
     this.cam.x = 0; this.cam.y = 0; this.draw();
   };
   P.pos = function (c) { return [this.size * S3 * (c.q + c.r / 2), this.size * 1.5 * c.r]; };
+  P._lift = function (c, fs) {
+    return c.t === T.MONTANA ? Math.max(5, fs * .24) : c.t === T.COLINA ? Math.max(3, fs * .12) : 0;
+  };
   P.toScreen = function (x, y) { return [(x - this.cam.x) * this.cam.z + this.W / 2, (y - this.cam.y) * this.cam.z + this.H / 2]; };
   P.fromScreen = function (sx, sy) { return [(sx - this.W / 2) / this.cam.z + this.cam.x, (sy - this.H / 2) / this.cam.z + this.cam.y]; };
   P.hit = function (sx, sy) {
@@ -131,13 +185,27 @@
     const g = this.game, fog = this.fogMap, grid = HF.settings().grid;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const fs = s * z;
+    const now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
+    const season = g && HF.season ? HF.season(g) : 0;
+    const winter = season === 3;
     const fogPat = fog ? HF.art.fogPattern(ctx, this.cam, this.W, this.H, .6) : null;
     const items = [];
     for (const c of this.cells) {
       if (!c) continue;
-      const [wx, wy] = this.pos(c), [x, y] = this.toScreen(wx, wy);
-      if (x < -fs * 2 || y < -fs * 2 || x > this.W + fs * 2 || y > this.H + fs * 2) continue;
+      const [wx, wy] = this.pos(c), [x, y0] = this.toScreen(wx, wy);
+      if (x < -fs * 2 || y0 < -fs * 2 || x > this.W + fs * 2 || y0 > this.H + fs * 2) continue;
       const f = fog ? fog[c.i] : 2;
+      // relieve 2.5D: colinas y montañas se elevan sobre la base
+      const lift = f === 0 ? 0 : this._lift(c, fs);
+      const y = y0 - lift;
+      if (f > 0) {
+        ctx.fillStyle = 'rgba(0,0,0,.22)';
+        hexPath(ctx, x + fs * .045, y0 + fs * .06, fs * .98); ctx.fill();
+        if (c.t === T.MONTANA) {
+          ctx.fillStyle = 'rgba(0,0,0,.16)';
+          hexPath(ctx, x + fs * .18, y0 + fs * .12, fs * .86); ctx.fill();
+        }
+      }
       hexPath(ctx, x, y, fs * 1.0);
       if (f === 0) {
         ctx.fillStyle = '#101a2c'; ctx.fill();
@@ -145,16 +213,38 @@
         continue;
       }
       ctx.fillStyle = TCOL[c.t]; ctx.fill();
+      // brillo de agua procedural
+      if (c.t === T.MAR || c.t === T.RIO) {
+        const wave = (Math.sin(now * .002 + c.q * .9 + c.r * .5) + 1) * .5;
+        ctx.globalAlpha = (winter ? .08 : .03) + wave * (winter ? .12 : .09);
+        ctx.fillStyle = winter ? '#cbe6ff' : '#aee6ff';
+        hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
+      }
+      if (winter) {
+        ctx.globalAlpha = .12; ctx.fillStyle = '#9fc4e8'; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
+        if (c.t === T.RIO) {
+          ctx.globalAlpha = .34; ctx.fillStyle = '#dff3ff'; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
+          ctx.strokeStyle = 'rgba(255,255,255,.72)'; ctx.lineWidth = Math.max(1, fs * .05);
+          ctx.beginPath(); ctx.moveTo(x - fs * .42, y + fs * .08); ctx.lineTo(x - fs * .1, y - fs * .06); ctx.lineTo(x + fs * .18, y + fs * .1); ctx.stroke();
+        }
+      }
       if (c.t === T.COLINA || c.t === T.MONTANA) {
         ctx.fillStyle = TCOL2[c.t]; ctx.beginPath(); ctx.moveTo(x - fs * .5, y + fs * .35); ctx.lineTo(x, y - fs * (c.t === T.MONTANA ? .6 : .35)); ctx.lineTo(x + fs * .5, y + fs * .35); ctx.closePath(); ctx.fill();
+        if (c.t === T.MONTANA && winter) {
+          ctx.fillStyle = 'rgba(255,255,255,.52)';
+          ctx.beginPath(); ctx.moveTo(x - fs * .18, y - fs * .2); ctx.lineTo(x, y - fs * .6); ctx.lineTo(x + fs * .18, y - fs * .2); ctx.closePath(); ctx.fill();
+        }
       }
-      if (c.t === T.RIO) { ctx.strokeStyle = '#a5d8f5'; ctx.lineWidth = fs * .25; ctx.beginPath(); ctx.moveTo(x - fs * .6, y - fs * .2); ctx.quadraticCurveTo(x, y + fs * .5, x + fs * .6, y - fs * .1); ctx.stroke(); }
+      if (c.t === T.RIO) { ctx.strokeStyle = winter ? '#e6f7ff' : '#a5d8f5'; ctx.lineWidth = fs * .25; ctx.beginPath(); ctx.moveTo(x - fs * .6, y - fs * .2); ctx.quadraticCurveTo(x, y + fs * .5, x + fs * .6, y - fs * .1); ctx.stroke(); }
       if (c.o >= 0) {
         const col = this.colors[c.o];
         ctx.globalAlpha = c.sup ? .38 : .2; ctx.fillStyle = col; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
         ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, fs * .12); hexPath(ctx, x, y, fs * .92); ctx.stroke();
         if (!c.sup) { ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1; for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(x - fs * .5 + k * fs * .3, y - fs * .6); ctx.lineTo(x - fs * .9 + k * fs * .3, y + fs * .5); ctx.stroke(); } }
       }
+      // borde superior iluminado: grosor de ficha física
+      ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1;
+      hexPath(ctx, x, y, fs * .97); ctx.stroke();
       if (c.fire > 0) { ctx.fillStyle = 'rgba(239,68,68,.32)'; hexPath(ctx, x, y, fs); ctx.fill(); }
       else if (c.burn > 0) { ctx.fillStyle = 'rgba(30,25,20,.42)'; hexPath(ctx, x, y, fs); ctx.fill(); }
       if (grid) { ctx.strokeStyle = 'rgba(0,0,0,.22)'; ctx.lineWidth = 1; hexPath(ctx, x, y, fs); ctx.stroke(); }
@@ -204,25 +294,80 @@
         if (fogPat) { ctx.globalAlpha = .5; ctx.fillStyle = fogPat; ctx.fill(); ctx.globalAlpha = 1; }
       }
     }
+    this._drawClouds(ctx, now);
+    if (this.mode === 'play' && this.parts) this._drawParts(ctx, winter);
+    if (this.mode === 'play' && this.game && this.game.f && this.game.f[0] && HF.tradeRoutes) {
+      const routes = HF.tradeRoutes(this.game, this.game.f[0]);
+      if (routes.length) {
+        ctx.save(); ctx.strokeStyle = 'rgba(245,185,66,.38)'; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+        for (const r of routes) {
+          const a = this.cells[r.a], b = this.cells[r.b];
+          if (!a || !b) continue;
+          const [ax, ay0] = this.toScreen(...this.pos(a)), [bx, by0] = this.toScreen(...this.pos(b));
+          const ay = ay0 - this._lift(a, fs), by = by0 - this._lift(b, fs);
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 - fs * .8, bx, by); ctx.stroke();
+        }
+        ctx.setLineDash([]); ctx.restore();
+      }
+    }
     for (const [i, o] of this.over) {
       const c = this.cells[i]; if (!c) continue;
-      const [x, y] = this.toScreen(...this.pos(c));
+      const [x, y0] = this.toScreen(...this.pos(c));
+      const y = y0 - this._lift(c, fs);
       hexPath(ctx, x, y, fs * .96); ctx.fillStyle = o.fill; ctx.fill();
       ctx.strokeStyle = o.stroke || o.fill; ctx.lineWidth = 2; ctx.stroke();
       if (o.label) { ctx.fillStyle = '#fff'; ctx.font = 'bold ' + Math.max(9, fs * .45) + 'px monospace'; ctx.fillText(o.label, x, y - fs * .62); }
     }
-    if (this.sel >= 0) { const c = this.cells[this.sel]; const [x, y] = this.toScreen(...this.pos(c)); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; hexPath(ctx, x, y, fs); ctx.stroke(); }
+    if (this.sel >= 0) {
+      const c = this.cells[this.sel]; const [x, y0] = this.toScreen(...this.pos(c));
+      const y = y0 - this._lift(c, fs);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; hexPath(ctx, x, y, fs); ctx.stroke();
+    }
     if (this.drag) {
       const u = this.cells[this.drag.from].u;
       if (u) { ctx.globalAlpha = .85; ctx.fillStyle = this.colors[u.owner]; ctx.beginPath(); ctx.arc(this.drag.x, this.drag.y - 20, fs * .6, 0, 7); ctx.fill(); if (!HF.art.draw(ctx, 'unit', u.type, this.drag.x, this.drag.y - 20, fs * 1.3, fs * 1.3)) { ctx.font = fs * .8 + 'px sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(HF.UNITS[u.type].icon, this.drag.x, this.drag.y - 20); } ctx.globalAlpha = 1; }
     }
     if (this.bubbles) for (const b of this.bubbles) {
-      const [x, y] = this.toScreen(...this.pos(this.cells[b.i]));
+      const c = this.cells[b.i];
+      const [x, y0] = this.toScreen(...this.pos(c));
+      const y = y0 - this._lift(c, fs);
       ctx.globalAlpha = Math.min(1, b.life); ctx.font = 'bold 12px monospace';
       const w = ctx.measureText(b.txt).width + 12;
       ctx.fillStyle = b.kind === 'bad' ? '#7f1d1d' : b.kind === 'good' ? '#14532d' : '#1e293b';
       ctx.fillRect(x - w / 2, y - fs * 1.8, w, 20); ctx.fillStyle = '#fff'; ctx.fillText(b.txt, x, y - fs * 1.8 + 10); ctx.globalAlpha = 1;
     }
+  };
+  P._drawClouds = function (ctx, now) {
+    const n = Math.max(0, Math.min(4, (HF.CFG.ambience && HF.CFG.ambience.clouds) || 3));
+    if (!n) return;
+    const seed = (this.game && this.game.seed) || 1;
+    const cw = Math.max(160, this.W * .32), ch = cw * .28, span = this.W + cw * 2;
+    ctx.save();
+    for (let k = 0; k < n; k++) {
+      const x = ((now * .006 * (1 + k * .25) + (seed % 997) * .7 + k * this.W * .36) % span) - cw;
+      const y = this.H * (.2 + .27 * k) + Math.sin(now * .00025 + k * 1.7) * 18;
+      const grd = ctx.createRadialGradient(x, y, 4, x, y, cw * .62);
+      grd.addColorStop(0, 'rgba(0,0,0,.09)'); grd.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.ellipse(x, y, cw * .65, ch, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  };
+  P._drawParts = function (ctx, winter) {
+    if (!this.parts || !this.parts.length) return;
+    ctx.save();
+    for (const p of this.parts) {
+      if (p.bird) {
+        ctx.strokeStyle = 'rgba(240,245,255,.38)'; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(p.x - 4, p.y); ctx.lineTo(p.x, p.y - 3); ctx.lineTo(p.x + 4, p.y); ctx.stroke();
+      } else if (winter) {
+        ctx.fillStyle = 'rgba(255,255,255,.58)'; ctx.fillRect(p.x, p.y, p.s, p.s);
+      } else {
+        ctx.fillStyle = 'rgba(245,220,140,.45)';
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
   };
   P.colors = HF.COLORS;
   HF.Board = Board;
