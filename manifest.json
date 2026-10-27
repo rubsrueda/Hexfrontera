@@ -4,7 +4,7 @@
   "start_url": "index.html",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0b1424",
-  "theme_color": "#0b1424",
+  "background_color": "#0A0F1D",
+  "theme_color": "#0A0F1D",
   "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
 }
