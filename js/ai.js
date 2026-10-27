@@ -157,7 +157,7 @@
             if (!isW(g.cells[y]) || wf[y] >= 999) continue;
             const o = opts.get(y);
             if (y !== ci && !(u.mv > 0 && o && o.k === 'move')) continue;
-            const s = ({ CAB: 3, INF: 2 }[c.u.type] || 1) + c.u.tier - wf[y] * .05;
+            const s = ({ CAB: 3, INF: 2, ENG: 2 }[c.u.type] || 1) + c.u.tier - wf[y] * .05;
             if (s > ps) { ps = s; pick = { from: c.i, to: y }; }
           }
         }
@@ -232,6 +232,7 @@
     const army = () => g.cells.filter(c => c && c.u && c.u.owner === me).length;
     while (n < maxN) {
       const wantTypes = ['INF'];
+      if (g.turn > 8 && army() % 6 === 5) wantTypes.unshift('ENG');
       if (has(f, 'TACTIC_MOBILE_WAR') || has(f, 'CIV_TYPE_NOMAD')) wantTypes.unshift('CAB');
       const A = HF.CFG.ai;
       if (g.turn > A.archerFromTurn && army() % A.archerEvery === A.archerEvery - 1) wantTypes.unshift('ARC');

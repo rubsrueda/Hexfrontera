@@ -139,7 +139,7 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
       CIV_TYPE_SEDENTARY: 'Ciudades fijas. +3 oro por turno.',
       CIV_TYPE_NOMAD: 'Caballería sin penalización de colina y menor coste de mantenimiento.',
       EXTRACTIVE_ENCLAVE: 'Talar da +20 madera en lugar de +10.',
-      ASCETIC_COMMUNE: 'Las fusiones solo llegan a nivel 2; -1 de mantenimiento en infantería.',
+      ASCETIC_COMMUNE: 'Las fusiones solo llegan a nivel 2; -1 de mantenimiento en infantería e ingenieros.',
       ZEALOT_MARTYRDOM: 'Con déficit tienes 2 turnos de gracia, luego pierdes todas las unidades.',
       INTEGRATION_PRESERVE: 'Con déficit, las casillas conquistadas se rebelan.',
       SERFDOM_CHAIN: '-50% de madera en mejoras.',
@@ -147,16 +147,16 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
       KNIGHTLY_ORDER: 'Caballería defensa 2 y mantenimiento x2.',
       // --- logística, entorno y asentamientos ---
       CIV_TYPE_THALASSOCRACY: 'Las unidades de tierra se hacen a la mar sin puerto ni barco: entrar en río o mar cuesta 1 paso y la unidad aún puede atacar.',
-      SCOUT_NETWORK: 'La infantería cruza montañas a coste normal (1 paso) sin camino de piedra.',
+      SCOUT_NETWORK: 'Los ingenieros tienen +1 de movimiento y operan sin penalización en montañas y ríos.',
       SACRED_SWAMP: 'La unidad enemiga que entra en un río propio agota allí su turno: no puede moverse ni atacar más ese turno.',
       FORTIFIED_ESTATE: 'El bastión se erige al instante: no consume acción de unidad ni requiere esperar al turno siguiente.',
       PACKABLE_YURTS: 'Sobre un campamento propio la unidad puede Empacar: lo retira y devuelve 15 de madera para reubicarlo.',
       SCORCHED_EARTH: 'Al abandonar una casilla propia hacia territorio seguro, la casilla queda en cenizas 4 turnos: el enemigo no puede capturarla ni construir en ella.'
     },
     Arma: {
-      TACTIC_HEAVY_LINE: 'Infantería con alcance de movimiento 1.',
+      TACTIC_HEAVY_LINE: 'Infantería con alcance 1; si parte de una ciudad o pueblo, alcance 3.',
       TACTIC_MOBILE_WAR: 'Caballería alcance 3 y sin penalización de colina.',
-      TESTUDO_SHIELD: '+1 defensa por infantería adyacente (máx. 2).',
+      TESTUDO_SHIELD: '+1 defensa por infantería o ingeniero adyacente (máx. 2).',
       PIKE_WALL: 'La caballería enemiga pierde su carga.',
       MIL_LEVY_SWARM: 'Infantería nivel 1 a mitad de coste.',
       CHISEL_TIP_ARROWS: 'Los arqueros degradan 2 de defensa.',

@@ -46,7 +46,12 @@
       q('#turn').textContent = f.crest + ' T' + g.turn + ' ' + (SICON[season] || '');
       q('#turn').title = HF.seasonName(season);
       q('#res').title = prov != null ? 'Provincia seleccionada' : '';
-      q('#res').innerHTML = (prov != null ? '<span>📍</span>' : '') + `<span>💰${sk.gold}<i class="${pv.netGold >= 0 ? 'pos' : 'neg'}">${fmt(pv.netGold)}</i></span><span>🌾${sk.food}<i class="${pv.netFood >= 0 ? 'pos' : 'neg'}">${fmt(pv.netFood)}</i></span><span>🧱${sk.wood}${pv.inc.wood ? `<i class="pos">${fmt(pv.inc.wood)}</i>` : ''}</span>${tr ? `<span title="Rutas comerciales activas">🛣${tr}</span>` : ''}`;
+      const loan = pv.loan || 0;
+      q('#res').innerHTML = (prov != null ? '<span>📍</span>' : '') +
+        `<span title="Ingreso bruto +${pv.inc.gold} · mantenimiento −${pv.upkeepGold}${loan ? ` · préstamo −${loan}` : ''}">💰${sk.gold}<i class="pos">+${pv.inc.gold}</i><small class="upk">−${pv.upkeepGold + loan}</small></span>` +
+        `<span title="Ingreso bruto +${pv.inc.food} · mantenimiento −${pv.upkeep}">🌾${sk.food}<i class="pos">+${pv.inc.food}</i><small class="upk">−${pv.upkeep}</small></span>` +
+        `<span>🧱${sk.wood}${pv.inc.wood ? `<i class="pos">+${pv.inc.wood}</i>` : ''}</span>` +
+        `${tr ? `<span title="Rutas comerciales activas">🛣${tr}</span>` : ''}`;
       q('#bUndo').disabled = !HF.canUndo(g);
       q('#bEnd').disabled = st.busy || !!g.over;
     }
@@ -84,7 +89,7 @@
       for (; st.evPtr < g.events.length; st.evPtr++) {
         const e = g.events[st.evPtr];
         if (e.i == null || !HF.visible(g, e.i)) { if (e.i == null) HF.toast(e.txt, 2800); continue; }
-        st.bubbles.push({ i: e.i, txt: e.txt, kind: e.kind, life: 3 });
+        st.bubbles.push({ i: e.i, txt: e.txt, kind: e.kind, life: 3, born: performance.now() });
       }
       if (st.bubbles.length && !st.anim) {
         st.anim = true; let last = performance.now();
@@ -103,9 +108,10 @@
       const c = g.cells[i];
       if (!HF.visible(g, i) && g.fogMap[i] === 0) return 'Territorio inexplorado';
       let t = `${HF.TNAME[c.t]}${c.b ? ' · ' + HF.BICON[c.b] + HF.BNAME[c.b] : ''}${c.res ? ' · ' + ['', 'Oro', 'Trigo', 'Madera'][c.res] : ''}`;
-      t += c.o >= 0 ? ` · ${g.f[c.o].crest} ${HF.esc(g.f[c.o].name)}${c.sup ? '' : ' · AISLADO'}` : ' · Neutral';
+      t += c.o >= 0 ? ` · ${g.f[c.o].crest} ${HF.esc(g.f[c.o].name)}${(c.sup && c.iso !== g.turn) ? '' : ' · AISLADO'}` : ' · Neutral';
       if (c.u && (c.u.owner === 0 || HF.visible(g, i))) t += ` · ${HF.UNITS[c.u.type].icon}${HF.UNITS[c.u.type].name} N${c.u.tier}`;
       if (c.u && c.u.owner === 0) t += ` · 👣${c.u.mv > 0 ? '✔' : '✖'} ⚔${c.u.at > 0 ? '✔' : '✖'}`;
+      if (c.u && c.u.owner === 0 && HF.unitRange) t += ` · alcance ${HF.unitRange(g, c.u, c)}`;
       if (c.u && c.u.owner === 0) { const D = HF.UNITS[c.u.type], k = Math.min(c.u.tier, D.up.length) - 1; t += ` · paga 💰${D.upGold[k]} 🌾${D.up[k]}`; }
       if (c.u && c.u.cargo && (c.u.owner === 0 || HF.visible(g, i))) { const k = c.u.cargo; t += ` · ⚓ lleva ${HF.UNITS[k.type].icon}${HF.UNITS[k.type].name} N${k.tier}${c.u.owner === 0 ? ' 👣' + (k.mv > 0 ? '✔' : '✖') : ''}`; }
       if (c.wonder) t += ` · 🏛 Pirámide${c.o >= 0 ? ' ' + (g.f[c.o].wonderTurns || 0) + '/' + HF.CFG.doctrine.wonderStandTurns : ''}`;
@@ -138,6 +144,7 @@
     // Barks diegéticos: 40% al tocar una unidad propia.
     const BARK = {
       INF: ['¡Firmes!', 'Listos para el avance.', 'Por la civilización.'],
+      ENG: ['Puente listo.', 'La montaña no nos detiene.', 'Abriendo camino.'],
       ARC: ['Ojo avizor.', 'Cuerda tensada.', 'Diviso la vanguardia.'],
       CAB: ['Al galope.', 'No podrán seguirnos.', 'La estepa nos llama.'],
       SIE: ['Pólvora seca.', 'Ajustando alzas.', 'Los muros caerán.'],
@@ -154,13 +161,13 @@
       if (!c.sup || g.f[0].deficit) {
         txt = pickBark(['Las raciones se acaban...', '¡Líneas cortadas!', 'Necesitamos provisiones.']);
         kind = 'bad';
-      } else if (u.type === 'INF' && HF.hasTag(g.f[0], 'TESTUDO_SHIELD') && Math.random() < .45) {
+      } else if ((u.type === 'INF' || u.type === 'ENG') && HF.hasTag(g.f[0], 'TESTUDO_SHIELD') && Math.random() < .45) {
         txt = '¡Cierren filas!';
       } else {
         txt = pickBark(BARK[u.type] || BARK.INF);
       }
       st.barkAt = now;
-      st.bubbles.push({ i: c.i, txt, kind, life: HF.CFG.barks.life });
+      st.bubbles.push({ i: c.i, txt, kind, life: HF.CFG.barks.life, born: performance.now() });
       if (st.bubbles.length > 6) st.bubbles.shift();
       pumpEvents();
     }
@@ -181,9 +188,24 @@
     }
 
     function act(from, to, kind) {
+      const target = g.cells[to], uBefore = g.cells[from] && g.cells[from].u;
+      const beforeSup = g.cells.map(c => !!(c && c.sup));
+      const wasCap = !!(target && target.cap), wasBastion = !!(target && target.b === B.BASTION);
       const r = HF.act(g, from, to, kind);
-      if (!r.ok) { HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); return; }
+      if (!r.ok) {
+        if (wasBastion && (kind === 'atk' || kind === 'siege')) board.burst('stone', to, 7);
+        HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); return;
+      }
       HF.sfx(r.kind === 'atk' ? 'good' : 'click');
+      // salto parabólico del soldado al moverse, talar o conquistar
+      if (uBefore && !r.shot && (r.kind === 'move' || r.kind === 'chop' || (r.kind === 'atk' && g.cells[to].u))) board.hopTo(from, to, uBefore);
+      if (r.kind === 'chop') board.burst('wood', to, 4);
+      if (wasBastion && (r.kind === 'atk' || r.kind === 'siege')) board.burst('stone', to, 7);
+      if (r.kind === 'siege') { board.shake(80, 2); board.burst('stone', to, 8); }
+      if (r.kind === 'atk' && (wasCap || wasBastion)) board.shake(80, 2);
+      const newlyIsolated = [];
+      g.cells.forEach((c, i) => { if (c && c.o >= 0 && !c.sup && beforeSup[i]) newlyIsolated.push(i); });
+      if (newlyIsolated.length) board.pulseCells(newlyIsolated);
       // el disparo parto no avanza: la unidad sigue en la casilla de origen y puede retirarse
       const u = g.cells[to].u || (r.shot ? g.cells[from].u : null);
       const at = r.shot ? from : to;
@@ -415,7 +437,7 @@
       bg.addColorStop(0, '#10243f'); bg.addColorStop(1, '#0a1424');
       x.fillStyle = bg; x.fillRect(0, 0, w, h);
       // cuadrícula de referencia
-      x.font = '9px monospace'; x.textBaseline = 'middle'; x.textAlign = 'right';
+      x.font = '600 9px "Plus Jakarta Sans", sans-serif'; x.textBaseline = 'middle'; x.textAlign = 'right';
       for (const p of [0, 25, 50, 75, 100]) {
         const py = base - (base - top) * p / 100;
         x.strokeStyle = 'rgba(138,160,200,.14)'; x.lineWidth = 1;
@@ -430,7 +452,7 @@
         x.beginPath(); x.moveTo(px, top); x.lineTo(px, base); x.stroke();
         x.fillStyle = '#8aa0c8'; x.fillText('T' + Math.round(1 + (tmax - 1) * i / 4), px, base + 4);
       }
-      x.fillStyle = '#8aa0c8'; x.font = '10px monospace'; x.textAlign = 'left'; x.textBaseline = 'top';
+      x.fillStyle = '#8aa0c8'; x.font = '600 10px "Plus Jakarta Sans", sans-serif'; x.textAlign = 'left'; x.textBaseline = 'top';
       x.fillText('Territorio por turno', padL, 2);
       x.lineJoin = 'round'; x.lineCap = 'round';
       g.f.forEach((f, k) => {
@@ -465,7 +487,7 @@
             x.beginPath(); x.arc(p.x, p.y, 3, 0, Math.PI * 2); x.fillStyle = f.color; x.fill();
             x.font = '11px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'bottom';
             x.fillText('💀', p.x, p.y - 3);
-            x.textAlign = 'left'; x.textBaseline = 'top'; x.font = '10px monospace';
+            x.textAlign = 'left'; x.textBaseline = 'top'; x.font = '600 10px "Plus Jakarta Sans", sans-serif';
           }
         }
       });

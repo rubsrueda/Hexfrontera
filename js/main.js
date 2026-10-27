@@ -9,6 +9,10 @@
     return;
   }
   HF.go('hub');
+  // La identidad se genera en local y la red va en segundo plano: nunca
+  // bloquea el Hub ni las pantallas locales.
+  G.setTimeout(() => { try { HF.cloud.initIdentity(); HF.cloud.flushQueue(); } catch (e) { } }, 0);
+  G.addEventListener('online', () => { try { HF.cloud.flushQueue(); } catch (e) { } });
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     // al activarse una versión nueva, recargar una vez para no quedarse con JS viejo
     const reload = () => { if (!window.__hfSwReload) { window.__hfSwReload = true; location.reload(); } };

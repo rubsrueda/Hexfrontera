@@ -51,15 +51,16 @@
     // movimiento (casillas propias) y rango de ataque
     units: {
       INF: { name: 'Infantería', icon: '💂', cost: { gold: 10, food: 5 }, up: [1, 3, 6], upGold: [1, 2, 4], from: [3, 4, 5, 6], move: 4, moveHeavy: 1, atkRange: 1, def: 0 },
+      ENG: { name: 'Ingeniero', icon: '🔧', cost: { gold: 25, food: 5, wood: 5 }, up: [1, 3, 6], upGold: [1, 2, 4], from: [3, 4, 5, 6], move: 4, moveHeavy: 1, atkRange: 1, def: 0 },
       ARC: { name: 'Arquero', icon: '🏹', cost: { gold: 15, wood: 5 }, up: [2, 3, 5], upGold: [1, 2, 3], from: [4, 5, 6], move: 4, atkRange: 1, atk: 1, def: 0, shoot: 2, shootHill: 3 },
       CAB: { name: 'Caballería', icon: '♞', cost: { gold: 20, food: 10 }, up: [3, 5, 7], upGold: [2, 4, 6], from: [5], move: 6, atkRange: 2, atkRangeMobile: 3, atk: 2, def: 1, defKnight: 2 },
       SIE: { name: 'Asedio', icon: '💣', cost: { gold: 25, wood: 15, food: 10 }, up: [3, 5, 7], upGold: [2, 3, 5], from: [4, 5, 6], move: 2, atkRange: 1, atk: 1, def: 0, shoot: 2 },
       BAR: { name: 'Barco', icon: '⛵', cost: { gold: 30, wood: 25 }, up: [2, 3, 5], upGold: [1, 2, 3], from: [3, 4, 5, 6], naval: true, move: 5, atk: 2, def: 1, shoot: 2 }
     },
-    mountainUnits: ['INF', 'ARC'],           // unidades terrestres que pueden entrar en montaña
+    mountainUnits: ['ENG'],                   // solo los ingenieros cruzan montañas y ríos sin camino
     recruitRadius: 3,                         // casillas máximas desde un edificio de origen
     fuseMax: 3, fuseMaxAscetic: 2,            // nivel máximo al fusionar
-    fuseTypes: ['INF', 'ARC', 'CAB', 'SIE', 'BAR'],  // tipos de unidad fusionables (cada nivel extra suma +1 ataque y +1 defensa en las no-infantería)
+    fuseTypes: ['INF', 'ENG', 'ARC', 'CAB', 'SIE', 'BAR'],  // tipos de unidad fusionables (cada nivel extra suma +1 ataque y +1 defensa en las no-infantería)
     shipCarry: true,  // los barcos pueden transportar 1 unidad de tierra (embarcar desde costa, desembarcar en costa)
     isolatedCampMin: 3, // casillas propias incomunicadas necesarias para fundar un campamento (nueva provincia)
 

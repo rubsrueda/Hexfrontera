@@ -151,6 +151,58 @@
     draw();
   });
 
+  // ---------- MAPAS DE LA COMUNIDAD ----------
+  HF.manualMapModal = () => HF.modal(`<h3>🗺️ Mapa por código</h3><div class="dim small">Pega un código de mapa de HexFrontier.</div>
+    <textarea id="manualMap" style="min-height:100px" placeholder="v1:7:123:..."></textarea><br>
+    <div class="row"><button id="mmNo">Cancelar</button><button id="mmGo" class="pri grow">Jugar</button></div>`, m => {
+    m.querySelector('#mmNo').onclick = HF.closeModal;
+    m.querySelector('#mmGo').onclick = () => {
+      const r = HF.importMap(m.querySelector('#manualMap').value);
+      if (r.error) { HF.sfx('error'); return HF.toast(r.error); }
+      HF.closeModal();
+      HF.playMap(r.R, r.cells, r.seed);
+    };
+  });
+
+  HF.communityMapsModal = function () {
+    let maps = [], loading = true, offline = false;
+    const draw = () => {
+      const body = loading
+        ? '<div class="dim small" style="padding:8px 0">Cargando mapas de la comunidad…</div>'
+        : maps.length
+          ? maps.map(m => `<div class="card"><div class="row"><b class="grow">${HF.esc(m.name || 'Mapa')}</b><span class="dim small">👍 ${+m.upvotes || 0}</span></div>
+            <div class="dim small">${HF.esc(m.author || 'Anónimo')} · R${+m.radius || 7} · ${+m.factions_count || 2} facciones</div>
+            <div class="row" style="margin-top:6px"><button data-vote="${m.id}">👍 Votar</button><button data-play="${m.id}" class="pri grow">▶ Jugar</button></div></div>`).join('')
+          : `<div class="dim small">${offline ? 'Modo sin conexión' : 'Todavía no hay mapas publicados'} · puedes introducir un código manual.</div>`;
+      HF.modal(`<h3>🌍 Mapas de la Comunidad · Top por votos</h3>${offline ? '<div class="dim small">Modo sin conexión · se muestran datos locales</div>' : ''}
+        ${body}<br><button id="cmManual" style="width:100%">⌨️ Introducir código manual</button>
+        <button id="cmClose" style="width:100%;margin-top:6px">Cerrar</button>`, m => {
+        m.querySelector('#cmClose').onclick = HF.closeModal;
+        m.querySelector('#cmManual').onclick = () => { HF.closeModal(); HF.manualMapModal(); };
+        m.querySelectorAll('[data-play]').forEach(b => b.onclick = () => {
+          const row = maps.find(x => String(x.id) === b.dataset.play);
+          if (!row) return;
+          const r = HF.importMap(row.code || '');
+          if (r.error) { HF.sfx('error'); return HF.toast(r.error); }
+          HF.closeModal(); HF.playMap(r.R, r.cells, r.seed);
+        });
+        m.querySelectorAll('[data-vote]').forEach(b => b.onclick = () => {
+          if (!HF.cloud) return HF.toast('Modo sin conexión');
+          b.disabled = true;
+          HF.cloud.upvoteMap(b.dataset.vote).then(r => {
+            if (r && r.ok) { const row = maps.find(x => String(x.id) === b.dataset.vote); if (row) row.upvotes = (+row.upvotes || 0) + 1; HF.toast('Voto registrado'); draw(); }
+            else HF.toast((r && r.msg) || 'Modo sin conexión');
+          }).catch(() => { b.disabled = false; });
+        });
+      });
+    };
+    draw();
+    if (HF.cloud) HF.cloud.getCommunityMaps().then(list => {
+      maps = list || []; loading = false; offline = !HF.cloud.online || (HF.cloud.lastOffline && HF.cloud.lastOffline()); draw();
+    }).catch(() => { loading = false; offline = true; draw(); });
+    else { loading = false; offline = true; draw(); }
+  };
+
   // ---------- NUEVA PARTIDA ----------
   HF.screen('newgame', el => {
     const o = Object.assign({ size: 'medium', biome: 'plains', n: 2, fog: 'FULL', difficulty: 'normal' }, HF.store.get('newgame_opts', {}));
@@ -168,7 +220,7 @@
         <div class="dim small" style="margin-top:6px">Los barcos se reclutan en agua junto a un campamento o edificio superior.</div>
         <br><button class="pri big" id="go" style="width:100%">Empezar</button>
         <br><br><button id="mine" style="width:100%">📂 Jugar un mapa guardado</button>
-        <br><br><button id="code" style="width:100%">🗺️ Jugar un mapa de la comunidad (código)</button>
+        <br><br><button id="code" style="width:100%">🌍 Mapas de la Comunidad</button>
       </div></div>`;
       wireBack(el);
       el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { const k = b.dataset.k; o[k] = (k === 'n') ? +b.dataset.v : b.dataset.v; o.seed = el.querySelector('#seed').value; draw(); });
@@ -179,7 +231,7 @@
         HF.startGame(HF.makeGame({ mode: 'skirmish', seed, size: o.size, n: o.n, biome: o.biome, fog: o.fog, difficulty: o.difficulty, goal: { type: 'conquer' } }, HF.loadTribe()));
       };
       el.querySelector('#mine').onclick = () => HF.mapsModal(null);
-      el.querySelector('#code').onclick = () => HF.go('editor', { importFirst: true });
+      el.querySelector('#code').onclick = () => HF.communityMapsModal();
     };
     draw();
   });
@@ -216,10 +268,28 @@
       <p>Intentos hoy: ${today ? d.attempts : 0}<br>${today && d.best ? 'Resultado oficial: T' + d.best + ' ' + d.medal : 'Aún sin resultado oficial'}<br>🔥 Racha: ${d.streak}</p>
       <div class="dim small">El primer intento del día es el oficial; los siguientes son práctica.<br>Medallas: 🥇 ≤12 turnos · 🥈 ≤18 · 🥉 más.</div><br>
       <button class="pri big" id="go" style="width:100%">${today && d.attempts ? 'Jugar (práctica)' : 'Jugar'}</button></div>
+      <div class="card"><b>🌍 Top 20 mundial del Diario</b><div class="dim small">Solo victorias del primer intento oficial de hoy. Los mapas se rankean en la Comunidad.</div><div id="dailyLB" class="dim small" style="margin-top:6px">${HF.cloud && HF.cloud.online ? 'Consultando ranking mundial…' : 'Modo sin conexión · historial local'}</div>
+        <button id="dailyMaps" style="width:100%;margin-top:6px">🌍 Ver Top de Mapas de la Comunidad</button></div>
       <h3>Historial</h3>${d.history.length ? d.history.map(h => `<div class="small">${h.k} · T${h.turn} ${h.medal}</div>`).join('') : '<div class="dim small">Sin victorias aún</div>'}
     </div></div>`;
     wireBack(el);
     el.querySelector('#go').onclick = () => HF.startGame(HF.makeGame(spec, HF.loadTribe()));
+    el.querySelector('#dailyMaps').onclick = () => HF.communityMapsModal();
+    if (HF.cloud) HF.cloud.getDailyLeaderboard(k).then(rows => {
+      const box = el.querySelector('#dailyLB');
+      if (!box) return;
+      if (!rows || !rows.length) {
+        const off = !HF.cloud || (HF.cloud.lastOffline && HF.cloud.lastOffline());
+        box.innerHTML = off
+          ? '<div class="dim small">Modo sin conexión · historial local</div>'
+          : '<div class="dim small">Aún no hay puntuaciones oficiales hoy. Juega el Desafío Diario para aparecer aquí.</div>';
+        return;
+      }
+      box.innerHTML = `<table><tr><th>#</th><th>Blasón</th><th>Tribu</th><th>Turnos</th><th>Superávit</th></tr>${rows.map((r, i) => {
+        const col = /^#[0-9a-f]{3,8}$/i.test(r.color_hex || '') ? r.color_hex : '#F4EFEA';
+        return `<tr><td>${i + 1}</td><td>${HF.esc(r.crest || '🛡️')}</td><td style="color:${col}">${HF.esc(r.tribe_name || '—')}</td><td>${+r.turns || 0}</td><td>${+r.surplus || 0}</td></tr>`;
+      }).join('')}</table>`;
+    }).catch(() => { });
   });
 
   // ---------- STATS ----------
@@ -276,9 +346,9 @@
     seg(s.wins, '#4ade80'); seg(s.losses, '#f87171');
     const pct = s.wins + s.losses ? Math.round(100 * s.wins / (s.wins + s.losses)) : 0;
     x.fillStyle = '#e8eefc'; x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.font = `bold ${Math.round(size * .18)}px "Courier New", monospace`;
+    x.font = `700 ${Math.round(size * .18)}px "Plus Jakarta Sans", sans-serif`;
     x.fillText(pct + '%', cx, cy - 5);
-    x.fillStyle = '#8aa0c8'; x.font = `${Math.round(size * .07)}px "Courier New", monospace`;
+    x.fillStyle = '#8aa0c8'; x.font = `600 ${Math.round(size * .07)}px "Plus Jakarta Sans", sans-serif`;
     x.fillText('VICTORIAS', cx, cy + size * .13);
   }
 
@@ -286,15 +356,84 @@
   HF.screen('settings', el => {
     const s = HF.settings();
     const row = (k, n) => `<div class="card row"><span class="grow">${n}</span><button data-k="${k}" class="${s[k] ? 'sel' : ''}">${s[k] ? HF.t('YES') : HF.t('NO')}</button></div>`;
+    const cid = HF.cloud ? HF.cloud.playerId() : '—';
+    const ckey = HF.cloud ? HF.cloud.secretKey() : '';
+    const prem = HF.cloud ? HF.cloud.isPremium() : false;
+    const remail = HF.cloud ? HF.cloud.recoveryEmail() : '';
     el.innerHTML = `<div class="screen">${header(HF.t('SETTINGS'))}<div class="scroll">
       ${row('sound', HF.t('SOUND'))}${row('vibrate', HF.t('VIBRATE'))}${row('grid', HF.t('GRID'))}
       <div class="card"><div class="row"><span class="grow">${HF.t('LANGUAGE')}</span></div>
         <div class="langs">${HF.LANGS.map(l => `<button data-lang="${l.code}" class="${HF.lang() === l.code ? 'sel' : ''}">${l.flag} ${l.name}</button>`).join('')}</div></div>
+      <div class="card" id="cloudCard">
+        <b>🛡️ Identidad y respaldo en la nube</b>
+        <div class="row" style="margin-top:6px"><span class="grow">ID público</span><b>${HF.esc(cid)}</b></div>
+        <div class="row" style="margin-top:4px"><span class="grow">Llave secreta</span><code id="secretKey">••••••</code><button id="showKey">👁️ Ver/Copiar</button></div>
+        <div class="row" style="margin-top:4px"><span class="grow">Correo de rescate</span><b>${remail ? HF.esc(remail) : 'sin registrar'}</b></div>
+        ${prem
+          ? `<button id="mailRecovery" style="width:100%;margin-top:6px">✉️ Registrar Correo de Rescate</button>`
+          : `<div class="dim small" style="margin-top:6px">La copia en la nube y el correo de rescate forman parte de la Licencia Completa ($2.99).</div>`}
+        <div class="row" style="margin-top:6px"><button id="syncCloud">🔄 Sincronizar</button><button id="linkDevice">🔄 Transferir a otro dispositivo</button><button id="recoverAccount">❓ Recuperar Cuenta</button></div>
+      </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
-      <div class="dim small">HexFrontier v1.0 · build 53 · ${HF.t('NO_MULTIPLAYER')}</div></div></div>`;
+      <div class="dim small">HexFrontier v1.0 · build 69 · ${HF.t('NO_MULTIPLAYER')}</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
     el.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { HF.setLang(b.dataset.lang); HF.go('settings'); });
     el.querySelector('#reset').onclick = () => { if (confirm(HF.t('RESET_CONFIRM'))) { ['tribe_profile', 'campaign_progress', 'daily_challenge', 'player_statistics', 'savegame_active', 'maps', 'newgame_opts'].forEach(k => HF.store.del(k)); HF.go('hub'); } };
+    if (HF.cloud) {
+      let shown = false;
+      const copy = (txt, msg) => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => HF.toast(msg)).catch(() => HF.toast('No se pudo copiar automáticamente'));
+          else HF.toast('No se pudo copiar automáticamente');
+        } catch (e) { HF.toast('No se pudo copiar automáticamente'); }
+      };
+      el.querySelector('#showKey').onclick = () => {
+        shown = !shown;
+        el.querySelector('#secretKey').textContent = shown ? ckey : '••••••';
+        el.querySelector('#showKey').textContent = shown ? '🙈 Ocultar' : '👁️ Ver/Copiar';
+        if (shown) copy(ckey, 'Llave secreta copiada');
+      };
+      const sync = el.querySelector('#syncCloud');
+      if (sync) sync.onclick = () => HF.cloud.saveProfileCloud().then(r => HF.toast(r.ok ? 'Perfil sincronizado' : 'Modo sin conexión'));
+      const mail = el.querySelector('#mailRecovery');
+      if (mail) mail.onclick = () => HF.modal(`<h3>✉️ Correo de rescate</h3><p class="dim small">Se usará para recuperar tu licencia en otro dispositivo.</p>
+        <input type="email" id="recoveryMail" value="${HF.esc(remail)}" placeholder="tu_correo@ejemplo.com"><br><br>
+        <div class="row"><button id="rmNo">Cancelar</button><button id="rmGo" class="pri grow">Guardar</button></div>`, m => {
+        m.querySelector('#rmNo').onclick = HF.closeModal;
+        m.querySelector('#rmGo').onclick = () => {
+          const email = m.querySelector('#recoveryMail').value.trim();
+          if (!email || email.indexOf('@') < 1) return HF.toast('Correo no válido');
+          HF.cloud.setRecoveryEmail(email).then(r => {
+            if (r.ok) { HF.closeModal(); HF.toast('Correo de rescate guardado'); HF.go('settings'); }
+            else HF.toast(r.offline ? 'Modo sin conexión' : 'No se pudo guardar el correo');
+          });
+        };
+      });
+      el.querySelector('#linkDevice').onclick = () => HF.modal(`<h3>🔄 Transferir a otro dispositivo</h3><p class="dim small">Introduce el ID y la llave secreta del dispositivo original.</p>
+        <input id="linkId" placeholder="HF-0000"><input id="linkKey" placeholder="K-XXXXXX"><br><br>
+        <div class="row"><button id="lkNo">Cancelar</button><button id="lkGo" class="pri grow">Vincular</button></div>`, m => {
+        m.querySelector('#lkNo').onclick = HF.closeModal;
+        m.querySelector('#lkGo').onclick = () => {
+          HF.cloud.linkDevice(m.querySelector('#linkId').value, m.querySelector('#linkKey').value).then(r => {
+            if (r.ok) { HF.closeModal(); HF.toast('Dispositivo vinculado'); HF.go('settings'); }
+            else HF.toast(r.msg || 'ID o clave incorrecta');
+          });
+        };
+      });
+      el.querySelector('#recoverAccount').onclick = () => HF.modal(`<h3>❓ Recuperar cuenta</h3><p class="dim small">Introduce el correo de rescate asociado a tu licencia.</p>
+        <input type="email" id="recMail" placeholder="tu_correo@ejemplo.com"><br><br>
+        <div class="row"><button id="rcNo">Cancelar</button><button id="rcGo" class="pri grow">Recuperar</button></div>`, m => {
+        m.querySelector('#rcNo').onclick = HF.closeModal;
+        m.querySelector('#rcGo').onclick = () => {
+          const email = m.querySelector('#recMail').value.trim();
+          if (!email || email.indexOf('@') < 1) return HF.toast('Correo no válido');
+          HF.cloud.recoverByEmail(email).then(r => {
+            if (r.ok) { HF.closeModal(); HF.toast('Cuenta recuperada'); HF.go('settings'); }
+            else HF.toast(r.msg || 'No se encontró la cuenta');
+          });
+        };
+      });
+    }
   });
 })(window);

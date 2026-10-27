@@ -1,7 +1,7 @@
 /* Arte: carga las imágenes de art/, les quita el fondo de cuadros y las deja listas para el mapa y la interfaz. */
 (function () {
   const FILES = {
-    unit: { INF: 'piquero', ARC: 'arquero', CAB: 'jinete', SIE: 'asedio', BAR: 'barco' },
+    unit: { INF: 'piquero', ENG: 'Ingeniero', ARC: 'arquero', CAB: 'jinete', SIE: 'asedio', BAR: 'barco' },
     build: { 2: 'camino', 3: 'campamento', 4: 'pueblo', 5: 'ciudad', 6: 'bastion' },
     misc: { fog: 'nube' }
   };

@@ -98,6 +98,7 @@
     const m = st.byMode[g.mode] = st.byMode[g.mode] || { g: 0, w: 0 }; m.g++; if (won) m.w++;
     st.recent.unshift({ mode: g.mode, won, turn: g.turn, date: Date.now() }); st.recent = st.recent.slice(0, 15);
     HF.store.set('player_statistics', st);
+    if (HF.cloud && HF.cloud.saveProfileCloud) HF.cloud.saveProfileCloud().catch(() => { });
     const res = { stars: 0, newStars: 0, medal: null, official: false };
     if (g.mode === 'campaign') {
       res.stars = HF.stars(g);
@@ -117,6 +118,13 @@
       }
       res.medal = won ? (res.official ? d.medal : null) : null;
       HF.store.set('daily_challenge', d);
+      if (res.official && won && HF.cloud && HF.cloud.submitDailyScore) {
+        const hero = g.f[0], surplus = (hero.gold || 0) + (hero.food || 0) + (hero.wood || 0);
+        HF.cloud.submitDailyScore({
+          date_key: k, player_id: HF.cloud.playerId(), tribe_name: hero.name || 'Mi Tribu',
+          turns: g.turn, surplus, crest: hero.crest || '', color_hex: hero.color || '#888888'
+        }).catch(() => { });
+      }
     }
     return res;
   };
