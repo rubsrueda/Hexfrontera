@@ -24,7 +24,7 @@ button.sel{border-color:var(--acc);background:rgba(58,58,32,.82)}
 .hub{justify-content:space-between}
 .hub-mid{display:flex;flex-direction:column;gap:12px;margin:auto 0;width:100%;max-width:420px;align-self:center}
 .dock{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
-.dock button{display:flex;flex-direction:column;align-items:center;font-size:12px;padding:8px 2px}
+.dock button{display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:12px;padding:8px 2px}
 .dock button span{font-size:24px}
 .badge{position:relative}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin:8px 0;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 10px 30px rgba(10,15,29,.24)}
@@ -38,6 +38,23 @@ button.sel{border-color:var(--acc);background:rgba(58,58,32,.82)}
 .chip{display:inline-block;padding:3px 8px;border-radius:20px;background:var(--panel2);font-size:12px}
 .sw{width:34px;height:34px;border-radius:50%;border:3px solid transparent;padding:0;min-height:0}
 .sw.sel{border-color:#F4EFEA}
+/* blasones: escudos recortados de art2/blasones.jfif */
+.crest-img{display:inline-block;object-fit:contain;vertical-align:middle;flex:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
+.crest-fallback{display:inline-block;line-height:1;vertical-align:middle}
+.dock button span.dock-crest{width:34px;height:34px;border:2px solid;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:rgba(10,18,34,.55);font-size:0;margin-bottom:1px}
+.dock button span.dock-name{font-size:11px;line-height:1.15;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
+.dock-crest .crest-img{width:28px!important;height:28px!important}
+.dock button span.dock-medal{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;font-size:0;margin-bottom:1px}
+.dock-medal .dock-ico{width:30px;height:30px;object-fit:contain;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5)) brightness(1.1)}
+.bar .top-ico{display:block;width:26px;height:26px;object-fit:contain;margin:auto;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45)) brightness(1.1)}
+.modal-ico{width:24px;height:24px;object-fit:contain;vertical-align:-5px;margin-right:4px}
+.crest-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:4px}
+.crest-pick{display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1;min-height:0;padding:2px;border-radius:50%;border:2px solid transparent;background:radial-gradient(circle at 35% 30%,rgba(245,185,66,.16),rgba(10,18,34,.85));box-shadow:none;backdrop-filter:none}
+.crest-pick .crest-img{width:100%!important;height:100%!important;max-width:60px;max-height:60px}
+.crest-pick.sel{border-color:var(--acc);background:radial-gradient(circle at 35% 30%,rgba(245,185,66,.26),rgba(10,18,34,.92));box-shadow:0 0 0 2px rgba(245,185,66,.22)}
+.crest-preview{width:72px;height:72px;flex:none;display:flex;align-items:center;justify-content:center;border:2px solid;border-radius:50%;background:radial-gradient(circle at 35% 30%,rgba(245,185,66,.18),rgba(10,18,34,.9));box-shadow:0 6px 18px rgba(0,0,0,.35)}
+.passport-crest{width:66px;height:66px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:2px solid;border-radius:50%;background:rgba(10,18,34,.55)}
+.hud-crest{margin-right:4px;vertical-align:-3px}
 .stars{color:var(--acc);letter-spacing:2px}
 .levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .lvl{min-height:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px}
@@ -55,9 +72,18 @@ label{display:block;margin:8px 0 3px;color:var(--dim);font-size:13px}
 .hud-bot{padding-bottom:calc(var(--sab) + 6px);justify-content:space-between}
 .hud-bot button{flex:1;padding:8px 2px;font-size:20px;min-height:46px}
 .hud-bot button small{display:block;font-size:10px}
-.res{display:flex;gap:10px;font-weight:bold}
+.hud-bot button.hud-art-btn{padding:2px 2px;min-height:62px}
+.hud-bot .hud-art{display:block;width:44px;height:44px;max-width:100%;object-fit:contain;margin:0 auto 1px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5)) brightness(1.12) saturate(1.05)}
+.res{display:flex;gap:6px;font-weight:bold}
+.res .res-ico{width:20px;height:20px;object-fit:contain;vertical-align:middle;margin-right:2px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))}
+.cost-ico{width:14px;height:14px;object-fit:contain;vertical-align:-2px;margin:0 1px}
+.kpi .res-kpi{display:block;width:28px;height:28px;object-fit:contain;margin:auto}
 .res .upk{font-size:9px;font-weight:600;color:var(--dim);margin-left:2px}
-.hud-top #bView{padding:2px;min-height:34px;width:42px;font-size:15px;line-height:1.1}
+.hud-top #menu,.hud-top #board{padding:6px 10px;min-height:38px}
+.hud-top #board{padding:6px 8px}
+.hud-top #board .board-ico{display:block;width:28px;height:28px;object-fit:contain;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5)) brightness(1.1)}
+.hud-top #bView{padding:2px;min-height:44px;width:48px;font-size:15px;line-height:1.1}
+.hud-top #bView .view-ico{display:block;width:30px;height:30px;object-fit:contain;margin:0 auto;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5)) brightness(1.12)}
 .hud-top #bView small{display:block;font-size:8px;color:var(--dim)}
 .res i{font-style:normal;font-size:11px}
 .neg{color:var(--bad)}.pos{color:var(--good)}
@@ -73,11 +99,16 @@ label{display:block;margin:8px 0 3px;color:var(--dim);font-size:13px}
 .drawer.edbar{flex-wrap:wrap;overflow:visible}
 .drawer.edbar button{flex:1 1 22%;min-width:0;min-height:40px;font-size:12px}
 .tools button .ico{display:block;margin:0 auto;max-width:30px;object-fit:contain}
+.tools .ed-ico{display:block;width:26px;height:26px;object-fit:contain;margin:0 auto}
 .drawer small{display:block;color:var(--dim);font-size:10px}
 .ucard{flex:0 0 76px;display:flex;flex-direction:column;gap:2px}
 .ucard>button{flex:0 0 auto;width:100%;min-width:0}
 .ucard .tierpill{display:flex;gap:2px}
 .ucard .tierpill button{flex:1 1 0;min-width:0;min-height:26px;padding:1px 0;font-size:10px;border-radius:6px}
+/* ficha emergente de los botones de edificio/unidad */
+.tip{position:fixed;z-index:45;max-width:min(320px,88vw);background:rgba(10,18,34,.97);border:1px solid rgba(245,185,66,.45);border-radius:12px;padding:9px 11px;font-size:11.5px;line-height:1.5;color:var(--ink);box-shadow:0 12px 32px rgba(0,0,0,.5);pointer-events:none;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.tip b{color:var(--acc)}
+.tip .dim{display:block;margin-top:5px;font-size:10px;line-height:1.35;color:var(--dim)}
 .info .loanbtn{pointer-events:auto;margin-left:8px;padding:4px 8px;min-height:30px;font-size:12px;border-radius:8px;background:#2d4577;border-color:var(--acc)}
 .info .defbreak{margin-top:5px;padding:4px 7px;border-left:3px solid #7FB2C9;background:rgba(14,32,56,.72);border-radius:8px;font-size:11px;line-height:1.3;color:#CBD5E1}
 .info .defbreak b{color:#A5D3E3}
@@ -113,4 +144,14 @@ canvas.chart{width:100%;height:210px;background:rgba(14,24,48,.72);border-radius
 .utool{display:inline-flex;flex-direction:column;align-items:center;line-height:1}
 .utool small{font-size:9px;color:var(--acc);margin-top:1px}
 .tools button{padding:4px 8px;min-height:38px;font-size:16px}
+@media (max-width:380px){
+  .hud-top{font-size:13px;gap:3px}
+  .res{gap:5px}
+  .res .res-ico{width:18px;height:18px}
+  .hud-top #bView{width:44px;min-height:42px}
+  .hud-top #bView .view-ico{width:26px;height:26px}
+  .hud-top #board{padding:5px 7px}
+  .hud-top #board .board-ico{width:24px;height:24px}
+}
+@media (min-width:520px){.crest-grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
 @media (min-width:700px){.screen{max-width:760px;margin:0 auto;width:100%}}
