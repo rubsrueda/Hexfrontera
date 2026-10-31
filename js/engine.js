@@ -252,35 +252,150 @@
     if ((u.type === 'INF' || u.type === 'ENG') && kind === 'up' && has(f, 'ASCETIC_COMMUNE')) v = Math.max(1, v - 1);
     return v;
   }
-  // Rutas comerciales: dos asentamientos PUEBLO/CIUDAD unidos por camino o agua.
-  // Se cachean por turno; máximo 3 por facción (config.commerce.maxRoutes).
+  // Rutas comerciales: pares de asentamientos (PUEBLO/CIUDAD) unidos por una
+  // calzada continua (tierra) o por agua (mar). Se eligen las parejas MÁS
+  // LEJANAS de cada dominio y se guarda el camino completo para la caravana.
+  function tradeEnds(g, f) {
+    const out = [];
+    for (const c of g.cells) if (c && c.o === f.id && c.sup && (c.b === B.PUEBLO || c.b === B.CIUDAD)) out.push(c);
+    return out;
+  }
+  function tradeWalkable(n, f, kind) {
+    if (!n || (n.o !== f.id && n.o !== -1)) return false;
+    return kind === 'sea' ? isWater(n) : isRoad(n);
+  }
+  function tradePath(g, s, t, prev, kind) {
+    if (kind === 'sea') {
+      for (const j of grid(g).nb[t.i]) {
+        if (!prev.has(j)) continue;
+        const chain = []; let x = j;
+        while (x !== undefined && x !== s.i) { chain.push(x); x = prev.get(x); }
+        if (x !== s.i) continue;
+        return [s.i, ...chain.reverse(), t.i];
+      }
+      return null;
+    }
+    if (!prev.has(t.i)) return null;
+    const path = []; let x = t.i;
+    while (x !== undefined && x !== -1) { path.push(x); x = prev.get(x); }
+    return path.reverse();
+  }
+  function tradePairs(g, f, kind) {
+    const gr = grid(g), ends = tradeEnds(g, f), out = [];
+    for (const s of ends) {
+      const prev = new Map(), q = [];
+      if (kind === 'sea') {
+        for (const j of gr.nb[s.i]) {
+          if (tradeWalkable(g.cells[j], f, 'sea')) { prev.set(j, s.i); q.push(j); }
+        }
+      } else { prev.set(s.i, -1); q.push(s.i); }
+      for (let h = 0; h < q.length; h++) {
+        const x = q[h];
+        for (const y of gr.nb[x]) {
+          if (prev.has(y) || !tradeWalkable(g.cells[y], f, kind)) continue;
+          prev.set(y, x); q.push(y);
+        }
+      }
+      for (const t of ends) {
+        if (t.i <= s.i) continue;
+        const path = tradePath(g, s, t, prev, kind);
+        if (path) out.push({ a: s.i, b: t.i, kind, path });
+      }
+    }
+    return out;
+  }
   function tradeRoutes(g, f) {
     if (!g._trade) g._trade = {};
     const cached = g._trade[f.id];
     if (cached && cached.turn === g.turn) return cached.routes;
-    const gr = grid(g), ends = [];
-    for (const c of g.cells) if (c && c.o === f.id && c.sup && (c.b === B.PUEBLO || c.b === B.CIUDAD)) ends.push(c);
-    const pairs = [];
-    for (const s of ends) {
-      const dist = new Map([[s.i, 0]]), q = [s.i];
-      for (let h = 0; h < q.length; h++) {
-        const x = q[h], cx = g.cells[x];
-        for (const y of gr.nb[x]) {
-          if (dist.has(y)) continue;
-          const n = g.cells[y];
-          if (!n || !(isRoad(n) || isWater(n)) || !(n.o === f.id || n.o === -1)) continue;
-          dist.set(y, dist.get(x) + 1); q.push(y);
-        }
-      }
-      for (const t of ends) if (t.i > s.i && dist.has(t.i)) pairs.push({ a: s.i, b: t.i, d: dist.get(t.i) });
-    }
-    pairs.sort((p, q) => p.d - q.d || p.a - q.a || p.b - q.b);
-    const max = Math.max(0, HF.CFG.commerce.maxRoutes || 3);
-    const routes = pairs.slice(0, max);
+    const maxL = Math.max(0, HF.CFG.commerce.maxRoutes || 3);
+    const maxS = Math.max(0, HF.CFG.commerce.maxSeaRoutes || 3);
+    const byLen = (p, q) => q.path.length - p.path.length || p.a - q.a || p.b - q.b;
+    const land = tradePairs(g, f, 'land').sort(byLen).slice(0, maxL);
+    const sea = tradePairs(g, f, 'sea').sort(byLen).slice(0, maxS);
+    const routes = land.concat(sea);
     g._trade[f.id] = { turn: g.turn, routes };
     return routes;
   }
   HF.tradeRoutes = tradeRoutes;
+
+  // ---------- caravanas físicas ----------
+  const caravanKey = r => r.kind + ':' + r.a + ':' + r.b;
+  function creditGold(g, cellId, owner, amount) {
+    if (!amount) return;
+    const c = g.cells[cellId], f = g.f[owner];
+    if (!f) return;
+    const comp = c && c.comp != null ? c.comp : mainComp(g, f);
+    if (f.stock && f.stock[comp]) { f.stock[comp].gold += amount; syncTotals(f); }
+    else f.gold = (f.gold || 0) + amount;
+  }
+  // Al final de cada ronda: aparecen caravanas para las rutas activas, avanzan
+  // 4 casillas y devengan 5 de oro por turno. Al llegar entregan la carga.
+  HF.syncCaravans = function (g) {
+    if (!g.caravans) g.caravans = [];
+    if (!g.tradeBlocked) g.tradeBlocked = {};
+    const C = HF.CFG.commerce || {};
+    const speed = Math.max(1, C.caravanSpeed || 4);
+    const perTurn = Math.max(1, C.caravanGold || 5);
+    const blockTurns = Math.max(0, C.blockTurns || 2);
+    const alive = new Set();
+    for (const f of g.f) {
+      if (!f || f.alive === false) continue;
+      const routes = tradeRoutes(g, f);
+      const keys = new Set();
+      for (const r of routes) {
+        const key = caravanKey(r);
+        keys.add(key);
+        let car = g.caravans.find(c => c.key === key);
+        if (!car) {
+          if ((g.tradeBlocked[key] || 0) > g.turn) continue;
+          car = { key, owner: f.id, kind: r.kind, a: r.a, b: r.b, path: r.path.slice(), pos: 0, dir: 1, gold: 0 };
+          g.caravans.push(car);
+        } else if (car.path.length !== r.path.length || car.path[car.pos] !== r.path[car.pos]) {
+          // la red cambió: la caravana reaparece al inicio del recorrido
+          car.path = r.path.slice(); car.pos = 0; car.dir = 1;
+        }
+        car.gold = (car.gold || 0) + perTurn;
+        let pos = car.pos + speed * car.dir;
+        const last = car.path.length - 1;
+        if (pos >= last) {
+          pos = last;
+          creditGold(g, car.path[last], car.owner, car.gold || 0);
+          car.gold = 0; car.dir = -1;
+        } else if (pos <= 0) {
+          pos = 0;
+          creditGold(g, car.path[0], car.owner, car.gold || 0);
+          car.gold = 0; car.dir = 1;
+        }
+        car.pos = pos;
+      }
+      for (const car of g.caravans) if (car.owner === f.id && !keys.has(car.key)) car.dead = true;
+    }
+    g.caravans = g.caravans.filter(c => !c.dead);
+    for (const k in g.tradeBlocked) if (g.tradeBlocked[k] <= g.turn) delete g.tradeBlocked[k];
+  };
+  // Asalto: la caballería con ataque disponible saquea la caravana enemiga y
+  // se lleva el oro acumulado. La ruta queda bloqueada unas rondas.
+  HF.raidCaravan = function (g, from, to) {
+    const c = g.cells[from], u = c && c.u;
+    if (!u || u.owner !== g.cur) return { ok: false, msg: 'No es tu unidad' };
+    if (u.type !== 'CAB' || u.at <= 0) return { ok: false, msg: 'Solo la caballería con ataque disponible' };
+    const list = (g.caravans || []).filter(k => k.owner !== u.owner && k.path[k.pos] === to);
+    if (!list.length) return { ok: false, msg: 'No hay caravana en esa casilla' };
+    const car = list[0], f = g.f[u.owner];
+    const loot = Math.max(0, car.gold || 0);
+    const comp = c.comp != null ? c.comp : mainComp(g, f);
+    if (f.stock && f.stock[comp]) { f.stock[comp].gold += loot; syncTotals(f); }
+    else f.gold = (f.gold || 0) + loot;
+    g.caravans = g.caravans.filter(k => k !== car);
+    g.tradeBlocked = g.tradeBlocked || {};
+    g.tradeBlocked[car.key || caravanKey(car)] = g.turn + Math.max(0, HF.CFG.commerce.blockTurns || 2);
+    u.at = 0;
+    ev(g, to, 'Caravana saqueada: +' + loot + ' oro', 'good');
+    g._trade = null;
+    return { ok: true, kind: 'raid', loot };
+  };
+  HF.caravansAt = (g, cellId) => (g.caravans || []).filter(c => c.path[c.pos] === cellId);
   HF.income = (g, f, comp) => {
     const inc = { gold: 0, food: 0, wood: 0 }, C = HF.CFG.income;
     const mult = has(f, 'EXTRACTIVE_ENCLAVE') ? C.enclaveMult : 1;
@@ -302,11 +417,8 @@
       // Otoño: la cosecha dorada suma +1 comida por trigo
       if (autumn && c.res === HF.RES.TRIGO) inc.food += HF.CFG.seasons.autumnWheatFood;
     }
-    const routes = tradeRoutes(g, f);
-    for (const r of routes) {
-      if (comp == null || g.cells[r.a].comp === comp) inc.gold += HF.CFG.commerce.routeGold;
-      if (comp == null || g.cells[r.b].comp === comp) inc.gold += HF.CFG.commerce.routeGold;
-    }
+    // El comercio ya no da oro pasivo: las caravanas lo devengan al viajar y lo
+    // entregan al llegar (HF.syncCaravans), o lo suelta quien las saquea.
     return inc;
   };
   HF.preview = (g, f, comp) => {
