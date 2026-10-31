@@ -4,6 +4,15 @@
 (function (G) {
   const HF = G.HF = G.HF || {};
   HF.CFG = {
+    // Vista del tablero: inclinación de la cámara sobre el plano del mapa.
+    // 1 = vista cenital plana · 0.62 = perspectiva de diorama (por defecto,
+    // unos 51° respecto a la vertical). Los sprites siempre se dibujan de pie.
+    // spriteStretch compensa el aplastado del suelo: las imágenes se estiran
+    // en vertical desde su base para ganar volumen.
+    view: { tilt: 0.62, spriteStretch: 1.15, startZoom: 1.8 },
+    // Música clásica dinámica (js/music.js). enabled:false deja el sintetizador
+    // procedural de util.js, útil para builds 100% offline.
+    music: { enabled: true, volume: 0.3, fade: 1.8, warRadius: 2 },
     // recursos iniciales de cada facción
     start: { gold: 30, food: 20, wood: 25 },
 
@@ -50,12 +59,16 @@
     // unidades: coste, mantenimiento por turno según nivel (up = comida, upGold = oro), edificios de origen,
     // movimiento (casillas propias) y rango de ataque
     units: {
-      INF: { name: 'Infantería', icon: '💂', cost: { gold: 10, food: 5 }, up: [1, 3, 6], upGold: [1, 2, 4], from: [3, 4, 5, 6], move: 4, moveHeavy: 1, atkRange: 1, def: 0 },
-      ENG: { name: 'Ingeniero', icon: '🔧', cost: { gold: 25, food: 5, wood: 5 }, up: [1, 3, 6], upGold: [1, 2, 4], from: [3, 4, 5, 6], move: 4, moveHeavy: 1, atkRange: 1, def: 0 },
-      ARC: { name: 'Arquero', icon: '🏹', cost: { gold: 15, wood: 5 }, up: [2, 3, 5], upGold: [1, 2, 3], from: [4, 5, 6], move: 4, atkRange: 1, atk: 1, def: 0, shoot: 2, shootHill: 3 },
-      CAB: { name: 'Caballería', icon: '♞', cost: { gold: 20, food: 10 }, up: [3, 5, 7], upGold: [2, 4, 6], from: [5], move: 6, atkRange: 2, atkRangeMobile: 3, atk: 2, def: 1, defKnight: 2 },
-      SIE: { name: 'Asedio', icon: '💣', cost: { gold: 25, wood: 15, food: 10 }, up: [3, 5, 7], upGold: [2, 3, 5], from: [4, 5, 6], move: 2, atkRange: 1, atk: 1, def: 0, shoot: 2 },
-      BAR: { name: 'Barco', icon: '⛵', cost: { gold: 30, wood: 25 }, up: [2, 3, 5], upGold: [1, 2, 3], from: [3, 4, 5, 6], naval: true, move: 5, atk: 2, def: 1, shoot: 2 }
+      // Mantenimiento exponencial diferenciado: N1 accesible, N2 inversión, N3 joya.
+      // Comida refleja el consumo biológico/logístico; oro refleja equipamiento y salarios.
+      // INF: base del imperio. ENG: misma comida que INF, +oro técnico. ARC: oro elevado (munición).
+      // CAB: el mayor devorador de grano. SIE: el mayor pozo de oro. BAR: tripulaciones navales.
+      INF: { name: 'Infantería', icon: '💂', cost: { gold: 10, food: 5 }, up: [1, 3, 7], upGold: [1, 2, 5], from: [3, 4, 5, 6], move: 3, moveHeavy: 1, atkRange: 1, def: 0 },
+      ENG: { name: 'Ingeniero', icon: '🔧', cost: { gold: 25, food: 5, wood: 5 }, up: [1, 3, 7], upGold: [1, 3, 6], from: [3, 4, 5, 6], move: 4, moveHeavy: 1, atkRange: 1, def: 0 },
+      ARC: { name: 'Arquero', icon: '🏹', cost: { gold: 15, wood: 5 }, up: [1, 3, 6], upGold: [2, 4, 8], from: [4, 5, 6], move: 3, atkRange: 1, atk: 1, def: 0, shoot: 2, shootHill: 3 },
+      CAB: { name: 'Caballería', icon: '♞', cost: { gold: 20, food: 10 }, up: [3, 6, 11], upGold: [2, 5, 10], from: [5], move: 6, atkRange: 2, atkRangeMobile: 3, atk: 2, def: 1, defKnight: 2 },
+      SIE: { name: 'Asedio', icon: '💣', cost: { gold: 25, wood: 15, food: 10 }, up: [2, 5, 8], upGold: [3, 7, 13], from: [4, 5, 6], move: 2, atkRange: 1, atk: 1, def: 0, shoot: 2 },
+      BAR: { name: 'Barco', icon: '⛵', cost: { gold: 30, wood: 25 }, up: [2, 4, 8], upGold: [2, 4, 8], from: [3, 4, 5, 6], naval: true, move: 5, atk: 2, def: 1, shoot: 2 }
     },
     mountainUnits: ['ENG'],                   // solo los ingenieros cruzan montañas y ríos sin camino
     recruitRadius: 3,                         // casillas máximas desde un edificio de origen
