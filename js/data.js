@@ -154,7 +154,7 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
       SCORCHED_EARTH: 'Al abandonar una casilla propia hacia territorio seguro, la casilla queda en cenizas 4 turnos: el enemigo no puede capturarla ni construir en ella.'
     },
     Arma: {
-      TACTIC_HEAVY_LINE: 'Infantería con alcance 1; si parte de una ciudad o pueblo, alcance 3.',
+      TACTIC_HEAVY_LINE: 'La infantería conserva su alcance base de 4; los asentamientos garantizan al menos 3.',
       TACTIC_MOBILE_WAR: 'Caballería alcance 3 y sin penalización de colina.',
       TESTUDO_SHIELD: '+1 defensa por infantería o ingeniero adyacente (máx. 2).',
       PIKE_WALL: 'La caballería enemiga pierde su carga.',
@@ -283,7 +283,7 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
   };
 
   HF.defaultTribe = () => ({
-    tribe_id: 'local', name: 'Mi Tribu', color: '#3b82f6', crest: '🦅',
+    tribe_id: 'local', name: (HF.genTribeName ? HF.genTribeName() : 'Mi Tribu'), color: '#3b82f6', crest: 'c01',
     alma_path: ['A1', 'A1.1', 'A1.1.1'], arma_path: ['B1', 'B1.1', 'B1.1.1'], victoria_path: ['C1', 'C1.3', 'C1.3.1'],
     active_rules: []
   });
@@ -293,13 +293,24 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
   };
   HF.validPath = (p, letter) => Array.isArray(p) && p.length === 3 && p.every((id, i) => HF.DOCT[id] && HF.DOCT[id].level === i + 1 && id[0] === letter && (i === 0 || HF.DOCT[id].parent === p[i - 1]));
   HF.validateProfile = t => {
-    if (t && HF.validPath(t.alma_path, 'A') && HF.validPath(t.arma_path, 'B') && HF.validPath(t.victoria_path, 'C') && /^#[0-9a-f]{6}$/i.test(t.color || '')) return HF.compileTribe(t);
+    if (t && HF.validPath(t.alma_path, 'A') && HF.validPath(t.arma_path, 'B') && HF.validPath(t.victoria_path, 'C') && /^#[0-9a-f]{6}$/i.test(t.color || '')) {
+      // Los perfiles antiguos guardaban un emoji: se migran al id del blasón equivalente.
+      return HF.compileTribe(Object.assign({}, t, { crest: HF.normalizeCrest(t.crest) }));
+    }
     console.warn('[WARN] Perfil de tribu corrupto. Restaurando valores seguros de fábrica');
     return HF.compileTribe(HF.defaultTribe());
   };
   HF.loadTribe = () => {
     const p = HF.store.get('tribe_profile', null);
-    return p ? HF.validateProfile(p) : HF.compileTribe(HF.defaultTribe());
+    if (!p) return HF.compileTribe(HF.defaultTribe());
+    const t = HF.validateProfile(p);
+    // Los perfiles antiguos se llamaban "Mi Tribu": se les asigna un nombre
+    // generado una sola vez y se guarda el cambio.
+    if (!t.name || t.name === 'Mi Tribu') {
+      t.name = HF.genTribeName ? HF.genTribeName() : 'Mi Tribu';
+      HF.store.set('tribe_profile', HF.compileTribe(t));
+    }
+    return t;
   };
   HF.PRESETS = [
     ['A1', 'A1.1', 'A1.1.2', 'B1', 'B1.1', 'B1.1.1', 'C1', 'C1.3', 'C1.3.1'],
@@ -310,7 +321,46 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
   ].map(a => ({ alma_path: a.slice(0, 3), arma_path: a.slice(3, 6), victoria_path: a.slice(6) }));
 
   HF.COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#eab308', '#a855f7', '#f97316'];
-  HF.CRESTS = ['🦅', '🐺', '🐻', '🦁', '🐉', '🦂', '🐗', '🦌', '⚓', '☀️', '🌙', '💀'];
+  // Blasones: los 12 escudos de art2/blasones.jfif, recortados a assets/crests/cNN.webp.
+  // El perfil guarda el id (c01…c12); los emojis antiguos se aceptan y se migran.
+  HF.CREST_LEGACY = ['🦅', '🐺', '🐻', '🦁', '🐉', '🦂', '🐗', '🦌', '⚓', '☀️', '🌙', '💀'];
+  HF.CREST_NAMES = ['Águila', 'Lobo', 'Oso', 'León', 'Dragón', 'Escorpión', 'Jabalí', 'Ciervo', 'Ancla', 'Sol', 'Luna', 'Calavera'];
+  HF.CRESTS = HF.CREST_LEGACY.map((_, i) => 'c' + String(i + 1).padStart(2, '0'));
+  HF.crestIndex = c => {
+    const id = String(c == null ? '' : c);
+    const i = HF.CRESTS.indexOf(id);
+    if (i >= 0) return i;
+    const j = HF.CREST_LEGACY.indexOf(id);
+    if (j >= 0) return j;
+    // Algunos guardados antiguos perdieron el selector de variación (☀ vs ☀️).
+    const base = id.replace(/\uFE0F/g, '');
+    return HF.CREST_LEGACY.findIndex(e => e.replace(/\uFE0F/g, '') === base);
+  };
+  HF.crestSrc = c => {
+    const i = HF.crestIndex(c);
+    return i < 0 ? '' : 'assets/crests/c' + String(i + 1).padStart(2, '0') + '.webp';
+  };
+  HF.crestName = c => {
+    const i = HF.crestIndex(c);
+    return i < 0 ? 'Blasón' : HF.CREST_NAMES[i];
+  };
+  HF.crestEmoji = c => {
+    const i = HF.crestIndex(c);
+    return i < 0 ? (c || '🛡') : HF.CREST_LEGACY[i];
+  };
+  HF.normalizeCrest = c => HF.CRESTS[HF.crestIndex(c)] || HF.CRESTS[0];
+  // Etiqueta lista para innerHTML: imagen del blasón, o texto/emoji si es un valor antiguo desconocido.
+  HF.crestHTML = (c, px, cls) => {
+    const i = HF.crestIndex(c);
+    const size = Math.max(8, Math.round(+px || 24));
+    const extra = String(cls || '').replace(/[^\w -]/g, '');
+    if (i < 0) {
+      const txt = String(c == null || c === '' ? '🛡' : c).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+      return `<span class="crest-fallback ${extra}" style="font-size:${size}px">${txt}</span>`;
+    }
+    const name = HF.CREST_NAMES[i];
+    return `<img class="crest-img ${extra}" src="${HF.crestSrc(c)}" width="${size}" height="${size}" alt="${name}" title="${name}" style="width:${size}px;height:${size}px">`;
+  };
   HF.AI_NAMES = ['Rojos', 'Verdes', 'Dorados', 'Violetas', 'Naranjas'];
 
   HF.T = { LLANO: 0, COLINA: 1, MONTANA: 2, RIO: 3, MAR: 4 };

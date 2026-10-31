@@ -84,6 +84,20 @@
   const medal = t => t <= 12 ? '🥇' : t <= 18 ? '🥈' : '🥉';
   HF.medal = medal;
 
+  // ---------- puntuación HexScore (competencia asíncrona) ----------
+  // Victoria + velocidad + eficiencia militar + economía − deserciones.
+  HF.calculateScore = function (g) {
+    const won = !!(g.over && g.over.won), s = g.stat || {}, me = (g.f && g.f[0]) || {};
+    const surplus = (me.gold || 0) + (me.food || 0) + (me.wood || 0);
+    let score = 0;
+    if (won) score += 10000;
+    score += Math.max(0, (50 - g.turn) * 200);
+    score += (s.kills || 0) * 100 - (s.lost || 0) * 150;
+    score += surplus * 2;
+    score -= (s.deserts || 0) * 400;
+    return Math.max(0, score);
+  };
+
   // ---------- estadísticas ----------
   HF.statsDefault = () => ({ games: 0, wins: 0, losses: 0, turns: 0, kills: 0, lost: 0, captured: 0, built: 0, recruited: 0, streak: 0, bestStreak: 0, bestWinTurns: null, byMode: {}, recent: [] });
   HF.getStats = () => Object.assign(HF.statsDefault(), HF.store.get('player_statistics', {}));
@@ -121,7 +135,7 @@
       if (res.official && won && HF.cloud && HF.cloud.submitDailyScore) {
         const hero = g.f[0], surplus = (hero.gold || 0) + (hero.food || 0) + (hero.wood || 0);
         HF.cloud.submitDailyScore({
-          date_key: k, player_id: HF.cloud.playerId(), tribe_name: hero.name || 'Mi Tribu',
+          date_key: k, player_id: HF.cloud.playerId(), tribe_name: hero.name || (HF.genTribeName ? HF.genTribeName() : 'Mi Tribu'),
           turns: g.turn, surplus, crest: hero.crest || '', color_hex: hero.color || '#888888'
         }).catch(() => { });
       }

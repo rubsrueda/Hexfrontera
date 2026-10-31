@@ -1,6 +1,10 @@
 (function (G) {
   const HF = G.HF, B = HF.B;
   let cur = null;
+  // Iconos del HUD recortados de art2/oro, art2/trigo y art2/madera.
+  const RES_ICO = { gold: 'assets/ui/gold.webp', food: 'assets/ui/wheat.webp', wood: 'assets/ui/wood.webp' };
+  const resIco = k => `<img class="res-ico" src="${RES_ICO[k]}" alt="" draggable="false">`;
+  const costIcon = k => `<img class="cost-ico" src="${RES_ICO[k]}" alt="" draggable="false">`;
 
   const goalText = g => {
     const gl = g.goal || {};
@@ -13,13 +17,15 @@
     HF.lastGame = { mode: g.mode, meta: g.meta };
     const el = HF.$('#app');
     el.innerHTML = `<div class="screen game">
-      <div class="hud-top"><button id="menu">☰</button><span id="turn"></span><div class="res" id="res"></div><button id="bView">🗺️<small>${HF.t('VIEW_NORMAL')}</small></button><button id="board">📊</button></div>
+      <div class="hud-top"><button id="menu">☰</button><span id="turn"></span><div class="res" id="res"></div><button id="bView"><img class="view-ico" src="assets/ui/map.webp" alt="" draggable="false"><small>${HF.t('VIEW_NORMAL')}</small></button><button id="board" title="${HF.lang() === 'en' ? 'Scoreboard' : 'Marcador'}"><img class="board-ico" src="assets/ui/codex.webp" alt="" draggable="false"></button></div>
       <div class="boardwrap"><canvas id="cv"></canvas><div class="info" id="info"></div></div>
       <div class="drawer hidden" id="drawer"></div>
       <div class="hud-bot">
-        <button id="bBuild">🏗<small>${HF.t('GAME_BUILD')}</small></button><button id="bRec">💂<small>${HF.t('GAME_RECRUIT')}</small></button>
+        <button id="bBuild" class="hud-art-btn"><img class="hud-art" src="assets/ui/build.webp" alt="" draggable="false"><small>${HF.t('GAME_BUILD')}</small></button><button id="bRec" class="hud-art-btn"><img class="hud-art" src="assets/ui/recruit.webp" alt="" draggable="false"><small>${HF.t('GAME_RECRUIT')}</small></button>
+        <button id="bNext" title="${HF.lang() === 'en' ? 'Next idle unit' : 'Siguiente unidad libre'}"><img class="hud-art" src="assets/ui/history.webp" alt="" draggable="false"></button>
         <button id="bUndo">↩<small>${HF.t('GAME_UNDO')}</small></button><button id="bEnd" class="pri">⏭<small>${HF.t('GAME_END')}</small></button>
-      </div></div>`;
+      </div>
+      <div class="tip hidden" id="tip"></div></div>`;
     const q = s => el.querySelector(s);
     const st = { sel: -1, opts: new Map(), pending: null, drawer: null, busy: false, focus: -1, evPtr: g.events.length, bubbles: [] };
     cur = { g, st };
@@ -31,6 +37,29 @@
     board.startAnim();
     if (HF.bgm) { HF.bgm.start(); HF.bgm.update(g); }
     cur.board = board; HF.cur = () => cur;
+    if (HF.replays) HF.replays.init(g);
+
+    function nextIdleUnit(g) {
+      // Solo unidades con las DOS acciones intactas: mover y atacar.
+      const list = g.cells.filter(c => c && c.u && c.u.owner === 0 && c.u.mv > 0 && c.u.at > 0);
+      if (!list.length) {
+        HF.toast(HF.lang() === 'en' ? 'No units with both actions' : 'No hay unidades con las dos acciones libres', 1800);
+        return;
+      }
+      let idx = 0;
+      if (st.sel >= 0) {
+        const cur = list.findIndex(c => c.i === st.sel);
+        if (cur >= 0 && cur < list.length - 1) idx = cur + 1;
+      }
+      const cell = list[idx];
+      // Igual que el toque normal: seleccionar, describir y refrescar; antes
+      // solo se movia la camara y la unidad nunca quedaba realmente activa.
+      select(cell.i);
+      renderInfo(cell.i, ` · alcance ${st.opts.size} acciones`);
+      board.centerOn(cell.i);
+      refresh();
+      HF.sfx('click');
+    }
 
     const sync = () => { board.cells = g.cells; board.R = g.R; board.fogMap = g.fog === 'NONE' ? null : g.fogMap; };
     const info = t => { q('#info').innerHTML = t; };
@@ -43,14 +72,14 @@
       if (prov != null && prov < 0) prov = null;
       const pv = HF.preview(g, f, prov), sk = HF.stockFor(g, f, prov), tr = HF.tradeRoutes(g, f).length;
       const season = HF.season(g), SICON = ['🌸', '☀️', '🍂', '❄️'];
-      q('#turn').textContent = f.crest + ' T' + g.turn + ' ' + (SICON[season] || '');
+      q('#turn').innerHTML = HF.crestHTML(f.crest, 18, 'hud-crest') + ' T' + g.turn + ' ' + (SICON[season] || '');
       q('#turn').title = HF.seasonName(season);
       q('#res').title = prov != null ? 'Provincia seleccionada' : '';
       const loan = pv.loan || 0;
       q('#res').innerHTML = (prov != null ? '<span>📍</span>' : '') +
-        `<span title="Ingreso bruto +${pv.inc.gold} · mantenimiento −${pv.upkeepGold}${loan ? ` · préstamo −${loan}` : ''}">💰${sk.gold}<i class="pos">+${pv.inc.gold}</i><small class="upk">−${pv.upkeepGold + loan}</small></span>` +
-        `<span title="Ingreso bruto +${pv.inc.food} · mantenimiento −${pv.upkeep}">🌾${sk.food}<i class="pos">+${pv.inc.food}</i><small class="upk">−${pv.upkeep}</small></span>` +
-        `<span>🧱${sk.wood}${pv.inc.wood ? `<i class="pos">+${pv.inc.wood}</i>` : ''}</span>` +
+        `<span title="Ingreso bruto +${pv.inc.gold} · mantenimiento −${pv.upkeepGold}${loan ? ` · préstamo −${loan}` : ''}">${resIco('gold')}${sk.gold}<i class="pos">+${pv.inc.gold}</i><small class="upk">−${pv.upkeepGold + loan}</small></span>` +
+        `<span title="Ingreso bruto +${pv.inc.food} · mantenimiento −${pv.upkeep}">${resIco('food')}${sk.food}<i class="pos">+${pv.inc.food}</i><small class="upk">−${pv.upkeep}</small></span>` +
+        `<span>${resIco('wood')}${sk.wood}${pv.inc.wood ? `<i class="pos">+${pv.inc.wood}</i>` : ''}</span>` +
         `${tr ? `<span title="Rutas comerciales activas">🛣${tr}</span>` : ''}`;
       q('#bUndo').disabled = !HF.canUndo(g);
       q('#bEnd').disabled = st.busy || !!g.over;
@@ -81,7 +110,7 @@
       }
       board.draw();
     }
-    function refresh() { sync(); hud(); overlay(); if (HF.bgm) HF.bgm.update(g); }
+    function refresh() { sync(); hud(); overlay(); if (HF.replays) HF.replays.touch(g); if (HF.bgm) HF.bgm.update(g); }
     function clearSel() { st.sel = -1; st.opts = new Map(); }
     function select(i) { st.sel = i; st.focus = i; st.opts = HF.options(g, i); st.pending = null; closeDrawer(); }
 
@@ -108,11 +137,11 @@
       const c = g.cells[i];
       if (!HF.visible(g, i) && g.fogMap[i] === 0) return 'Territorio inexplorado';
       let t = `${HF.TNAME[c.t]}${c.b ? ' · ' + HF.BICON[c.b] + HF.BNAME[c.b] : ''}${c.res ? ' · ' + ['', 'Oro', 'Trigo', 'Madera'][c.res] : ''}`;
-      t += c.o >= 0 ? ` · ${g.f[c.o].crest} ${HF.esc(g.f[c.o].name)}${(c.sup && c.iso !== g.turn) ? '' : ' · AISLADO'}` : ' · Neutral';
+      t += c.o >= 0 ? ` · ${HF.crestHTML(g.f[c.o].crest, 16)} ${HF.esc(g.f[c.o].name)}${(c.sup && c.iso !== g.turn) ? '' : ' · AISLADO'}` : ' · Neutral';
       if (c.u && (c.u.owner === 0 || HF.visible(g, i))) t += ` · ${HF.UNITS[c.u.type].icon}${HF.UNITS[c.u.type].name} N${c.u.tier}`;
       if (c.u && c.u.owner === 0) t += ` · 👣${c.u.mv > 0 ? '✔' : '✖'} ⚔${c.u.at > 0 ? '✔' : '✖'}`;
       if (c.u && c.u.owner === 0 && HF.unitRange) t += ` · alcance ${HF.unitRange(g, c.u, c)}`;
-      if (c.u && c.u.owner === 0) { const D = HF.UNITS[c.u.type], k = Math.min(c.u.tier, D.up.length) - 1; t += ` · paga 💰${D.upGold[k]} 🌾${D.up[k]}`; }
+      if (c.u && c.u.owner === 0) { const D = HF.UNITS[c.u.type], k = Math.min(c.u.tier, D.up.length) - 1; t += ` · paga ${costIcon('gold')}${D.upGold[k]} ${costIcon('food')}${D.up[k]}`; }
       if (c.u && c.u.cargo && (c.u.owner === 0 || HF.visible(g, i))) { const k = c.u.cargo; t += ` · ⚓ lleva ${HF.UNITS[k.type].icon}${HF.UNITS[k.type].name} N${k.tier}${c.u.owner === 0 ? ' 👣' + (k.mv > 0 ? '✔' : '✖') : ''}`; }
       if (c.wonder) t += ` · 🏛 Pirámide${c.o >= 0 ? ' ' + (g.f[c.o].wonderTurns || 0) + '/' + HF.CFG.doctrine.wonderStandTurns : ''}`;
       if (c.burn > 0) t += ` · 🕳 cenizas ${c.burn}`;
@@ -129,7 +158,7 @@
       const bd = c && (unitVisible || (c.b && HF.BDEF[c.b])) ? HF.defenseBreakdown(g, i) : null;
       q('#info').innerHTML = describe(i) + (extra || '') +
         (bd && bd.parts.length ? `<div class="defbreak">🛡 <b>${bd.total}</b> · ${HF.esc(bd.detail)}</div>` : '') +
-        (canLoan ? ' <button class="loanbtn" id="loanBtn">💰 Solicitar empréstito</button>' : '');
+        (canLoan ? ` <button class="loanbtn" id="loanBtn">${costIcon('gold')} Solicitar empréstito</button>` : '');
       const b = q('#info #loanBtn');
       if (b) b.onclick = e => {
         e.stopPropagation();
@@ -177,8 +206,8 @@
       const D = HF.CFG.doctrine;
       const lbl = {
         atk: '⚔ Atacar', move: '➡ Mover', chop: '🪓 Talar', fuse: '🔷 Fusionar', shoot: '🏹 Disparar', siege: '💣 Asediar', board: '⚓ Embarcar',
-        trap: `🪤 Colocar trampa (${D.caltropCost.gold}💰)`, fire: '🔥 Incendiar bosque',
-        takeover: `💰 Sobornar (${D.takeoverCost.gold}💰)`, pack_camp: '⛺ Empacar campamento', wonder: `🏛 Erigir pirámide (${D.wonderCost.gold}💰)`
+        trap: `🪤 Colocar trampa (${costIcon('gold')}${D.caltropCost.gold})`, fire: '🔥 Incendiar bosque',
+        takeover: `Sobornar (${costIcon('gold')}${D.takeoverCost.gold})`, pack_camp: '⛺ Empacar campamento', wonder: `🏛 Erigir pirámide (${costIcon('gold')}${D.wonderCost.gold})`
       };
       const all = [o].concat(o.alt || []);
       HF.modal(`<h3>Elige acción</h3><div class="grid3" style="grid-template-columns:1fr">${all.map((x, k) => `<button data-k="${k}" class="pri" style="width:100%">${lbl[x.k] || x.k}</button>`).join('')}</div><br><button id="x" style="width:100%">Cancelar</button>`, m => {
@@ -215,6 +244,7 @@
     function afterAction() { if (g.over) showEnd(); }
 
     function tap(i) {
+      hideTip();
       if (st.busy || g.over) return;
       const c = g.cells[i];
       if (st.pending) {
@@ -250,69 +280,146 @@
     };
     board.h.onDrop = (from, to) => { if (st.sel === from && st.opts.has(to)) act(from, to); else { HF.vibrate(50); HF.sfx('error'); refresh(); } };
 
+    // ----- ficha emergente (hover/tap) de edificios y unidades -----
+    const tip = q('#tip');
+    let tipTimer = 0;
+    const TIER_ROMAN = ['I', 'II', 'III', 'IV'];
+    const costTxt = c => Object.keys(RES_ICO).filter(k => c[k]).map(k => costIcon(k) + c[k]).join(' ') || '—';
+    function hideTip() { clearTimeout(tipTimer); tip.classList.add('hidden'); }
+    function showTip(el, html) {
+      if (!html) return hideTip();
+      tip.innerHTML = html;
+      tip.classList.remove('hidden');
+      const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+      const left = Math.max(8, Math.min(r.left + (r.width - w) / 2, innerWidth - w - 8));
+      let top = r.top - h - 8;
+      if (top < 8) top = Math.min(innerHeight - h - 8, r.bottom + 8);
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+    function bindTip(el, html) {
+      const fn = typeof html === 'function' ? html : () => html;
+      el.addEventListener('mouseenter', () => showTip(el, fn()));
+      el.addEventListener('mouseleave', hideTip);
+      el.addEventListener('focus', () => showTip(el, fn()));
+      el.addEventListener('blur', hideTip);
+      el.addEventListener('touchstart', () => {
+        showTip(el, fn());
+        clearTimeout(tipTimer);
+        tipTimer = setTimeout(hideTip, 5200);
+      }, { passive: true });
+    }
+    function buildTip(b) {
+      const s = HF.buildStats(b), rows = [];
+      rows.push(`<b>${HF.BICON[b]} ${HF.BNAME[b]}</b>`);
+      rows.push(`Coste: ${costTxt(s.cost)}`);
+      const prod = [s.gold ? `${costIcon('gold')}+${s.gold}` : '', s.food ? `${costIcon('food')}+${s.food}` : ''].filter(Boolean).join(' · ');
+      if (prod) rows.push(`Produce: ${prod} /turno`);
+      if (s.resBonus) rows.push(`Si la casilla tiene recurso: +${s.resBonus} de ese recurso /turno`);
+      if (s.def) rows.push(`Defensa de la casilla: 🛡 +${s.def}`);
+      if (b === B.CAMINO) rows.push('Red vial: el paso entre construcciones cuesta 0,25 PA. No produce ni defiende.');
+      else if (s.road) rows.push('Red vial: conecta la red de caminos (0,25 PA por paso).');
+      if (b >= B.CAMPAMENTO) rows.push(`Nivel ${s.level}/5 de asentamiento`);
+      return rows.join('<br>');
+    }
+    function unitTip(type, tier) {
+      const D = HF.UNITS[type], t = tier || 1, s = HF.unitStats(g, type, t, 0);
+      const k = Math.min(t, 3) - 1, cost = HF.recruitCost(g, g.f[0], type, t), rows = [];
+      rows.push(`<b>${D.icon} ${D.name} ${TIER_ROMAN[t - 1] || 'N' + t}</b>`);
+      rows.push(`⚔ Ataque <b>${s.atk}</b> · 🛡 Defensa <b>${s.def}</b> · 👣 Movimiento <b>${s.move}</b> PA`);
+      rows.push(`🎯 Alcance ${s.atkRange}${s.shoot ? ` · 🏹 Disparo ${s.shoot}` : ''}`);
+      rows.push(`Coste: ${costTxt(cost)} · Mantenimiento: ${costIcon('food')}${D.up[k]}${D.upGold[k] ? ` ${costIcon('gold')}${D.upGold[k]}` : ''}/turno`);
+      rows.push(`Se recluta en: ${D.from.map(b => HF.BNAME[b]).join(', ')}`);
+      if (type === 'INF' || type === 'ENG') rows.push('En colina +1 🛡; en montaña +2 🛡');
+      if (type === 'ENG') rows.push('Cruza ríos y montañas sin camino');
+      if (type === 'ARC') rows.push(`Desde colina el disparo sube a ${D.shootHill}`);
+      if (type === 'CAB') rows.push(`Carga: +${HF.CFG.combat.chargeBonus} ⚔ en llano y en línea recta`);
+      if (type === 'SIE') rows.push('Asedia edificios y degrada defensas a distancia');
+      if (type === 'BAR') rows.push('Naval: transporta 1 unidad de tierra');
+      rows.push('<span class="dim">1 PA = 1 casilla de campo o 4 casillas por red vial continua</span>');
+      return rows.join('<br>');
+    }
+
     // ----- cajones -----
-    function closeDrawer() { st.drawer = null; q('#drawer').classList.add('hidden'); }
+    function closeDrawer() { hideTip(); st.drawer = null; q('#drawer').classList.add('hidden'); }
     function drawerRender() {
       const d = q('#drawer'), f = g.f[0];
       if (!st.drawer) { d.classList.add('hidden'); return; }
       d.classList.remove('hidden');
-      const cs = c => Object.entries(c).map(([k, v]) => ({ gold: '💰', food: '🌾', wood: '🧱' }[k] + v)).join(' ');
+      const cs = c => Object.entries(c).map(([k, v]) => costIcon(k) + v).join(' ');
       const afford = c => HF.affordAny(g, f, c);
       if (st.drawer === 'build') {
         const bs = [B.CAMINO, B.CAMPAMENTO, B.PUEBLO, B.BASTION, B.CIUDAD];
         d.innerHTML = bs.map(b => { const c = HF.buildCost(g, f, b); return `<button data-b="${b}" class="${st.pending && st.pending.item === b ? 'sel' : ''}" style="${afford(c) ? '' : 'opacity:.5'}">${HF.art.html('build', b, HF.BICON[b])} ${HF.BNAME[b]}<small>${cs(c)}</small></button>`; }).join('');
-        d.querySelectorAll('button[data-b]').forEach(b => b.onclick = () => {
-          const item = +b.dataset.b, cells = new Set(HF.buildCells(g, item)), cost = HF.buildCost(g, f, item);
-          if (!afford(cost)) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Recursos insuficientes'); }
-          if (!cells.size) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Ninguna provincia con casillas válidas puede pagarlo'); }
-          clearSel(); st.pending = { kind: 'build', item, cells }; HF.sfx('click');
-          info('Toca una casilla verde'); drawerRender(); refresh();
+        d.querySelectorAll('button[data-b]').forEach(b => {
+          const item = +b.dataset.b;
+          bindTip(b, () => buildTip(item));
+          b.onclick = () => {
+            const cells = new Set(HF.buildCells(g, item)), cost = HF.buildCost(g, f, item);
+            if (!afford(cost)) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Recursos insuficientes'); }
+            if (!cells.size) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Ninguna provincia con casillas válidas puede pagarlo'); }
+            clearSel(); st.pending = { kind: 'build', item, cells }; HF.sfx('click');
+            info('Toca una casilla verde'); drawerRender(); refresh();
+          };
         });
         return;
       }
       // Reclutamiento directo: I / II / III (1x, 2x, 3x coste)
       const pend = st.pending && st.pending.kind === 'unit' ? st.pending : null;
       d.innerHTML = Object.keys(HF.UNITS).map(t => {
-        const p = pend && pend.item === t ? pend : null, tier = p ? (p.tier || 1) : 1;
-        const c = HF.recruitCost(g, f, t, tier);
-        return `<div class="ucard"><button data-u="${t}" class="${p ? 'sel' : ''}" style="${afford(c) ? '' : 'opacity:.5'}">${HF.art.html('unit', t, HF.UNITS[t].icon)} ${HF.UNITS[t].name}<small>${cs(c)}</small></button>
+        const U = HF.UNITS[t] || {};
+        // Una tarjeta con problemas (icono, coste) no puede vaciar el cajón:
+        // se pinta igualmente con el emoji y el nombre.
+        try {
+          const p = pend && pend.item === t ? pend : null, tier = p ? (p.tier || 1) : 1;
+          const c = HF.recruitCost(g, f, t, tier);
+          return `<div class="ucard"><button data-u="${t}" class="${p ? 'sel' : ''}" style="${afford(c) ? '' : 'opacity:.5'}">${HF.art.html('unit', t, U.icon)} ${U.name}<small>${cs(c)}</small></button>
           <div class="tierpill">${[1, 2, 3].map(k => `<button data-u="${t}" data-tier="${k}" class="${p && (p.tier || 1) === k ? 'sel' : ''}">${['I', 'II', 'III'][k - 1]}</button>`).join('')}</div></div>`;
+        } catch (e) {
+          console.error('[drawer] no se pudo pintar la unidad ' + t, e);
+          return `<div class="ucard"><button data-u="${t}">${U.icon || '❔'} ${U.name || t}</button></div>`;
+        }
       }).join('');
-      d.querySelectorAll('button[data-u]').forEach(b => b.onclick = () => {
+      d.querySelectorAll('button[data-u]').forEach(b => {
         const type = b.dataset.u, explicit = !!b.dataset.tier;
-        let tier = explicit ? +b.dataset.tier : 1;
-        if (!explicit) {
-          const now = performance.now();
-          if (st.lastPick && st.lastPick.type === type && now - st.lastPick.t < 420) tier = Math.min(3, (st.lastPick.tier || 1) + 1);
-          st.lastPick = { type, tier, t: now };
-        } else st.lastPick = { type, tier, t: performance.now() };
-        const cost = HF.recruitCost(g, f, type, tier), cells = new Set(HF.recruitCells(g, type, tier));
-        if (!afford(cost)) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Recursos insuficientes'); }
-        if (!cells.size) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Ninguna provincia con casillas válidas puede pagarlo'); }
-        clearSel(); st.pending = { kind: 'unit', item: type, tier, cells }; HF.sfx('click');
-        info(`Toca una casilla verde · ${HF.UNITS[type].name} ${['I', 'II', 'III'][tier - 1]}`);
-        drawerRender(); refresh();
+        bindTip(b, () => unitTip(type, explicit ? +b.dataset.tier : (pend && pend.item === type ? (pend.tier || 1) : 1)));
+        b.onclick = () => {
+          let tier = explicit ? +b.dataset.tier : 1;
+          if (!explicit) {
+            const now = performance.now();
+            if (st.lastPick && st.lastPick.type === type && now - st.lastPick.t < 420) tier = Math.min(3, (st.lastPick.tier || 1) + 1);
+            st.lastPick = { type, tier, t: now };
+          } else st.lastPick = { type, tier, t: performance.now() };
+          const cost = HF.recruitCost(g, f, type, tier), cells = new Set(HF.recruitCells(g, type, tier));
+          if (!afford(cost)) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Recursos insuficientes'); }
+          if (!cells.size) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Ninguna provincia con casillas válidas puede pagarlo'); }
+          clearSel(); st.pending = { kind: 'unit', item: type, tier, cells }; HF.sfx('click');
+          info(`Toca una casilla verde · ${HF.UNITS[type].name} ${['I', 'II', 'III'][tier - 1]}`);
+          drawerRender(); refresh();
+        };
       });
     }
     function toggleDrawer(k) {
       if (st.drawer === k) { closeDrawer(); st.pending = null; refresh(); return; }
-      clearSel(); st.pending = null; st.drawer = k; drawerRender(); refresh();
+      hideTip(); clearSel(); st.pending = null; st.drawer = k; drawerRender(); refresh();
     }
     q('#bBuild').onclick = () => toggleDrawer('build');
     q('#bRec').onclick = () => toggleDrawer('unit');
-    // Modos de vista del mapa: normal -> combate -> político -> recursos
+    // Modos de vista del mapa: normal -> combate -> político -> recursos.
+    // Las cuatro imágenes salen de art2/boton mapa, reclutar, campaña e Historial.
     const VIEWS = [
-      { key: 'normal', icon: '🗺️', name: HF.t('VIEW_NORMAL') },
-      { key: 'combat', icon: '⚔️', name: HF.t('VIEW_COMBAT') },
-      { key: 'politic', icon: '🏳️', name: HF.t('VIEW_POLITIC') },
-      { key: 'resource', icon: '💎', name: HF.t('VIEW_RESOURCE') }
+      { key: 'normal', icon: 'assets/ui/map.webp', name: HF.t('VIEW_NORMAL') },
+      { key: 'combat', icon: 'assets/ui/recruit.webp', name: HF.t('VIEW_COMBAT') },
+      { key: 'politic', icon: 'assets/ui/campaign.webp', name: HF.t('VIEW_POLITIC') },
+      { key: 'resource', icon: 'assets/ui/history.webp', name: HF.t('VIEW_RESOURCE') }
     ];
+    const viewHTML = v => `<img class="view-ico" src="${v.icon}" alt="" draggable="false">`;
     let viewIdx = 0;
     q('#bView').onclick = () => {
       viewIdx = (viewIdx + 1) % VIEWS.length;
       const v = VIEWS[viewIdx];
       board.viewMode = v.key;
-      q('#bView').innerHTML = `${v.icon}<small>${v.name}</small>`;
+      q('#bView').innerHTML = `${viewHTML(v)}<small>${v.name}</small>`;
       HF.sfx('click');
       HF.toast(v.key === 'combat' ? (HF.lang() === 'en' ? 'Combat view · tap a unit to see its defense' : 'Vista: Combate · toca una unidad para ver su defensa') : (HF.lang() === 'en' ? 'View: ' : 'Vista: ') + v.name, v.key === 'combat' ? 2600 : 1500);
       if (v.key === 'combat') {
@@ -322,9 +429,14 @@
       board.draw();
     };
     q('#bUndo').onclick = () => { if (HF.undo(g)) { HF.sfx('click'); clearSel(); st.pending = null; refresh(); drawerRender(); } };
+    q('#bNext').onclick = () => { nextIdleUnit(g); };
 
     // ----- turnos -----
-    function save() { if (!g.over) HF.store.atomicSave('savegame_active', HF.serialize(g)); }
+    function save() {
+      if (g.over) return;
+      if (HF.replays) HF.replays.flush(g);
+      HF.store.atomicSave('savegame_active', HF.serialize(g));
+    }
     q('#bEnd').onclick = () => {
       if (st.busy || g.over) return;
       st.busy = true; clearSel(); st.pending = null; closeDrawer(); refresh();
@@ -344,48 +456,137 @@
 
     // ----- menús -----
     function scoreboard() {
-      HF.modal(`<h3>📊 Marcador · Turno ${g.turn}</h3><table><tr><th></th><th>Casillas</th><th>Ciudades</th><th>Unid.</th><th>💰</th></tr>${g.f.map(f => {
+      HF.modal(`<h3><img class="modal-ico" src="assets/ui/codex.webp" alt="" draggable="false"> Marcador · Turno ${g.turn}</h3><table><tr><th></th><th>Casillas</th><th>Ciudades</th><th>Unid.</th><th>${costIcon('gold')}</th></tr>${g.f.map(f => {
         const known = f.human || g.fog === 'NONE' || true;
-        return `<tr style="${f.alive ? '' : 'opacity:.4'}"><td style="color:${f.color}">${f.crest} ${HF.esc(f.name)}</td><td>${HF.territory(g, f.id)}</td><td>${g.cells.filter(c => c && c.o === f.id && c.b === B.CIUDAD).length}</td><td>${g.cells.filter(c => c && c.u && c.u.owner === f.id).length}</td><td>${f.human ? f.gold : '?'}</td></tr>`;
+        return `<tr style="${f.alive ? '' : 'opacity:.4'}"><td style="color:${f.color}">${HF.crestHTML(f.crest, 22)} ${HF.esc(f.name)}</td><td>${HF.territory(g, f.id)}</td><td>${g.cells.filter(c => c && c.o === f.id && c.b === B.CIUDAD).length}</td><td>${g.cells.filter(c => c && c.u && c.u.owner === f.id).length}</td><td>${f.human ? f.gold : '?'}</td></tr>`;
       }).join('')}</table><div class="dim small">🎯 ${goalText(g)}</div><br><button id="x" class="pri">Cerrar</button>`, m => m.querySelector('#x').onclick = HF.closeModal);
     }
     q('#board').onclick = scoreboard;
     q('#menu').onclick = () => HF.modal(`<h3>${HF.t('GAME_MENU')}</h3><div class="dim small">🎯 ${goalText(g)}</div><br>
-      <div class="grid3" style="grid-template-columns:1fr"><button id="r" class="pri">${HF.t('GAME_CONTINUE')}</button><button id="c">${HF.t('GAME_CENTER')}</button><button id="w">${HF.t('GAME_CODEX')}</button><button id="s">${HF.t('GAME_SAVE_EXIT')}</button><button id="a">${HF.t('GAME_ABANDON')}</button></div>`, m => {
+      <div class="grid3" style="grid-template-columns:1fr"><button id="r" class="pri">${HF.t('GAME_CONTINUE')}</button><button id="c">${HF.t('GAME_CENTER')}</button><button id="w">${HF.t('GAME_CODEX')}</button><button id="rp">🎬 Compartir partida</button><button id="s">${HF.t('GAME_SAVE_EXIT')}</button><button id="a">${HF.t('GAME_ABANDON')}</button></div>`, m => {
       m.querySelector('#r').onclick = HF.closeModal;
       m.querySelector('#c').onclick = () => { board.fit(); HF.closeModal(); };
       m.querySelector('#w').onclick = () => HF.codex();
+      m.querySelector('#rp').onclick = () => { HF.closeModal(); if (HF.replays) HF.replays.share(g.replayId, g); };
       m.querySelector('#s').onclick = () => { save(); HF.go('hub'); };
       m.querySelector('#a').onclick = () => { if (confirm(HF.lang() === 'en' ? 'Surrender the game? Progress will be lost.' : '¿Abandonar la partida? Se perderá el progreso.')) { HF.store.del('savegame_active'); HF.go('hub'); } };
     });
 
     function showEnd() {
       HF.store.del('savegame_active');
+      if (HF.replays) HF.replays.finish(g);
       if (HF.bgm) HF.bgm.stop();
       const res = HF.recordResult(g) || {};
       const won = g.over.won;
       HF.sfx(won ? 'win' : 'lose');
       const s = g.stat, m = g.meta || {};
+      const me = g.f[0];
+      const surplus = (me.gold || 0) + (me.food || 0) + (me.wood || 0);
+      const score = HF.calculateScore(g);
+      const mapKey = HF.cloud && HF.cloud.getMapKey ? HF.cloud.getMapKey(g) : 'local';
+      // Envío en segundo plano: el jugador ve el resultado sin esperar a la red.
+      let mapScoreSent = null;
+      if (HF.cloud && HF.cloud.submitMapScore && !g._mapScoreSent) {
+        g._mapScoreSent = true;
+        mapScoreSent = HF.cloud.submitMapScore({
+          map_key: mapKey,
+          player_id: HF.cloud.playerId(),
+          tribe_name: me.name || (HF.genTribeName ? HF.genTribeName() : 'Mi Tribu'),
+          crest: HF.normalizeCrest(me.crest),
+          color_hex: me.color || '#3b82f6',
+          turns: g.turn,
+          score: score,
+          surplus: surplus,
+          won: !!won
+        }).then(r => {
+          // Guardar la repetición de la mejor marca para que el Top se pueda ver.
+          if (won && r && r.ok && !r.skipped && HF.replays && HF.replays.saveCode && HF.cloud.submitReplayCode) {
+            HF.replays.saveCode(g).then(code => {
+              if (code && code.length <= 60000) return HF.cloud.submitReplayCode(mapKey, HF.cloud.playerId(), code);
+            }).catch(() => { });
+          }
+          return r;
+        }).catch(() => null);
+      }
       let extra = '';
       if (g.mode === 'campaign' && won) {
         extra = `<div class="stars" style="font-size:28px;text-align:center">${'★'.repeat(res.stars)}${'☆'.repeat(3 - res.stars)}</div>
         <div class="small">★ Victoria<br>${g.turn <= m.par ? '★' : '☆'} En ≤ ${m.par} turnos<br>${res.stars === 3 || (res.stars === 2 && g.turn > m.par) ? '★' : '☆'} ${HF.CHTXT[m.challenge]}</div>`;
       }
       if (g.mode === 'daily') extra = `<div style="text-align:center;font-size:20px">${res.official ? (won ? 'Resultado oficial ' + HF.medal(g.turn) : 'Intento oficial fallido') : 'Práctica (no cuenta)'}</div>`;
-      const me = g.f[0], kd = s.lost ? (s.kills / s.lost).toFixed(2) : (s.kills ? '∞' : '0.00');
-      const surplus = (me.gold || 0) + (me.food || 0) + (me.wood || 0);
+      const kd = s.lost ? (s.kills / s.lost).toFixed(2) : (s.kills ? '∞' : '0.00');
       HF.modal(`<h2 style="text-align:center">${won ? '🏆 ¡Victoria!' : '💀 Derrota'}</h2><div style="text-align:center" class="dim">${HF.esc(g.over.reason)} · Turno ${g.turn}</div>${extra}
         <div class="kpis">
           <div class="kpi"><span>⚔️</span><b>${kd}</b><small>Eficiencia militar</small><em>${s.kills} bajas / ${s.lost} pérdidas</em></div>
           <div class="kpi"><span>🔗</span><b>${s.cuts}</b><small>Asfixia logística</small><em>hexágonos aislados</em></div>
-          <div class="kpi"><span>🌾</span><b>${surplus}</b><small>Superávit</small><em>💰${me.gold} · 🌾${me.food} · 🧱${me.wood}</em></div>
+          <div class="kpi"><span><img class="res-kpi" src="assets/ui/wheat.webp" alt=""></span><b>${surplus}</b><small>Superávit</small><em>${costIcon('gold')}${me.gold} · ${costIcon('food')}${me.food} · ${costIcon('wood')}${me.wood}</em></div>
         </div>
         <canvas class="chart" id="ch"></canvas>
         <div class="chart-legend">${g.f.map(f => `<span><i style="background:${f.color}"></i>${HF.esc(f.name)}</span>`).join('')}</div>
+        <div class="card" style="margin-top:8px">
+          <div class="row"><b>🏆 Récords del Mapa</b><span class="dim small">Tu puntuación: <b style="color:var(--acc)">${score.toLocaleString()} pts</b><span id="myRank"></span></span></div>
+          <div id="mapLB" class="dim small" style="margin-top:6px">Cargando clasificación mundial…</div>
+        </div>
         <div class="dim small" style="text-align:center">Conquistadas ${s.captured} · Edificios ${s.built} · Deserciones ${s.deserts}</div><br>
         <button id="btnShareReplay" class="pri" style="width:100%;margin-bottom:6px">🎬 Compartir Repetición</button>
         <div class="row"><button id="menu2" class="grow">Menú</button>${g.mode === 'campaign' && won && m.idx < 29 ? '<button id="nx" class="pri grow">Siguiente ▶</button>' : '<button id="again" class="pri grow">Repetir</button>'}</div>`, mm => {
         chart(mm.querySelector('#ch'));
+        // Top del mapa: se carga después del envío para que incluya la marca
+        // recién registrada; el modal ya es usable mientras tanto.
+        const loadLeaderboard = () => {
+          HF.cloud.getMapLeaderboard(mapKey).then(rows => {
+            const box = mm.querySelector('#mapLB');
+            if (!box || !mm.isConnected) return;
+            if (!rows || !rows.length) {
+              box.innerHTML = (HF.cloud.lastOffline && HF.cloud.lastOffline())
+                ? '<div class="dim small">Sin conexión para cargar el ranking.</div>'
+                : '<div class="dim small">¡Eres el primero en registrar una puntuación en este mapa!</div>';
+              return;
+            }
+            const myId = HF.cloud.playerId();
+            box.innerHTML = `<table style="width:100%;font-size:12px">
+              <tr><th>#</th><th>Tribu</th><th>Turnos</th><th>Puntos</th><th></th></tr>
+              ${rows.map((r, i) => {
+                const isMe = r.player_id === myId;
+                return `<tr style="${isMe ? 'color:var(--acc);font-weight:bold' : ''}">
+                  <td>${i + 1}</td>
+                  <td>${HF.crestHTML(r.crest, 22)} ${HF.esc(r.tribe_name || '—')}</td>
+                  <td>T${+r.turns || 0}</td>
+                  <td>${(+r.score || 0).toLocaleString()}</td>
+                  <td>${r.won ? `<button data-rp="${i}" title="Ver repetición" style="min-height:26px;padding:2px 7px;font-size:11px">▶</button>` : ''}</td>
+                </tr>`;
+              }).join('')}
+            </table>`;
+            box.querySelectorAll('[data-rp]').forEach(b => b.onclick = () => {
+              const r = rows[+b.dataset.rp];
+              if (r) HF.playCloudReplay(mapKey, r.player_id);
+            });
+          }).catch(() => {
+            const box = mm.querySelector('#mapLB');
+            if (box) box.innerHTML = '<div class="dim small">Sin conexión para cargar el ranking.</div>';
+          });
+        };
+        const afterSend = () => {
+          // Puesto del jugador (también se guarda en el historial local).
+          if (HF.cloud && HF.cloud.getMapRank) {
+            HF.cloud.getMapRank(mapKey, HF.cloud.playerId()).then(rank => {
+              if (!rank) return;
+              const rk = mm.querySelector('#myRank');
+              if (rk) rk.textContent = ' · Puesto #' + rank;
+              if (g.replayId && HF.replays && HF.replays.setRank) HF.replays.setRank(g.replayId, rank);
+            }).catch(() => { });
+          }
+          loadLeaderboard();
+        };
+        const lbBox = mm.querySelector('#mapLB');
+        if (lbBox) {
+          if (!HF.cloud || !HF.cloud.getMapLeaderboard || !HF.cloud.online) {
+            lbBox.innerHTML = '<div class="dim small">Modo sin conexión · sin ranking mundial.</div>';
+          } else if (mapScoreSent) {
+            mapScoreSent.then(afterSend, afterSend);
+          } else afterSend();
+        }
+
         mm.querySelector('#menu2').onclick = () => HF.go(g.mode === 'campaign' ? 'campaign' : 'hub');
         const nx = mm.querySelector('#nx'), ag = mm.querySelector('#again');
         if (nx) nx.onclick = () => HF.startGame(HF.makeGame(HF.campaign[m.idx + 1], HF.loadTribe()));
@@ -494,13 +695,12 @@
     }
 
     refresh();
-    board.fit();
+    board.startView();
     if (g.turn === 1 && g.mode !== 'skirmish' || g.mode === 'daily') {
       const m = g.meta || {};
       HF.modal(`<h3>${HF.esc(m.name || 'Desafío')}</h3><p>${goalText(g)}</p>${m.par ? `<div class="dim small">★ en ≤ ${m.par} turnos · ★ ${HF.CHTXT[m.challenge]}</div>` : ''}<br><button class="pri" id="x" style="width:100%">¡Vamos!</button>`, mm => mm.querySelector('#x').onclick = HF.closeModal);
     }
     const capi = g.cells.findIndex(c => c && c.o === 0 && c.cap);
-    board.cam.z = Math.max(board.cam.z, 1.2);
     if (capi >= 0) board.centerOn(capi);
     info(`${goalText(g)}`);
     if (g.over) showEnd();

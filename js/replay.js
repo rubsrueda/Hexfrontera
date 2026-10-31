@@ -119,7 +119,7 @@
     const render = () => {
       board.cells = g.cells; board.R = g.R; board.fogMap = null;
       board.draw();
-      repTurn.textContent = 'T' + g.turn + (g.f[g.cur] ? ' · ' + g.f[g.cur].crest : '');
+      repTurn.innerHTML = 'T' + g.turn + (g.f[g.cur] ? ' · ' + HF.crestHTML(g.f[g.cur].crest, 16) : '');
       repCounter.textContent = `${HF.t('REPLAY_ACTION')} ${cursor} / ${log.length}`;
       playBtn.textContent = playing ? '⏸' : '▶';
       speedBtn.textContent = SPEEDS[speed][0];

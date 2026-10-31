@@ -17,7 +17,9 @@
     return true;
   };
   // camino y todo edificio superior: sin penalización de terreno y transitable por cualquier unidad de tierra
-  const isRoad = c => c.b >= B.CAMINO;
+  // Camino y todos los asentamientos civiles/militares son red vial.
+  const isRoad = c => !!c && (c.b === B.CAMINO || c.b === B.CAMPAMENTO ||
+    c.b === B.PUEBLO || c.b === B.BASTION || c.b === B.CIUDAD);
   const isWater = c => c.t === T.MAR || c.t === T.RIO;
   HF.canStep = canStep;
   const BUILDABLE_LAND = c => c.t === T.LLANO || c.t === T.COLINA || c.t === T.MONTANA;
@@ -35,6 +37,28 @@
   const chopWood = f => has(f, 'EXTRACTIVE_ENCLAVE') ? HF.CFG.chopWoodEnclave : HF.CFG.chopWood;
   const grid = g => g._grid || (g._grid = HF.makeGrid(g.R));
   HF.nbs = (g, i) => grid(g).nb[i];
+
+  // Cerco táctico: una unidad en campo abierto sin una sola salida queda
+  // anulada. Las fortalezas de sillería (Bastión/Ciudad) son inmunes y se
+  // resuelven como asedio formal. Se evalúan las 6 direcciones; las que caen
+  // fuera del mapa no son una vía de escape.
+  HF.isEncircled = function (g, ci) {
+    const c = g.cells[ci];
+    if (!c || !c.u) return false;
+    if (c.b === B.BASTION || c.b === B.CIUDAD) return false;
+    const u = c.u, f = g.f[u.owner] || null;
+    for (const j of HF.nbs(g, ci)) {
+      const n = g.cells[j];
+      if (!n) continue;
+      // Una unidad enemiga obstruye; la propia o aliada es transitable.
+      if (n.u && n.u.owner !== u.owner) continue;
+      if (n.fire > 0) continue;
+      if (!HF.canStep(u, n, f)) continue;
+      return false;                       // al menos una salida libre
+    }
+    return true;
+  };
+
   const rnd = g => g._rng || (g._rng = HF.rng(g.rs || 1));
   const save_rs = g => { if (g._rng) g.rs = g._rng.get(); };
   HF.rnd = rnd;
@@ -448,7 +472,11 @@
     return D.def + u.tier - 1;
   }
   HF.defenseAt = function (g, ci) {
-    const c = g.cells[ci], bd = isSettle(c.b) ? HF.BDEF[c.b] : 0;
+    const c = g.cells[ci];
+    // Fase 1: una unidad cercada en campo abierto no puede formar líneas ni
+    // replegarse; su defensa efectiva es 0 antes de cualquier bono.
+    if (HF.isEncircled(g, ci)) return 0;
+    const bd = isSettle(c.b) ? HF.BDEF[c.b] : 0;
     // B3.3.3 · LAST_STAND_FORT: tras absorber el primer asalto, la ciudad resiste con Defensa 1
     if (c.lastStand && c.lastStandTurn === g.turn) return HF.CFG.doctrine.lastStandDef;
     let base;
@@ -466,6 +494,15 @@
   HF.defenseBreakdown = function (g, ci) {
     const c = g.cells[ci];
     if (!c) return { total: 0, detail: '', parts: [], override: null, deg: 0 };
+    if (HF.isEncircled(g, ci)) {
+      return {
+        total: 0,
+        detail: 'Cercada en campo abierto (Defensa: 0)',
+        parts: [{ label: 'Cercada en campo abierto', value: 0 }],
+        override: null,
+        deg: 0
+      };
+    }
     if (c.lastStand && c.lastStandTurn === g.turn) {
       return { total: HF.CFG.doctrine.lastStandDef, detail: 'Último Bastión', parts: [{ label: 'Último Bastión', value: HF.CFG.doctrine.lastStandDef }], override: null, deg: 0 };
     }
@@ -543,12 +580,13 @@
     const f = g.f[u.owner], D = HF.UNITS[u.type];
     if (u.type === 'BAR') return D.move + (seasonOf(g) === 1 ? HF.CFG.seasons.summerShipMove : 0);
     if (u.retreat > 0) return 1;   // B2.1.1 · PARTHIAN_RETREAT: solo un paso de retirada
+    // INF, ENG y ARC comparten la movilidad base de su ficha (config.units).
+    // Línea Pesada ya no aplasta la infantería a una sola casilla.
     let move = D.move;
-    if (u.type === 'INF' && has(f, 'TACTIC_HEAVY_LINE')) move = D.moveHeavy;
     if (u.type === 'ENG' && has(f, 'SCOUT_NETWORK')) move = D.move + 1;
-    // Un pueblo o ciudad es un nudo logístico: cualquier unidad terrestre que
-    // parta de allí tiene al menos 3 de alcance.
-    if (cell && cell.b >= B.PUEBLO) move = Math.max(3, move);
+    // Cualquier asentamiento es un nudo logístico: garantiza al menos 3 de
+    // alcance al partir de él.
+    if (cell && cell.b >= B.CAMPAMENTO) move = Math.max(3, move);
     return move;
   }
   HF.unitRange = unitRange;
@@ -557,6 +595,42 @@
     if (u.type === 'CAB' && has(f, 'TACTIC_MOBILE_WAR')) return D.atkRangeMobile;
     return D.atkRange;
   }
+  // Ficha resumida para la UI (tooltips de reclutamiento). Usa las mismas
+  // fórmulas que unitDef/attackOf, sin bonos de terreno ni de casilla.
+  HF.unitStats = function (g, type, tier, owner) {
+    const D = HF.UNITS[type], t = Math.max(1, Math.min(4, (tier | 0) || 1));
+    const f = g && g.f ? g.f[owner == null ? (g.cur || 0) : owner] : null;
+    const tag = k => !!(f && has(f, k));
+    const elite = t >= HF.CFG.doctrine.pretorianTier;
+    let atk, def;
+    if (type === 'INF' || type === 'ENG') {
+      atk = elite ? HF.CFG.doctrine.pretorianAtk : t;
+      def = elite ? HF.CFG.doctrine.pretorianDef : t;
+    } else {
+      atk = (D.atk || 0) + t - 1;
+      def = (D.def || 0) + t - 1;
+      if (type === 'CAB' && tag('KNIGHTLY_ORDER')) def = D.defKnight + t - 1;
+    }
+    let move = D.move;
+    if (type === 'ENG' && tag('SCOUT_NETWORK')) move += 1;
+    let range = D.atkRange || 1;
+    if (type === 'CAB' && tag('TACTIC_MOBILE_WAR')) range = D.atkRangeMobile || range;
+    return { atk, def, move, atkRange: range, shoot: D.shoot || 0, shootHill: D.shootHill || 0, elite, naval: !!D.naval };
+  };
+  // Beneficios de un edificio para los tooltips de construcción.
+  HF.buildStats = function (b) {
+    const P = HF.PROD[b] || [0, 0];
+    return {
+      cost: HF.BCOST[b] || {},
+      gold: P[0] || 0,
+      food: P[1] || 0,
+      resBonus: HF.CFG.buildingResBonus[b] || 0,
+      def: HF.BDEF[b] || 0,
+      level: HF.BLEVEL[b] || 0,
+      rank: HF.RANK[b] || 0,
+      road: isRoad({ b })
+    };
+  };
   const enemyOf = (g, i, c) => c.o !== i;
 
   // el barco lleva a una unidad de tierra; puede desembarcarla en una casilla de tierra contigua
@@ -646,9 +720,12 @@
           // CIV_TYPE_THALASSOCRACY: también se navega por agua neutral a 1 paso
           const sea = thal && isWater(n) && (n.o === u.owner || n.o === -1);
           if (u.type === 'SIE' && n.t === T.RIO && !isRoad(n)) continue;
-          // Entrar en una ciudad cuesta 1/4 incluso desde campo abierto:
-          // es el nudo logístico que conecta la red de caminos.
-          const step = (u.retreat > 0) ? 4 : ((xRoad && isRoad(n)) || n.b >= B.PUEBLO ? roadStep : 4);
+          // La "autopista" solo existe dentro de la red: el paso cuesta 1/4
+          // cuando se va de una construcción (camino, campamento, pueblo,
+          // bastión o ciudad) a otra. Desde campo abierto se paga un paso
+          // completo, de modo que un edificio aislado no alarga el alcance;
+          // un campamento en mitad de la red tampoco rompe la marcha.
+          const step = (u.retreat > 0) ? 4 : (xRoad && isRoad(n) ? roadStep : 4);
           const nd = cost + step;
           if (nd > budget) continue;
           // El Ingeniero opera en río y montaña sin quedar atascado; el resto
@@ -686,7 +763,13 @@
     }
     // ataques: desde la casilla actual o desde cualquiera alcanzable (consume movimiento)
     const rng = atkRange(g, u);
-    const launch = u.at > 0 ? [ci, ...[...dist.keys()].filter(k => !term.has(k) && k !== ci && !(out.get(k) && out.get(k).k !== 'move'))] : [];
+    // Puntos de lanzamiento del asalto: la casilla propia y las alcanzables
+    // libres. Nunca una casilla ocupada —aliada o no—: la unidad no puede
+    // colocarse físicamente encima de un aliado para golpear.
+    const launch = u.at > 0 ? [ci, ...[...dist.keys()].filter(k =>
+      k !== ci && !term.has(k) && !g.cells[k].u &&
+      out.get(k) && out.get(k).k === 'move'
+    )] : [];
     for (const from of launch) {
       const stack = [[from, 0, -1, true]];
       while (stack.length) {
@@ -694,6 +777,9 @@
         if (d >= rng) continue;
         gr.nb[x].forEach(y => {
           const n = g.cells[y];
+          // Una casilla con un aliado queda fuera del asalto: no se le puede
+          // atacar ni sirve de escalón (la unidad acabaría encima de él).
+          if (n.u && n.u.owner === u.owner) return;
           if ((n.o === u.owner && !(n.u && n.u.owner !== u.owner)) || !canStep(u, n, f)) return;
           if (n.burn > 0 && n.o !== u.owner) return;      // A3.3.2 · SCORCHED_EARTH: cenizas no capturables
           if (u.type === 'SIE' && n.t === T.RIO && !isRoad(n)) return;
@@ -839,6 +925,9 @@
     // si desembarca, la unidad que actúa es la carga y el barco se queda en su casilla
     const shipU = opt.ship ? u : null;
     if (shipU) u = shipU.cargo;
+    // Nunca se asalta una casilla con una unidad aliada: evita el fuego amigo
+    // y que el atacante acabe físicamente colocado encima de su aliado.
+    if (opt.k === 'atk' && t.u && t.u.owner === u.owner) return { ok: false, msg: 'No puedes asaltar una casilla ocupada por un aliado' };
     const vacate = () => { if (shipU) shipU.cargo = null; else c.u = null; };
     if (opt.k === 'board') {
       if (human) snap(g);
@@ -1345,14 +1434,45 @@
     if (next < 0) { g.cur = 0; if (!g.over) roundEnd(g); }
     else { g.cur = next; startTurn(g, g.f[next]); }
   };
-  function clearDeg(g, who) { for (const c of g.cells) if (c && c.deg && c.degBy === who) { c.deg = 0; } }
+  function capitulate(g, c) {
+    const u = c.u;
+    if (!u) return;
+    const f = g.f[u.owner], name = (HF.UNITS[u.type] && HF.UNITS[u.type].name) || 'Unidad';
+    const human = !!(f && f.human);
+    if (u.tier > 1) {
+      const from = u.tier;
+      u.tier -= 1;
+      u.elite = 0;
+      ev(g, c.i, 'Cerco: ' + name + ' N' + from + ' capitula y baja a N' + u.tier, human ? 'bad' : 'good');
+    } else {
+      c.u = null;
+      c.tomb = HF.CFG.deficit.tombTurns;
+      if (u.owner === 0) g.stat.lost += 1 + (u.cargo ? 1 : 0);
+      ev(g, c.i, 'Cerco: ' + name + ' N1 capitula y deja una tumba', human ? 'bad' : 'good');
+    }
+  }
+  function clearDeg(g, who) {
+    const fall = [];
+    for (const c of g.cells) {
+      if (!c) continue;
+      if (c.deg && c.degBy === who) c.deg = 0;
+      // Fase 3: al cerrar el turno del propietario, la unidad que sigue
+      // cercada capitula. Las fortalezas ya devolvieron false en isEncircled.
+      if (c.u && c.u.owner === who && HF.isEncircled(g, c.i)) fall.push(c);
+    }
+    for (const c of fall) capitulate(g, c);
+  }
 
   // ---------- guardado ----------
   HF.serialize = g => {
     const o = {};
     save_rs(g);
-    for (const k of Object.keys(g)) if (k[0] !== '_' && k !== 'undo' && k !== 'fogMap' && k !== 'replayLog' && k !== 'isReplay' && k !== 'noReplay') o[k] = g[k];
+    for (const k of Object.keys(g)) if (k[0] !== '_' && k !== 'undo' && k !== 'fogMap' && k !== 'isReplay' && k !== 'noReplay') o[k] = g[k];
+    // La identidad del historial debe sobrevivir al guardar/reanudar.
+    if (g.replayId) o.replayId = g.replayId;
+    if (g.replayCreatedAt) o.replayCreatedAt = g.replayCreatedAt;
     o.fogMap = g.fogMap ? Array.from(g.fogMap) : null;
+    if (g._customCells) o._customCells = g._customCells;
     o.cells = g.cells.map(c => {
       if (!c) return null;
       const d = { i: c.i, q: c.q, r: c.r };
@@ -1368,7 +1488,7 @@
     return o;
   };
   HF.deserialize = o => {
-    const g = Object.assign({}, o); g.undo = [];
+    const g = Object.assign({}, o); g.undo = []; g._resumed = true;
     for (const f of g.f) {
       if (f.starvationsInduced == null) f.starvationsInduced = 0;
       if (f.wonderCell == null) f.wonderCell = -1;
@@ -1378,6 +1498,7 @@
     g.cells = o.cells.map(c => c && Object.assign(HF.newCell(c), c));
     for (const c of g.cells) if (c && c.u && c.u.pa !== undefined) { c.u.mv = c.u.at = c.u.pa; delete c.u.pa; }
     g.fogMap = o.fogMap ? Int8Array.from(o.fogMap) : null;
+    g._customCells = o._customCells || null;
     g.supInit = false;
     HF.supply(g); g.supInit = true;
     HF.initStock(g);

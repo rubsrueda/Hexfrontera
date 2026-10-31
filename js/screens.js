@@ -57,8 +57,9 @@
   HF.screen('hub', el => {
     const tribe = HF.loadTribe(), save = HF.store.get('savegame_active', null);
     const d = HF.dailyState(), doneToday = d.date === HF.dailyKey() && d.attempts > 0;
+    const localStats = HF.getStats();
     el.innerHTML = `<div class="screen hub">
-      <div class="bar"><button id="daily" class="badge">${HF.t('BTN_DAILY')}${doneToday ? ' ✔' : ' <b style="color:var(--acc)">!</b>'}</button><div class="grow"></div><button id="set2" data-nav="settings" title="${HF.t('DOCK_SETTINGS')}">⚙️</button><button id="rep" title="Ver repetición">🎬</button><button id="news">${HF.t('BTN_NEWS')}</button></div>
+      <div class="bar"><button id="daily" class="badge">${HF.t('BTN_DAILY')}${doneToday ? ' ✔' : ' <b style="color:var(--acc)">!</b>'}</button><div class="grow"></div><button id="set2" data-nav="settings" title="${HF.t('DOCK_SETTINGS')}">⚙️</button><button id="hist" title="Historial de partidas">📜</button><button id="rep" title="Ver repetición">🎬</button><button id="news" title="${HF.lang() === 'en' ? 'News' : 'Noticias'}" aria-label="${HF.lang() === 'en' ? 'News' : 'Noticias'}"><img class="top-ico" src="assets/ui/news.webp" alt="" draggable="false"></button></div>
       <div class="hub-mid">
         <h1>${HF.t('HUB_TITLE')}</h1>
         <div class="dim" style="text-align:center">${HF.t('HUB_SUBTITLE')}</div>
@@ -66,11 +67,16 @@
         <button class="big" id="camp">${HF.t('BTN_CAMPAIGN')} <span class="dim">★ ${HF.totalStars()}/90</span></button>
         <button class="big" id="new">${HF.t('BTN_NEW_GAME')}</button>
         <button class="big" id="online" disabled>${HF.t('BTN_ONLINE')} <span class="dim">(${HF.t('COMING_SOON')})</span></button>
+        <div class="card" id="standing" style="padding:8px 10px">
+          <div class="row"><b class="grow">🏅 Tu posición</b><span class="dim small" id="stNote"></span></div>
+          <div id="stBody" class="small" style="margin-top:3px">Consultando clasificación…</div>
+          <div class="row" style="margin-top:5px"><span class="dim small grow">${localStats.wins}V · ${localStats.losses}D · ${localStats.games} partidas</span><button id="stOpen" style="min-height:34px;padding:4px 10px;font-size:12px">🌍 Ranking</button></div>
+        </div>
       </div>
       <div class="dock">
-        <button id="tribe"><span style="color:${tribe.color}">${tribe.crest}</span>${HF.t('DOCK_TRIBE')}</button>
+        <button id="tribe" title="${HF.esc(tribe.name)}" aria-label="${HF.esc(tribe.name)}"><span class="dock-crest" style="border-color:${tribe.color}">${HF.crestHTML(tribe.crest, 30)}</span><span class="dock-name">${HF.esc(tribe.name)}</span></button>
         <button id="editor"><span>🗺️</span>${HF.t('DOCK_MAPS')}</button>
-        <button id="stats"><span>📊</span>${HF.t('DOCK_STATS')}</button>
+        <button id="stats"><span class="dock-medal"><img class="dock-ico" src="assets/ui/stats.webp" alt="" draggable="false"></span>${HF.t('DOCK_STATS')}</button>
         <button id="set" data-nav="settings"><span>⚙️</span>${HF.t('DOCK_SETTINGS')}</button>
         <button id="wiki"><span>📖</span>${HF.t('DOCK_WIKI')}</button>
       </div></div>`;
@@ -83,10 +89,40 @@
       if (b && b.dataset.nav) { e.preventDefault(); HF.go(b.dataset.nav); }
     });
     on('wiki', () => HF.codex());
+    on('hist', () => HF.replays.openHistory());
     on('rep', () => HF.replayCodePrompt());
     on('cont', () => { try { HF.startGame(HF.deserialize(save)); } catch (e) { console.error(e); HF.store.del('savegame_active'); HF.toast(HF.lang() === 'en' ? 'Corrupted save' : 'Guardado dañado'); HF.go('hub'); } });
-    on('news', () => HF.modal(`<h3>📢 ${HF.lang() === 'en' ? 'News' : 'Noticias'}</h3><p class="dim">${HF.lang() === 'en' ? 'Version 1.0 · local offline mode.<br>Multiplayer and online games are coming in future versions.' : 'Versión 1.0 · modo local sin conexión.<br>Multijugador y partidas en línea llegarán en próximas versiones.'}</p>
+    on('news', () => HF.modal(`<h3><img class="modal-ico" src="assets/ui/news.webp" alt="" draggable="false"> ${HF.lang() === 'en' ? 'News' : 'Noticias'}</h3><p class="dim">${HF.lang() === 'en' ? 'Version 1.0 · local offline mode.<br>Multiplayer and online games are coming in future versions.' : 'Versión 1.0 · modo local sin conexión.<br>Multijugador y partidas en línea llegarán en próximas versiones.'}</p>
       <div class="row"><button disabled>Discord</button><button disabled>Web</button><button disabled>${HF.lang() === 'en' ? 'Social' : 'Redes'}</button></div><br><button id="x" class="pri">${HF.lang() === 'en' ? 'Close (X)' : 'Cerrar (X)'}</button>`, m => m.querySelector('#x').onclick = HF.closeModal));
+    // Posición global: se pinta con la última copia y se refresca en segundo plano.
+    const stBody = el.querySelector('#stBody'), stNote = el.querySelector('#stNote');
+    const paintStanding = st => {
+      if (!stBody) return;
+      if (!st || !st.ok) {
+        stBody.innerHTML = '<span class="dim">Sin conexión · tus estadísticas locales siguen disponibles.</span>';
+        if (stNote) stNote.textContent = '';
+        return;
+      }
+      if (!st.rank) {
+        stBody.innerHTML = st.best
+          ? `Mejor marca: <b style="color:var(--acc)">${(+st.best.score || 0).toLocaleString()} pts</b>${st.capped ? ' · fuera del Top ' + st.total : ' · aún sin posición'}`
+          : 'Todavía no has registrado ninguna marca. Juega una partida para entrar en el ranking.';
+      } else {
+        stBody.innerHTML = `Puesto <b style="color:var(--acc)">#${st.rank}</b> de ${st.total} jugadores · Mejor marca: <b>${(+st.best.score || 0).toLocaleString()} pts</b> · ${st.maps} mapa(s)`;
+      }
+      if (stNote) stNote.textContent = st.rank ? '🌍' : '';
+    };
+    const cachedStanding = HF.store.get('cloud_standing', null);
+    if (cachedStanding) paintStanding(cachedStanding);
+    if (HF.cloud && HF.cloud.getPlayerStanding) {
+      if (!HF.cloud.online) { if (!cachedStanding) paintStanding(null); }
+      else HF.cloud.getPlayerStanding(HF.cloud.playerId()).then(st => {
+        if (!el.isConnected) return;
+        paintStanding(st);
+        if (st && st.ok) HF.store.set('cloud_standing', st);
+      }).catch(() => { if (!cachedStanding) paintStanding(null); });
+    } else paintStanding(null);
+    on('stOpen', () => HF.rankingModal());
   });
 
   // ---------- TRIBU ----------
@@ -96,9 +132,15 @@
     const draw = () => {
       el.innerHTML = `<div class="screen">${header('Tribu')}
       <div class="scroll">
-        <div class="card"><label>Nombre</label><input type="text" id="nm" maxlength="16" value="${HF.esc(t.name)}">
+        <div class="card"><label>Nombre</label>
+        <div class="row" style="gap:6px;flex-wrap:nowrap"><input type="text" id="nm" maxlength="20" value="${HF.esc(t.name)}" style="flex:1;min-width:0"><button id="rn" title="Nombre aleatorio" aria-label="Nombre aleatorio" style="min-width:44px">🎲</button></div>
         <label>Color</label><div class="row">${HF.COLORS.map(c => `<button class="sw ${c === t.color ? 'sel' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
-        <label>Blasón</label><div class="row">${HF.CRESTS.map(c => `<button class="sw ${c === t.crest ? 'sel' : ''}" data-r="${c}" style="background:#223;font-size:18px">${c}</button>`).join('')}</div></div>
+        <label>Blasón</label>
+        <div class="row" style="gap:12px;margin:2px 0 8px">
+          <span class="crest-preview" style="border-color:${t.color}">${HF.crestHTML(t.crest, 58)}</span>
+          <div class="grow"><b>${HF.crestName(t.crest)}</b><div class="dim small">Así se verá en tu Tribu</div></div>
+        </div>
+        <div class="crest-grid">${HF.CRESTS.map(c => `<button class="crest-pick ${c === t.crest ? 'sel' : ''}" data-r="${c}" title="${HF.crestName(c)}" aria-label="${HF.crestName(c)}" aria-pressed="${c === t.crest}">${HF.crestHTML(c, 60)}</button>`).join('')}</div></div>
         ${HF.PILLARS.map(p => {
           const path = t[p.key + '_path'];
           return `<div class="card"><div class="row"><b>${p.icon} ${p.name}</b><span class="dim grow">${p.q}</span><button data-p="${p.key}">Editar</button></div>
@@ -110,7 +152,9 @@
         }).join('')}
       </div></div>`;
       wireBack(el);
-      el.querySelector('#nm').oninput = e => { t.name = e.target.value.trim() || 'Mi Tribu'; persist(); };
+      el.querySelector('#nm').oninput = e => { const v = e.target.value.trim(); if (v) { t.name = v.slice(0, 20); persist(); } };
+      const dice = el.querySelector('#rn');
+      if (dice) dice.onclick = () => { if (HF.genTribeName) { t.name = HF.genTribeName(); persist(); draw(); } };
       el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { t.color = b.dataset.c; persist(); draw(); });
       el.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { t.crest = b.dataset.r; persist(); draw(); });
       el.querySelectorAll('[data-p]').forEach(b => b.onclick = () => wizard(HF.PILLARS.find(p => p.key === b.dataset.p)));
@@ -184,7 +228,7 @@
           if (!row) return;
           const r = HF.importMap(row.code || '');
           if (r.error) { HF.sfx('error'); return HF.toast(r.error); }
-          HF.closeModal(); HF.playMap(r.R, r.cells, r.seed);
+          HF.closeModal(); HF.playMap(r.R, r.cells, r.seed, { mapId: row.id, name: row.name });
         });
         m.querySelectorAll('[data-vote]').forEach(b => b.onclick = () => {
           if (!HF.cloud) return HF.toast('Modo sin conexión');
@@ -201,6 +245,92 @@
       maps = list || []; loading = false; offline = !HF.cloud.online || (HF.cloud.lastOffline && HF.cloud.lastOffline()); draw();
     }).catch(() => { loading = false; offline = true; draw(); });
     else { loading = false; offline = true; draw(); }
+  };
+
+  // ---------- RANKINGS Y REPETICIONES DEL TOP ----------
+  // Descarga la repetición solo al pulsar ▶ (la lista no arrastra los códigos).
+  HF.playCloudReplay = async function (mapKey, playerId) {
+    if (!HF.cloud) return HF.toast('Modo sin conexión');
+    HF.toast('Cargando repetición…', 1000);
+    try {
+      const code = await HF.cloud.getMapReplay(mapKey, playerId);
+      if (!code) {
+        if (HF.cloud.replayMissing && HF.cloud.replayMissing()) return HF.toast('Repeticiones no configuradas: ejecuta el SQL de replay_code');
+        return HF.toast('Este jugador no compartió su repetición');
+      }
+      await HF.playReplayFromCode(code);
+    } catch (e) { HF.toast('No se pudo cargar la repetición'); }
+  };
+
+  const lbTable = (rows, myId, showMap) => `<table style="width:100%;font-size:12px">
+    <tr><th>#</th><th>Jugador</th><th>T</th><th>Puntos</th><th></th></tr>
+    ${rows.map((r, i) => {
+      const me = r.player_id === myId;
+      return `<tr style="${me ? 'color:var(--acc);font-weight:bold' : ''}">
+        <td>${i + 1}</td>
+        <td>${HF.crestHTML(r.crest, 22)} ${HF.esc(r.tribe_name || '—')}${showMap ? `<div class="dim" style="font-size:10px;font-weight:600">${HF.esc(HF.cloud.mapKeyLabel(r.map_key))}</div>` : ''}</td>
+        <td>T${+r.turns || 0}</td>
+        <td>${(+r.score || 0).toLocaleString()}</td>
+        <td>${r.won ? `<button data-rep="${i}" title="Ver repetición" style="min-height:26px;padding:2px 7px;font-size:11px">▶</button>` : ''}</td>
+      </tr>`;
+    }).join('')}
+  </table>`;
+
+  // Top mundial: mejor marca de cada jugador.
+  HF.rankingModal = function () {
+    HF.modal(`<h3>🌍 Ranking mundial</h3><div id="rkBody" class="dim small">Consultando clasificación…</div><div id="rkMe" class="small" style="margin-top:8px"></div><br><button id="rkClose" class="pri" style="width:100%">Cerrar</button>`, m => {
+      m.querySelector('#rkClose').onclick = HF.closeModal;
+      const box = m.querySelector('#rkBody');
+      if (!HF.cloud || !HF.cloud.getGlobalTop || !HF.cloud.online) {
+        box.innerHTML = 'Modo sin conexión · no se puede consultar el ranking.';
+        return;
+      }
+      HF.cloud.getGlobalTop(100).then(rows => {
+        if (!m.isConnected) return;
+        if (!rows || !rows.length) { box.innerHTML = 'Aún no hay marcas registradas.'; return; }
+        const myId = HF.cloud.playerId(), top = rows.slice(0, 10);
+        box.innerHTML = lbTable(top, myId, true);
+        box.querySelectorAll('[data-rep]').forEach(b => b.onclick = () => {
+          const r = top[+b.dataset.rep];
+          if (r) HF.playCloudReplay(r.map_key, r.player_id);
+        });
+        const idx = rows.findIndex(r => r.player_id === myId);
+        const meBox = m.querySelector('#rkMe');
+        const myName = HF.esc(HF.loadTribe().name);
+        if (meBox) meBox.innerHTML = idx >= 0
+          ? `Tu posición: <b style="color:var(--acc)">#${idx + 1}</b> de ${rows.length} jugadores · <b>${myName}</b>`
+          : `Todavía no apareces en el ranking como <b>${myName}</b>. Juega una partida para entrar.`;
+      }).catch(() => { if (m.isConnected) box.innerHTML = 'Sin conexión para cargar el ranking.'; });
+    });
+  };
+
+  // Top de un mapa concreto (desde el historial o el final de partida).
+  HF.mapRankingModal = function (mapKey, back) {
+    const label = HF.cloud && HF.cloud.mapKeyLabel ? HF.cloud.mapKeyLabel(mapKey) : (mapKey || 'Mapa');
+    HF.modal(`<h3>🏆 ${HF.esc(label)}</h3><div id="mrkBody" class="dim small">Consultando clasificación…</div><div id="mrkMe" class="small" style="margin-top:8px"></div><br><button id="mrkClose" class="pri" style="width:100%">Cerrar</button>`, m => {
+      m.querySelector('#mrkClose').onclick = () => { HF.closeModal(); if (typeof back === 'function') back(); };
+      const box = m.querySelector('#mrkBody');
+      if (!HF.cloud || !HF.cloud.getMapLeaderboard || !HF.cloud.online) {
+        box.innerHTML = 'Modo sin conexión · no se puede consultar el ranking.';
+        return;
+      }
+      HF.cloud.getMapLeaderboard(mapKey).then(rows => {
+        if (!m.isConnected) return;
+        if (!rows || !rows.length) { box.innerHTML = 'Sin marcas en este mapa todavía.'; return; }
+        const myId = HF.cloud.playerId();
+        box.innerHTML = lbTable(rows, myId, false);
+        box.querySelectorAll('[data-rep]').forEach(b => b.onclick = () => {
+          const r = rows[+b.dataset.rep];
+          if (r) HF.playCloudReplay(mapKey, r.player_id);
+        });
+        HF.cloud.getMapRank(mapKey, myId).then(rank => {
+          const meBox = m.querySelector('#mrkMe');
+          if (meBox) meBox.innerHTML = rank
+            ? `Tu posición: <b style="color:var(--acc)">#${rank}</b>`
+            : 'Todavía no tienes marca en este mapa.';
+        }).catch(() => { });
+      }).catch(() => { if (m.isConnected) box.innerHTML = 'Sin conexión para cargar el ranking.'; });
+    });
   };
 
   // ---------- NUEVA PARTIDA ----------
@@ -287,7 +417,7 @@
       }
       box.innerHTML = `<table><tr><th>#</th><th>Blasón</th><th>Tribu</th><th>Turnos</th><th>Superávit</th></tr>${rows.map((r, i) => {
         const col = /^#[0-9a-f]{3,8}$/i.test(r.color_hex || '') ? r.color_hex : '#F4EFEA';
-        return `<tr><td>${i + 1}</td><td>${HF.esc(r.crest || '🛡️')}</td><td style="color:${col}">${HF.esc(r.tribe_name || '—')}</td><td>${+r.turns || 0}</td><td>${+r.surplus || 0}</td></tr>`;
+        return `<tr><td>${i + 1}</td><td>${HF.crestHTML(r.crest, 22)}</td><td style="color:${col}">${HF.esc(r.tribe_name || '—')}</td><td>${+r.turns || 0}</td><td>${+r.surplus || 0}</td></tr>`;
       }).join('')}</table>`;
     }).catch(() => { });
   });
@@ -303,7 +433,7 @@
     }
     el.innerHTML = `<div class="screen">${header('Estadísticas')}<div class="scroll">
       <div class="card">
-        <div class="row"><span style="font-size:38px">${t.crest}</span><div class="grow"><b>${HF.esc(t.name)}</b><div class="dim small">Pasaporte de Estratega</div></div><div class="stars">${HF.totalStars()}/90</div></div>
+        <div class="row"><span class="passport-crest" style="border-color:${t.color}">${HF.crestHTML(t.crest, 54)}</span><div class="grow"><b>${HF.esc(t.name)}</b><div class="dim small">Pasaporte de Estratega</div></div><div class="stars">${HF.totalStars()}/90</div></div>
         <canvas class="donut" id="passport"></canvas>
         <div class="medallero">🥇 ${medals.gold} · 🥈 ${medals.silver} · 🥉 ${medals.bronze}</div>
       </div>
@@ -375,7 +505,7 @@
         <div class="row" style="margin-top:6px"><button id="syncCloud">🔄 Sincronizar</button><button id="linkDevice">🔄 Transferir a otro dispositivo</button><button id="recoverAccount">❓ Recuperar Cuenta</button></div>
       </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
-      <div class="dim small">HexFrontier v1.0 · build 69 · ${HF.t('NO_MULTIPLAYER')}</div></div></div>`;
+      <div class="dim small">HexFrontier v1.0 · build 77 · ${HF.t('NO_MULTIPLAYER')}</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
     el.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { HF.setLang(b.dataset.lang); HF.go('settings'); });

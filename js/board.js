@@ -4,12 +4,109 @@
   // Paleta curada: oliva/musgo, piedra y azul pizarra nórdico.
   const TCOL = ['#5C8247', '#776843', '#646A70', '#35647F', '#1E354B'];
   const TCOL2 = ['#3E5A31', '#51452C', '#40464D', '#254C62', '#142637'];
+  // El editor conserva la paleta plana y legible original: no debe convertirse
+  // en una miniatura del diorama 2.5D del juego.
+  const ECOL = ['#7bbf5a', '#b59a52', '#7d7d86', '#5aa7d6', '#2c5f9e'];
+  const ECOL2 = ['#5e9a43', '#907a3d', '#5b5b63', '#3f86b8', '#1f4676'];
   const INK = '#F4EFEA', VOID = '#0A0F1D';
-  // Vecino axial y arista del hexágono que comparte con él.
+  // --- Constantes globales para renderizado 2.5D ---
+  const ZENITH_ANGLE = 300;
+  // Inclinación de la cámara sobre el plano del tablero (HF.CFG.view.tilt).
+  // 1 = vista cenital plana; el valor de juego vive en config.js (0.62).
+  // Solo afecta a la geometría del suelo: los sprites se dibujan verticales y
+  // la cámara conserva su zoom/pan en coordenadas de mundo.
+  const TILT = (HF.CFG && HF.CFG.view && HF.CFG.view.tilt) || 0.62;
+  // Las unidades se suben ~10% de la altura proyectada del hexagono para que la
+  // base quede dentro de la casilla y no se derrame hacia la fila delantera.
+  // Se expresa en fraccion de fs (radio del hexagono en pantalla).
+  const UNIT_RISE = 0.2 * 2 * TILT;
+  // Estiramiento vertical de los sprites: compensa el aplastado del suelo y les
+  // devuelve volumen. La base queda fija y el sprite crece hacia arriba.
+  const SPRITE_STRETCH = (HF.CFG && HF.CFG.view && HF.CFG.view.spriteStretch) || 1.15;
+  const ZENITH_GRADIENT_TOP = -0.86602540378 * TILT;
+  const ZENITH_GRADIENT_BOT = +0.86602540378 * TILT;
+  const JITTER_AMPLITUDE = 0.05;
+  const COASTAL_WALL_HEIGHT = 8;
+  const BEVEL_LIGHT_THRESHOLD = 0.3;
+  const BEVEL_DARK_THRESHOLD = -0.3;
+  // Mapeo de recursos a claves de arte
+  const RES_ART_KEY = { 1: 'resORO_ROCA', 2: 'resTRIGO', 3: 'resMADERA' };
+  // Escala del arte respecto al ancho de la casilla (fs): cada sprite se ajusta
+  // dentro de una caja de fs*BOX. Ajustables a ojo; no afectan a la lógica.
+  const UNIT_BOX = 2.5;    // diorama de la unidad
+  const BUILD_BOX = 1.8;   // asentamientos y caminos
+  // Recursos: pieza de diorama (no textura recortada), por debajo de edificios
+  // y unidades de su misma casilla.
+  const RES_BOX = 1.5;
+  // --- Helpers de color para renderizado 2.5D ---
+  function hexToHSL(hex) {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) {
+      h = 0; s = 0;
+    } else {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h *= 60;
+    }
+    return { h, s, l };
+  }
+
+  function HSLToHex(hsl) {
+    const { h, s, l } = hsl;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r, g, b;
+    if (h < 60) { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+    r = Math.round((r + m) * 255);
+    g = Math.round((g + m) * 255);
+    b = Math.round((b + m) * 255);
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+  }
+
+  function hexJitter(q, r, seed = 0x9E3779B9) {
+    let x = Math.imul(q, 0x3243F6A9) ^ Math.imul(r, 0x9E3779B9) ^ seed;
+    x = (x + 0x9E3779B9) | 0;
+    x = Math.imul(x ^ (x >>> 15), 0x21F0AAAD);
+    x = Math.imul(x ^ (x >>> 15), 0x735A2D97);
+    x = x ^ (x >>> 15);
+    return (x >>> 0) / 0x100000000;
+  }
+
+  function jitterFactor(q, r) {
+    const h = hexJitter(q, r);
+    return (h - 0.5) * JITTER_AMPLITUDE * 2;
+  }
+
+  // --- Caches para rendimiento 60fps ---
+    const _zenithGradCache = new Map(); // key: `${terrain}|${jitterQ}|${fs|0}` -> CanvasGradient
+    const _jitterColorCache = new Map(); // key: `${baseHex}|${jitterQ}` -> hex
+    const _coastalArr = []; // pool para extrusiones de costa
+    const _wallsArr = []; // pool para paredes internas
+    const _itemsArr = []; // pool para items de dibujo
   const EDGES = [
     { dq: 1, dr: 0, e: 0 }, { dq: 1, dr: -1, e: 1 }, { dq: 0, dr: -1, e: 2 },
     { dq: -1, dr: 0, e: 3 }, { dq: -1, dr: 1, e: 4 }, { dq: 0, dr: 1, e: 5 }
   ];
+  // EDGES indexa la DIRECCION del vecino (E, NE, NO, O, SO, SE), pero la arista
+  // k del hexagono va del vertice k al k+1. Esta tabla traduce direccion ->
+  // arista dibujada; sin ella los faldones y muros se pintaban en lados rotados
+  // (la costa aparecia en el norte y el agua parecia quedar por encima).
+  const EDGE_OF = [0, 5, 4, 3, 2, 1];
 
   // Tablero hexagonal sobre canvas con zoom, pan y arrastre
   function Board(canvas, h) {
@@ -32,7 +129,7 @@
     nz = Math.max(ZMIN, Math.min(ZMAX, nz));
     const [wx, wy] = this.fromScreen(sx, sy);
     this.cam.z = nz;
-    this.cam.x = wx - (sx - this.W / 2) / nz; this.cam.y = wy - (sy - this.H / 2) / nz;
+    this.cam.x = wx - (sx - this.W / 2) / nz; this.cam.y = wy - (sy - this.H / 2) / (nz * TILT);
     this.draw();
   };
   P._zoomUI = function () {
@@ -105,9 +202,18 @@
   };
   P.setMap = function (R, cells) { this.R = R; this.cells = cells; this.cam.z = 1; this.parts = null; this.fit(); };
   P.fit = function () {
-    const rw = (2 * this.R + 1) * this.size * S3, rh = (2 * this.R + 1) * this.size * 1.5;
+    const rw = (2 * this.R + 1) * this.size * S3, rh = (2 * this.R + 1) * this.size * 1.5 * TILT;
     this.cam.z = Math.max(ZMIN, Math.min(2, Math.min(this.W / rw, this.H / rh) * 1.05));
     this.cam.x = 0; this.cam.y = 0; this.draw();
+  };
+  // Vista inicial de partida: encaja el mapa y acerca un poco para que la
+  // capital y su comarca se lean desde el primer turno. El boton de "ver todo"
+  // sigue usando fit() sin este acercamiento.
+  P.startView = function () {
+    this.fit();
+    const k = (HF.CFG && HF.CFG.view && HF.CFG.view.startZoom) || 1.2;
+    this.cam.z = Math.max(ZMIN, Math.min(ZMAX, Math.max(this.cam.z, 1.2) * k));
+    this.draw();
   };
   P.pos = function (c) { return [this.size * S3 * (c.q + c.r / 2), this.size * 1.5 * c.r]; };
   // Altura relativa del diorama. El agua es la base; el llano ya está
@@ -115,9 +221,9 @@
   P._level = function (c) {
     return c.t === T.MONTANA ? 12 : c.t === T.COLINA ? 6 : (c.t === T.MAR || c.t === T.RIO) ? 0 : 2;
   };
-  P._lift = function (c) { return this._level(c); };
-  P.toScreen = function (x, y) { return [(x - this.cam.x) * this.cam.z + this.W / 2, (y - this.cam.y) * this.cam.z + this.H / 2]; };
-  P.fromScreen = function (sx, sy) { return [(sx - this.W / 2) / this.cam.z + this.cam.x, (sy - this.H / 2) / this.cam.z + this.cam.y]; };
+  P._lift = function (c) { return (this.mode === 'paint' || this.mapEditor) ? 0 : this._level(c); };
+  P.toScreen = function (x, y) { return [(x - this.cam.x) * this.cam.z + this.W / 2, (y - this.cam.y) * TILT * this.cam.z + this.H / 2]; };
+  P.fromScreen = function (sx, sy) { return [(sx - this.W / 2) / this.cam.z + this.cam.x, (sy - this.H / 2) / (this.cam.z * TILT) + this.cam.y]; };
   P.hit = function (sx, sy) {
     const [x, y] = this.fromScreen(sx, sy), s = this.size;
     const qf = (S3 / 3 * x - y / 3) / s, rf = (2 / 3 * y) / s;
@@ -150,7 +256,7 @@
         me.cam.z = me.pz; me.cam.x = me.pc.x; me.cam.y = me.pc.y;
         const [wx, wy] = me.fromScreen(me.pm.x, me.pm.y);
         me.cam.z = nz;
-        me.cam.x = wx - (m.x - me.W / 2) / nz; me.cam.y = wy - (m.y - me.H / 2) / nz;
+        me.cam.x = wx - (m.x - me.W / 2) / nz; me.cam.y = wy - (m.y - me.H / 2) / (nz * TILT);
         me.draw(); return;
       }
       const dx = p.x - p.sx, dy = p.y - p.sy;
@@ -160,7 +266,7 @@
           if (me.h.onDragStart && st.i >= 0 && me.h.onDragStart(st.i)) st.mode = 'drag'; else st.mode = me.mode === 'paint' ? 'paint' : 'pan';
         }
       }
-      if (st.mode === 'pan') { me.cam.x = st.cx - dx / me.cam.z; me.cam.y = st.cy - dy / me.cam.z; me.draw(); }
+      if (st.mode === 'pan') { me.cam.x = st.cx - dx / me.cam.z; me.cam.y = st.cy - dy / (me.cam.z * TILT); me.draw(); }
       else if (st.mode === 'drag') { me.drag = { from: st.i, x: p.x, y: p.y, to: me.hit(p.x, p.y) }; me.draw(); }
       else if (st.mode === 'paint') { const i = me.hit(p.x, p.y); if (i >= 0 && me.h.onPaint) me.h.onPaint(i); }
     });
@@ -185,7 +291,8 @@
 
   function hexPath(ctx, x, y, s) {
     ctx.beginPath();
-    for (let k = 0; k < 6; k++) { const a = Math.PI / 180 * (60 * k - 30); const px = x + s * Math.cos(a), py = y + s * Math.sin(a); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+    const sy = s * TILT;
+    for (let k = 0; k < 6; k++) { const a = Math.PI / 180 * (60 * k - 30); const px = x + s * Math.cos(a), py = y + sy * Math.sin(a); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
     ctx.closePath();
   }
 
@@ -215,13 +322,14 @@
   // Vértice k del hexágono (k = 0..5). Se usa para las seis aristas.
   P._vert = function (x, fy, fs, k) {
     const a = Math.PI / 180 * (60 * k - 30);
-    return [x + fs * Math.cos(a), fy + fs * Math.sin(a)];
+    return [x + fs * Math.cos(a), fy + fs * TILT * Math.sin(a)];
   };
   P._sideWall = function (ctx, x, y0, fs, level, edge, depth, deep, t) {
     if (depth <= 0) return;
     const fy = y0 - level;
-    const [x1, y1] = this._vert(x, fy, fs, edge.e);
-    const [x2, y2] = this._vert(x, fy, fs, (edge.e + 1) % 6);
+    const k = EDGE_OF[edge.e];
+    const [x1, y1] = this._vert(x, fy, fs, k);
+    const [x2, y2] = this._vert(x, fy, fs, (k + 1) % 6);
     const mx = (x1 + x2) / 2 - x, my = (y1 + y2) / 2 - fy;
     const ml = Math.hypot(mx, my) || 1;
     // Un pequeño bisel hacia fuera permite ver también las aristas que
@@ -261,6 +369,47 @@
     ctx.closePath(); ctx.clip('evenodd');
     for (const e of edges) this._sideWall(ctx, x, y0, fs, lift, e.edge, e.depth, e.deep, t);
     ctx.restore();
+  };
+  // Extrusión de costa (faldón hacia agua/borde)
+  // Solo se extruye en las aristas que miran al sur (SO y SE), creando un
+  // faldón/skirt que hace que el agua parezca una cuenca respecto a la tierra.
+  P._drawCoastalExtrusion = function (ctx, c, x, y0, fs, lift) {
+    const yTop = y0 - lift;
+    const H = COASTAL_WALL_HEIGHT; // px pantalla, no escalado
+    // Direcciones SO (4) y SE (5) -> aristas 2 y 1 del hexagono.
+    for (const eIdx of [4, 5]) {
+      const e = EDGES[eIdx];
+      const n = this._neighbor(c, e.dq, e.dr);
+      const isCoast = !n || n.t === T.MAR || n.t === T.RIO;
+      if (!isCoast) continue;
+      const k = EDGE_OF[eIdx];
+      // Vértices A (k) y B (k+1) en la cara superior
+      const [Ax, Ay] = this._vert(x, yTop, fs, k);
+      const [Bx, By] = this._vert(x, yTop, fs, (k + 1) % 6);
+      // Vértices C, D desplazados hacia abajo H px (faldón hacia afuera)
+      const Cx = Bx, Cy = By + H;
+      const Dx = Ax, Dy = Ay + H;
+      // Gradiente vertical 3 stops para el faldón
+      const grd = ctx.createLinearGradient(0, yTop, 0, yTop + H);
+      grd.addColorStop(0.00, '#3A4150');
+      grd.addColorStop(0.55, '#222A38');
+      grd.addColorStop(1.00, VOID);
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.moveTo(Ax, Ay);
+      ctx.lineTo(Bx, By);
+      ctx.lineTo(Cx, Cy);
+      ctx.lineTo(Dx, Dy);
+      ctx.closePath();
+      ctx.fill();
+      // Highlight superior (borde A-B) - línea suave simulando borde pulido
+      ctx.strokeStyle = 'rgba(244,239,234,0.12)';
+      ctx.lineWidth = Math.max(1, fs * 0.015);
+      ctx.beginPath();
+      ctx.moveTo(Ax, Ay);
+      ctx.lineTo(Bx, By);
+      ctx.stroke();
+    }
   };
   P._hasFx = function (now) {
     return this.fx.length > 0 || this.pulses.length > 0 || now < this._shakeUntil || !!this.hop;
@@ -342,12 +491,12 @@
     const syScale = t < .18 ? 1.1 : t > .82 ? .9 : 1;
     const sxScale = 1 + (1 - syScale) * .65;
     ctx.save();
-    ctx.translate(x, y); ctx.scale(sxScale, syScale);
+    ctx.translate(x, y - fs * UNIT_RISE); ctx.scale(sxScale, syScale);
     ctx.globalAlpha = .9;
     ctx.fillStyle = this.colors[h.owner] || '#F5B942';
     ctx.beginPath(); ctx.arc(0, fs * .05, fs * .55, 0, 7); ctx.fill();
     ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.stroke();
-    if (!HF.art.draw(ctx, 'unit', h.type, 0, 0, fs * 1.25, fs * 1.25)) {
+    if (!HF.art.drawStretched(ctx, 'unit', h.type, 0, 0, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) {
       ctx.fillStyle = INK; ctx.font = fs * .75 + 'px "Plus Jakarta Sans", sans-serif';
       ctx.fillText(HF.UNITS[h.type].icon, 0, fs * .05);
     }
@@ -403,19 +552,28 @@
     const winter = season === 3;
     const view = this.viewMode || 'normal';
     const politic = view === 'politic', resource = view === 'resource', combat = view === 'combat';
-    const fogPat = fog ? HF.art.fogPattern(ctx, this.cam, this.W, this.H, .6) : null;
+    const editor = this.mode === 'paint' || !!this.mapEditor;
+    const fogPat = fog ? HF.art.fogPattern(ctx, this.cam, this.W, this.H, .6, TILT) : null;
     const items = [], walls = [];
-    for (const c of this.cells) {
+    // Se pintan las casillas de norte a sur (y = 1.5*size*r). Una casilla
+    // elevada (tierra) invade la de arriba, asi que debe dibujarse despues:
+    // de lo contrario el agua del norte tapaba el borde realzado del llano.
+    if (this._orderRef !== this.cells || this._orderLen !== this.cells.length) {
+      this._orderRef = this.cells;
+      this._orderLen = this.cells.length;
+      this._order = this.cells.filter(Boolean).slice().sort((a, b) => (a.r - b.r) || (a.q - b.q));
+    }
+    for (const c of this._order) {
       if (!c) continue;
       const [wx, wy] = this.pos(c), [x, y0] = this.toScreen(wx, wy);
       if (x < -fs * 2 || y0 < -fs * 2 || x > this.W + fs * 2 || y0 > this.H + fs * 2) continue;
       const f = fog ? fog[c.i] : 2;
       // Relieve relativo: la cara solo se eleva respecto a lo que tiene al lado.
-      const lift = f === 0 ? 0 : this._level(c);
+      const lift = f === 0 || editor ? 0 : this._level(c);
       const y = y0 - lift;
       // El agua es la base del diorama: no proyecta faldón contra sí misma
       // ni contra el borde del mapa. Solo la tierra muestra el prisma.
-      if (f > 0 && c.t !== T.MAR && c.t !== T.RIO) {
+      if (!editor && f > 0 && c.t !== T.MAR && c.t !== T.RIO) {
         const egs = [];
         for (const e of EDGES) {
           const n = this._neighbor(c, e.dq, e.dr);
@@ -431,8 +589,89 @@
         continue;
       }
       ctx.globalAlpha = politic ? .2 : combat ? .4 : 1;
-      const top = this._shore(c) ? '#35647F' : TCOL[c.t];
-      ctx.fillStyle = top; ctx.fill();
+      
+      // Color base con jitter determinista (excepto editor)
+      let baseHex = editor ? ECOL[c.t] : (this._shore(c) ? '#35647F' : TCOL[c.t]);
+      let jitterQ = 0;
+      if (!editor && c.t !== T.MAR && c.t !== T.RIO) {
+        const jitter = jitterFactor(c.q, c.r);
+        jitterQ = Math.round(jitter * 100); // cuantificar para cache
+        const jitterKey = `${baseHex}|${jitterQ}`;
+        let jitteredHex = _jitterColorCache.get(jitterKey);
+        if (!jitteredHex) {
+          const hsl = hexToHSL(baseHex);
+          hsl.s = Math.max(0, Math.min(1, hsl.s * (1 + jitter)));
+          hsl.l = Math.max(0, Math.min(1, hsl.l * (1 + jitter)));
+          jitteredHex = HSLToHex(hsl);
+          _jitterColorCache.set(jitterKey, jitteredHex);
+        }
+        baseHex = jitteredHex;
+      }
+      
+      // Gradiente cenital (excepto editor y agua) - con cache
+      if (!editor && c.t !== T.MAR && c.t !== T.RIO) {
+        const hsl = hexToHSL(baseHex);
+        const h = hsl.h, s = hsl.s, l = hsl.l;
+        const l0 = Math.min(1.0, l * 1.25);
+        const s0 = s * 0.85;
+        const l2 = Math.max(0.0, l * 0.70);
+        const s2 = s * 0.95;
+        const fsKey = fs | 0;
+        const gradKey = `${c.t}|${jitterQ}|${fsKey}`;
+        let grd = _zenithGradCache.get(gradKey);
+        if (!grd) {
+          const rgb0 = HSLToHex({ h, s: s * 0.85, l: Math.min(1.0, l * 1.25) });
+          const rgb1 = baseHex;
+          const rgb2 = HSLToHex({ h, s: s * 0.95, l: Math.max(0.0, l * 0.70) });
+          grd = ctx.createLinearGradient(0, ZENITH_GRADIENT_TOP * fs, 0, ZENITH_GRADIENT_BOT * fs);
+          grd.addColorStop(0, rgb0);
+          grd.addColorStop(0.5, rgb1);
+          grd.addColorStop(1, rgb2);
+          _zenithGradCache.set(gradKey, grd);
+        }
+        // Aplicar gradiente con translate
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = grd;
+        hexPath(ctx, 0, 0, fs * 1.0);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.fillStyle = baseHex;
+        ctx.fill();
+      }
+
+      // El recurso se dibuja mas abajo, como pieza de diorama dentro del paso
+      // ordenado por profundidad: asi conserva volumen y sigue quedando por
+      // debajo de asentamientos y unidades de su misma casilla.
+
+      // antes del relleno/base: aristas direccionales de luz/sombra (reemplaza el stroke perimetral de 1px)
+      // Aristas iluminadas (Noroeste=N, Norte=NO, Suroeste=S): línea blanca translúcida
+      // Aristas en sombra (Noreste=NE, Sureste=SE, Sur=S): línea de oclusión oscura
+      if (!editor && c.t !== T.MAR && c.t !== T.RIO) {
+        for (let e = 0; e < 6; e++) {
+          const theta = 60 * e - 30;
+          let strokeStyle, lineWidth;
+          // Aristas: 4->5->0->1 son las iluminadas (NW, N, SW)
+          // y 1->2->3->4 son las en sombra (NE, SE, S)
+          if (e === 4 || e === 5 || e === 0) {
+            strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            lineWidth = Math.max(1, fs * 0.015);
+          } else {
+            strokeStyle = 'rgba(10, 15, 29, 0.30)';
+            lineWidth = Math.max(1, fs * 0.015);
+          }
+          const [x1, y1] = this._vert(x, y, fs, e);
+          const [x2, y2] = this._vert(x, y, fs, (e + 1) % 6);
+          ctx.strokeStyle = strokeStyle;
+          ctx.lineWidth = lineWidth;
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        }
+      }
+      
       // brillo de agua procedural (se omite en las vistas analíticas)
       if (!politic && !combat && (c.t === T.MAR || c.t === T.RIO)) {
         const wave = (Math.sin(now * .002 + c.q * .9 + c.r * .5) + 1) * .5;
@@ -449,13 +688,13 @@
         }
       }
       if (c.t === T.COLINA || c.t === T.MONTANA) {
-        ctx.fillStyle = TCOL2[c.t]; ctx.beginPath(); ctx.moveTo(x - fs * .5, y + fs * .35); ctx.lineTo(x, y - fs * (c.t === T.MONTANA ? .6 : .35)); ctx.lineTo(x + fs * .5, y + fs * .35); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = (editor ? ECOL2 : TCOL2)[c.t]; ctx.beginPath(); ctx.moveTo(x - fs * .5, y + fs * .35); ctx.lineTo(x, y - fs * (c.t === T.MONTANA ? .6 : .35)); ctx.lineTo(x + fs * .5, y + fs * .35); ctx.closePath(); ctx.fill();
         if (c.t === T.MONTANA && winter && !politic && !combat) {
           ctx.fillStyle = 'rgba(244,239,234,.52)';
           ctx.beginPath(); ctx.moveTo(x - fs * .18, y - fs * .2); ctx.lineTo(x, y - fs * .6); ctx.lineTo(x + fs * .18, y - fs * .2); ctx.closePath(); ctx.fill();
         }
       }
-      if (c.t === T.RIO) { ctx.strokeStyle = winter ? '#E8F1F2' : '#A8CCD9'; ctx.lineWidth = fs * .25; ctx.beginPath(); ctx.moveTo(x - fs * .6, y - fs * .2); ctx.quadraticCurveTo(x, y + fs * .5, x + fs * .6, y - fs * .1); ctx.stroke(); }
+      if (c.t === T.RIO) { ctx.strokeStyle = editor ? '#a5d8f5' : (winter ? '#E8F1F2' : '#A8CCD9'); ctx.lineWidth = fs * .25; ctx.beginPath(); ctx.moveTo(x - fs * .6, y - fs * .2); ctx.quadraticCurveTo(x, y + fs * .5, x + fs * .6, y - fs * .1); ctx.stroke(); }
       ctx.globalAlpha = 1;
       if (c.o >= 0) {
         const col = this.colors[c.o];
@@ -489,47 +728,88 @@
         ctx.strokeStyle = rc + '.9)'; ctx.lineWidth = Math.max(1.5, fs * .08);
         hexPath(ctx, x, y, fs * .9); ctx.stroke();
       }
-      // borde superior iluminado: grosor de ficha física
-      ctx.strokeStyle = 'rgba(244,239,234,.12)'; ctx.lineWidth = 1;
-      hexPath(ctx, x, y, fs * .97); ctx.stroke();
+      // borde superior iluminado: grosor de ficha física (editor mantiene stroke único)
+      if (editor) {
+        ctx.strokeStyle = 'rgba(244,239,234,.12)'; ctx.lineWidth = 1;
+        hexPath(ctx, x, y, fs * .97); ctx.stroke();
+      }
       if (c.fire > 0) { ctx.fillStyle = 'rgba(239,68,68,.32)'; hexPath(ctx, x, y, fs); ctx.fill(); }
       else if (c.burn > 0) { ctx.fillStyle = 'rgba(30,25,20,.42)'; hexPath(ctx, x, y, fs); ctx.fill(); }
-      if (grid) { ctx.strokeStyle = 'rgba(244,239,234,.055)'; ctx.lineWidth = 1; hexPath(ctx, x, y, fs); ctx.stroke(); }
+      if (grid) { ctx.strokeStyle = editor ? 'rgba(10,15,29,.22)' : 'rgba(244,239,234,.055)'; ctx.lineWidth = 1; hexPath(ctx, x, y, fs); ctx.stroke(); }
       items.push([c, x, y, f]);
+    }
+    // NUEVO: extrusiones de costa (ordenadas por y0 ascendente = más al norte primero)
+    if (!editor) {
+      _coastalArr.length = 0;
+      for (const c of this.cells) {
+        if (!c || c.t === T.MAR || c.t === T.RIO) continue;
+        const [wx, wy] = this.pos(c), [x, y0] = this.toScreen(wx, wy);
+        if (x < -fs * 2 || y0 < -fs * 2 || x > this.W + fs * 2 || y0 > this.H + fs * 2) continue;
+        const lift = this._level(c);
+        _coastalArr.push({ c, x, y0, fs, lift });
+      }
+      _coastalArr.sort((a, b) => a.y0 - b.y0);
+      for (const co of _coastalArr) {
+        this._drawCoastalExtrusion(ctx, co.c, co.x, co.y0, co.fs, co.lift);
+      }
     }
     // Los faldones se dibujan después de todas las caras. Antes, la cara
     // superior de un vecino posterior podía tapar el prisma del terreno alto.
-    walls.sort((a, b) => a.y0 - b.y0);
-    for (const w of walls) this._wallGroup(ctx, w);
-    for (const [c, x, y, f] of items) {
+    _wallsArr.length = 0;
+    for (const w of walls) _wallsArr.push(w);
+    _wallsArr.sort((a, b) => a.y0 - b.y0);
+    for (const w of _wallsArr) this._wallGroup(ctx, w);
+    _itemsArr.length = 0;
+    for (const it of items) _itemsArr.push(it);
+    // Orden por profundidad: las casillas del sur se dibujan después, así una
+    // unidad alta tapa correctamente a la de detrás y no al revés.
+    _itemsArr.sort((a, b) => (a[2] - b[2]) || (a[0].i - b[0].i));
+    for (const [c, x, y, f] of _itemsArr) {
       const em = Math.max(8, fs * .85);
       ctx.font = em + 'px sans-serif';
-      if (c.res && !politic && !combat) {
-        ctx.globalAlpha = resource ? 1 : .9;
-        ctx.font = fs * (resource ? .7 : .5) + 'px sans-serif';
-        ctx.fillText(['', '💰', '🌾', '🧱'][c.res], x - fs * .5, y + fs * .55);
-        ctx.globalAlpha = 1; ctx.font = em + 'px sans-serif';
+      // En el editor se mantiene la paleta plana: el recurso se marca con un
+      // icono pequeno en vez del suelo fotografico del juego.
+      if (editor && c.res) {
+        const rk = RES_ART_KEY[c.res];
+        const rw = fs * .6;
+        if (!rk || !HF.art.draw(ctx, 'resource', rk, x, y + fs * .4, rw, rw)) {
+          ctx.font = fs * .6 + 'px sans-serif';
+          ctx.fillText(['', '💰', '🌾', '🧱'][c.res], x, y + fs * .4);
+          ctx.font = em + 'px sans-serif';
+        }
+      }
+      // Recurso como pieza de diorama: ocupa la casilla y conserva el volumen
+      // del arte. Se dibuja antes que el edificio y la unidad de esa casilla.
+      if (!editor && c.res && !politic && !combat) {
+        const rk = RES_ART_KEY[c.res];
+        if (rk) HF.art.drawStretched(ctx, 'resource', rk, x, y - fs * .08, fs * RES_BOX, fs * RES_BOX, SPRITE_STRETCH);
       }
       if (c.b) {
         const treeDim = (politic || combat) && c.b === B.ARBOL;
         if (treeDim) ctx.globalAlpha = politic ? .2 : .4;
-        const bw = c.b === B.CAMINO ? fs * 1.5 : fs * 1.7;
-        if (!HF.art.draw(ctx, 'build', c.b, x, y - (c.b === B.CAMINO ? 0 : fs * .08), bw, bw)) {
+        const bw = fs * BUILD_BOX;
+        // Los caminos van tumbados en el suelo: no se estiran. Edificios y
+        // arboles si, para recuperar volumen frente al plano inclinado.
+        const bsy = c.b === B.CAMINO ? 1 : SPRITE_STRETCH;
+        if (!HF.art.drawStretched(ctx, 'build', c.b, x, y - (c.b === B.CAMINO ? 0 : fs * .08), bw, bw, bsy)) {
           if (c.b === B.CAMINO) { ctx.font = fs * .6 + 'px sans-serif'; ctx.globalAlpha = treeDim ? .4 : .8; }
           ctx.fillText(HF.BICON[c.b], x, y + (c.b === B.CAMINO ? fs * .35 : 0)); ctx.globalAlpha = 1; ctx.font = em + 'px sans-serif';
         }
         if (treeDim) ctx.globalAlpha = 1;
         if (c.cap) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('⭐', x + fs * .55, y - fs * .55); ctx.font = em + 'px sans-serif'; }
       }
-      if (c.tomb) { ctx.globalAlpha = .6 + .1 * c.tomb; ctx.fillText('⚰️', x, y); ctx.globalAlpha = 1; }
+      if (c.tomb) {
+        ctx.globalAlpha = .6 + .1 * c.tomb;
+        const drawn = HF.art.draw(ctx, 'misc', 'tomb', x, y, fs * 0.7, fs * 0.7);
+        if (!drawn) { ctx.fillText('⚰️', x, y); }
+        ctx.globalAlpha = 1;
+      }
       if (c.u && (f === 2 || c.u.owner === 0)) {
         const u = c.u, hide = this.drag && this.drag.from === c.i;
         const hopping = this.hop && this.hop.to === c.i;
         if (!hide && !hopping) {
           if (resource) ctx.globalAlpha = .15;
-          ctx.fillStyle = this.colors[u.owner]; ctx.beginPath(); ctx.arc(x, y + fs * .05, fs * .55, 0, 7); ctx.fill();
-          ctx.strokeStyle = HF.ready(u) && u.owner === 0 ? INK : 'rgba(10,15,29,.55)'; ctx.lineWidth = 2; ctx.stroke();
-          if (!HF.art.draw(ctx, 'unit', u.type, x, y, fs * 1.25, fs * 1.25)) { ctx.fillStyle = INK; ctx.font = fs * .75 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.type].icon, x, y + fs * .05); }
+          if (!HF.art.drawStretched(ctx, 'unit', u.type, x, y - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.fillStyle = INK; ctx.font = fs * .75 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.type].icon, x, y + fs * .05); }
           if (combat) {
             // anillo de combate + nivel + defensa efectiva (incluye terreno, edificios, auras y deg.)
             ctx.strokeStyle = 'rgba(244,239,234,.65)'; ctx.lineWidth = 2;
@@ -583,7 +863,7 @@
       }
     }
     if (this.hop) this._drawHop(ctx, now, fs);
-    if (view === 'normal') {
+    if (view === 'normal' && !editor) {
     this._drawClouds(ctx, now);
     if (this.mode === 'play' && this.parts) this._drawParts(ctx, winter);
     if (this.mode === 'play' && this.game && this.game.f && this.game.f[0] && HF.tradeRoutes) {
@@ -602,9 +882,11 @@
     }
     }
     // Niebla del vacío en los bordes: la isla no termina en un marco cuadrado.
-    const vg = ctx.createRadialGradient(this.W * .5, this.H * .48, Math.min(this.W, this.H) * .28, this.W * .5, this.H * .48, Math.max(this.W, this.H) * .78);
-    vg.addColorStop(0, 'rgba(10,15,29,0)'); vg.addColorStop(.7, 'rgba(10,15,29,.18)'); vg.addColorStop(1, 'rgba(10,15,29,.68)');
-    ctx.fillStyle = vg; ctx.fillRect(0, 0, this.W, this.H);
+    if (!editor) {
+      const vg = ctx.createRadialGradient(this.W * .5, this.H * .48, Math.min(this.W, this.H) * .28, this.W * .5, this.H * .48, Math.max(this.W, this.H) * .78);
+      vg.addColorStop(0, 'rgba(10,15,29,0)'); vg.addColorStop(.7, 'rgba(10,15,29,.18)'); vg.addColorStop(1, 'rgba(10,15,29,.68)');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, this.W, this.H);
+    }
     for (const [i, o] of this.over) {
       const c = this.cells[i]; if (!c) continue;
       const [x, y0] = this.toScreen(...this.pos(c));
@@ -620,12 +902,12 @@
     }
     if (this.drag) {
       const u = this.cells[this.drag.from].u;
-      if (u) { ctx.globalAlpha = .85; ctx.fillStyle = this.colors[u.owner]; ctx.beginPath(); ctx.arc(this.drag.x, this.drag.y - 20, fs * .6, 0, 7); ctx.fill(); if (!HF.art.draw(ctx, 'unit', u.type, this.drag.x, this.drag.y - 20, fs * 1.3, fs * 1.3)) { ctx.font = fs * .8 + 'px sans-serif'; ctx.fillStyle = INK; ctx.fillText(HF.UNITS[u.type].icon, this.drag.x, this.drag.y - 20); } ctx.globalAlpha = 1; }
+      if (u) { ctx.globalAlpha = .85; ctx.fillStyle = this.colors[u.owner]; ctx.beginPath(); ctx.arc(this.drag.x, this.drag.y - 20, fs * .6, 0, 7); ctx.fill(); if (!HF.art.drawStretched(ctx, 'unit', u.type, this.drag.x, this.drag.y - 20 - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.font = fs * .8 + 'px sans-serif'; ctx.fillStyle = INK; ctx.fillText(HF.UNITS[u.type].icon, this.drag.x, this.drag.y - 20); } ctx.globalAlpha = 1; }
     }
     if (this.bubbles) for (const b of this.bubbles) {
       const c = this.cells[b.i]; if (!c) continue;
       const [x, y0] = this.toScreen(...this.pos(c));
-      const y = y0 - this._lift(c) - fs * 1.25;
+      const y = y0 - this._lift(c) - fs * 1.9;
       const born = b.born || (now - 80);
       const age = Math.max(0, (now - born) / 1000);
       const popT = Math.min(1, age / .22);
@@ -646,6 +928,9 @@
       ctx.restore();
     }
     this._drawFx(ctx, now);
+    // Limpiar caches para evitar memory leaks (mantener tamaño razonable)
+    if (_zenithGradCache.size > 500) _zenithGradCache.clear();
+    if (_jitterColorCache.size > 500) _jitterColorCache.clear();
     ctx.restore();
   };
   P._drawClouds = function (ctx, now) {

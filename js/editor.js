@@ -55,7 +55,9 @@
 
   HF.mapError = (msg, retry) => HF.modal(`<h3>Mapa no válido</h3><p class="neg">${msg}</p><button class="pri" id="x">Entendido</button>`, m => m.querySelector('#x').onclick = HF.closeModal);
   // Valida y arranca una partida con un mapa del editor/guardado. Devuelve false si no es jugable.
-  HF.playMap = (R, cells, seed) => {
+  // meta.mapId identifica el mapa para la clasificación; si no llega (mapa
+  // guardado o del editor), se deriva un hash estable del propio mapa.
+  HF.playMap = (R, cells, seed, meta) => {
     const err = HF.validateMap(R, cells);
     if (err) { HF.sfx('error'); HF.mapError(err); return false; }
     const owners = [...new Set(cells.filter(c => c && c.cap && c.o >= 0).map(c => c.o))].sort();
@@ -68,7 +70,14 @@
       }) : null;
       return { i: c.i, t: c.t, res: c.res, b: c.b, o: c.o >= 0 ? (remap[c.o] != null ? remap[c.o] : -1) : -1, cap: c.cap, u };
     });
-    HF.startGame(HF.makeGame({ mode: 'community', seed, size: 'large', n: owners.length, R, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }, customCells: data }, HF.loadTribe()));
+    const m = Object.assign({}, meta || {});
+    if (!m.mapId) {
+      const code = HF.exportMap(R, cells, seed);
+      let h = 0;
+      for (let i = 0; i < code.length; i++) h = Math.imul(31, h) + code.charCodeAt(i) | 0;
+      m.mapId = 'c' + Math.abs(h).toString(36);
+    }
+    HF.startGame(HF.makeGame({ mode: 'community', seed, size: 'large', n: owners.length, R, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }, customCells: data, meta: m }, HF.loadTribe()));
     return true;
   };
   HF.savedMaps = () => HF.store.get('maps', []);
@@ -85,7 +94,9 @@
     render();
   };
 
+  const ED_RES = { 1: 'assets/ui/gold.webp', 2: 'assets/ui/wheat.webp', 3: 'assets/ui/wood.webp' };
   HF.edIcon = t => {
+    if (t[0] === 'r' && ED_RES[t[1]]) return `<img class="ed-ico" src="${ED_RES[t[1]]}" alt="" draggable="false">`;
     if (t[0] === 'b' && t[1] >= 2) { const h = HF.art.html('build', t[1], t[2], 26); return h; }
     if (t[0] === 'u') {
       const tier = String(t[1]).split(':')[1] || 1;
