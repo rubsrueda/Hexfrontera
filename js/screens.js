@@ -123,7 +123,6 @@
         ${save ? `<button class="pri big" id="cont">${HF.t('BTN_CONTINUE')} <span class="dim">· T${save.turn} · ${HF.esc(save.mode)}</span></button>` : ''}
         <button class="big" id="camp">${HF.t('BTN_CAMPAIGN')} <span class="dim">★ ${HF.totalStars()}/90</span></button>
         <button class="big" id="new">${HF.t('BTN_NEW_GAME')}</button>
-        <button class="big" id="online">${HF.t('BTN_ONLINE')} <span class="dim">🌐</span></button>
         <div class="card" id="standing" style="padding:8px 10px">
           <div class="row"><b class="grow">🏅 Tu posición</b><span class="dim small" id="stNote"></span></div>
           <div id="stBody" class="small" style="margin-top:3px">Consultando clasificación…</div>
@@ -139,7 +138,6 @@
       </div></div>`;
     const on = (id, fn) => { const b = el.querySelector('#' + id); if (b) b.onclick = fn; };
     on('daily', () => HF.go('daily')); on('camp', () => HF.go('campaign')); on('new', () => HF.go('newgame'));
-    on('online', () => HF.go('online'));
     on('tribe', () => HF.go('tribe')); on('editor', () => HF.go('editor')); on('stats', () => HF.go('stats'));
     // delegación: garantiza que Ajustes responda aunque otro handler reemplace el onclick
     el.addEventListener('click', e => {
@@ -401,11 +399,16 @@
       el.innerHTML = `<div class="screen">${header('Nueva partida')}<div class="scroll">
         <label>Tamaño</label>${seg('size', Object.entries(HF.SIZES).map(([k, v]) => [k, v.name]))}
         <label>Bioma</label>${seg('biome', Object.entries(HF.BIOMES).map(([k, v]) => [k, v.name]))}
-        <label>Facciones (tú + IA)</label>${seg('n', Array.from({ length: sz.maxF - sz.minF + 1 }, (_, i) => [sz.minF + i, sz.minF + i]))}
+        <label>Facciones (tú + IA; en línea, jugadores)</label>${seg('n', Array.from({ length: sz.maxF - sz.minF + 1 }, (_, i) => [sz.minF + i, sz.minF + i]))}
         <label>Niebla de guerra</label>${seg('fog', [['FULL', 'Completa'], ['EXPLORED', 'Explorada'], ['NONE', 'Sin niebla']])}
         <label>Dificultad IA</label>${seg('difficulty', [['easy', 'Fácil'], ['normal', 'Normal'], ['hard', 'Difícil']])}
         <label>Semilla (vacío = aleatoria)</label><input type="text" id="seed" value="${HF.esc(o.seed || '')}">
         <div class="dim small" style="margin-top:6px">Los barcos se reclutan en agua junto a un campamento o edificio superior.</div>
+        <div class="card" style="margin-top:8px"><b>🌐 Partida en línea</b>
+          <div class="dim small">Crea una sala con esta configuración: ${HF.SIZES[o.size].name} · ${HF.BIOMES[o.biome].name} · niebla ${({ FULL: 'completa', EXPLORED: 'explorada', NONE: 'sin niebla' })[o.fog]}, hasta ${o.n} jugadores.</div>
+          <button class="pri" id="onlineHost" style="width:100%;margin-top:6px">🌐 Crear sala en línea</button>
+          <button id="onlineJoin" style="width:100%;margin-top:6px">Unirse a una sala</button>
+        </div>
         <br><button class="pri big" id="go" style="width:100%">Empezar</button>
         <br><br><button id="mine" style="width:100%">📂 Jugar un mapa guardado</button>
         <br><br><button id="code" style="width:100%">🌍 Mapas de la Comunidad</button>
@@ -420,6 +423,32 @@
       };
       el.querySelector('#mine').onclick = () => HF.mapsModal(null);
       el.querySelector('#code').onclick = () => HF.communityMapsModal();
+      // Multijugador: la sala se crea con la configuración elegida arriba.
+      const seedNow = () => {
+        const sv = el.querySelector('#seed').value.trim(); o.seed = sv;
+        return sv ? (/^\d+$/.test(sv) ? parseInt(sv, 10) >>> 0 : [...sv].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7)) : Math.floor(Math.random() * 1e9);
+      };
+      el.querySelector('#onlineHost').onclick = async () => {
+        const seed = seedNow();
+        HF.store.set('newgame_opts', o);
+        if (!HF.online) { HF.sfx('error'); return HF.toast('Multijugador no disponible'); }
+        const btn = el.querySelector('#onlineHost');
+        btn.disabled = true; btn.textContent = 'Creando sala…';
+        try {
+          const r = await HF.online.create({
+            max: o.n,
+            setup: { mode: 'skirmish', seed, size: o.size, n: o.n, biome: o.biome, fog: o.fog, difficulty: o.difficulty, goal: { type: 'conquer' } }
+          });
+          if (!r.ok) { btn.disabled = false; btn.textContent = '🌐 Crear sala en línea'; HF.sfx('error'); return HF.toast(r.msg); }
+          HF.sfx('good');
+          HF.go('online');
+        } catch (e) {
+          console.error('[online] crear sala', e);
+          btn.disabled = false; btn.textContent = '🌐 Crear sala en línea';
+          HF.toast(e.message || 'Error al crear la sala');
+        }
+      };
+      el.querySelector('#onlineJoin').onclick = () => HF.go('online');
     };
     draw();
   });
@@ -563,7 +592,7 @@
         <div class="row" style="margin-top:6px"><button id="syncCloud">🔄 Sincronizar</button><button id="linkDevice">🔄 Transferir a otro dispositivo</button><button id="recoverAccount">❓ Recuperar Cuenta</button></div>
       </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
-      <div class="dim small">HexFrontier v1.1 · build 104 · 🌐 Multijugador en línea</div></div></div>`;
+      <div class="dim small">HexFrontier v1.2 · build 112 · 🌐 Multijugador en línea</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
     el.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { HF.setLang(b.dataset.lang); HF.go('settings'); });

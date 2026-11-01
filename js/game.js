@@ -458,7 +458,10 @@
           const item = +b.dataset.b;
           bindTip(b, () => buildTip(item));
           b.onclick = () => {
+            // En red, las celdas se calculan con la facción local, no con g.cur.
+            const keepCur = g.cur; if (g.online) g.cur = P;
             const cells = new Set(HF.buildCells(g, item)), cost = HF.buildCost(g, f, item);
+            if (g.online) g.cur = keepCur;
             if (!afford(cost)) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Recursos insuficientes'); }
             if (!cells.size) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Ninguna provincia con casillas válidas puede pagarlo'); }
             clearSel(); st.pending = { kind: 'build', item, cells }; HF.sfx('click');
@@ -493,7 +496,10 @@
             if (st.lastPick && st.lastPick.type === type && now - st.lastPick.t < 420) tier = Math.min(3, (st.lastPick.tier || 1) + 1);
             st.lastPick = { type, tier, t: now };
           } else st.lastPick = { type, tier, t: performance.now() };
-          const cost = HF.recruitCost(g, f, type, tier), cells = new Set(HF.recruitCells(g, type, tier));
+          const cost = HF.recruitCost(g, f, type, tier);
+          const keepCur = g.cur; if (g.online) g.cur = P;
+          const cells = new Set(HF.recruitCells(g, type, tier));
+          if (g.online) g.cur = keepCur;
           if (!afford(cost)) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Recursos insuficientes'); }
           if (!cells.size) { HF.sfx('error'); HF.vibrate(50); return HF.toast('Ninguna provincia con casillas válidas puede pagarlo'); }
           clearSel(); st.pending = { kind: 'unit', item: type, tier, cells }; HF.sfx('click');
@@ -578,6 +584,7 @@
     if (g.online && HF.online && HF.online.bind) {
       g._setSeat = seat => { P = seat; };
       g._onlineStop = HF.online.bind(g, refresh);
+      console.info('[online] asiento', P + 1, g.online.host ? 'anfitrión' : 'invitado', 'jugador', HF.online.playerId());
       // Reloj del jugador activo (banco de 210 s, +3 s por acción).
       let clockId = 0;
       const tickClock = () => {
@@ -630,7 +637,7 @@
         </div>`;
       };
       HF.modal(`<div class="score-top"><h3><img class="modal-ico" src="assets/ui/codex.webp" alt="" draggable="false"> Marcador · Turno ${g.turn}</h3><button id="scClose" aria-label="Cerrar">✕</button></div>
-        <div class="dim small" style="margin:-4px 0 6px">🎯 ${goalText(g)}</div>
+        <div class="dim small" style="margin:-4px 0 6px">🎯 ${goalText(g)}${g.online ? ` · 🌐 Asiento ${P + 1} (${g.online.host ? 'anfitrión' : 'invitado'})` : ''}</div>
         <div class="score-grid">${stats.map(card).join('')}</div>
         <div class="dim small" style="margin-top:6px">Toca una tarjeta para ver el desglose completo.</div>`, m => {
         m.querySelector('#scClose').onclick = HF.closeModal;

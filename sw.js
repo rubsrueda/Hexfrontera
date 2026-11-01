@@ -1,6 +1,6 @@
 // La version del cache debe subir en cada release: si no, el navegador sigue
 // sirviendo el JS viejo y los cambios de arte/tamaños no llegan a la partida.
-const C = 'hexfrontier-v108';
+const C = 'hexfrontier-v112';
 const FILES = [
   './', 'index.html', 'css/style.css', 'manifest.json', 'icon.svg',
   'fonts/plus-jakarta-sans-latin.woff2', 'fonts/plus-jakarta-sans-latin-ext.woff2', 'fonts/plus-jakarta-sans-cyrillic.woff2',

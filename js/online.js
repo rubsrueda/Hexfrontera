@@ -5,15 +5,34 @@
 (function (G) {
   const HF = G.HF;
   const KEY = 'online_session';
+  const SKEY = KEY;
+  const SS = (() => { try { return G.sessionStorage || null; } catch (e) { return null; } })();
   const POLL_MS = 1600;
   const HEARTBEAT_MS = 9000;
   const CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   // Cada asiento tiene un color distinto: el color de la tribu se repite.
   const SEAT_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#eab308'];
 
-  const getSession = () => HF.store.get(KEY, null);
-  const setSession = s => (s ? HF.store.set(KEY, s) : HF.store.del(KEY));
-  const pid = () => (HF.cloud && HF.cloud.playerId ? HF.cloud.playerId() : '');
+  const getSession = () => {
+    if (SS) { try { const v = SS.getItem(SKEY); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+    return HF.store.get(SKEY, null);
+  };
+  const setSession = s => {
+    if (SS) { try { s ? SS.setItem(SKEY, JSON.stringify(s)) : SS.removeItem(SKEY); } catch (e) { } }
+    else { s ? HF.store.set(SKEY, s) : HF.store.del(SKEY); }
+  };
+  // Identidad por pestaña: dos pestañas normales comparten el perfil de
+  // localStorage, pero deben ser jugadores distintos en la sala.
+  let myId = null;
+  function pid() {
+    if (myId) return myId;
+    try { myId = SS && SS.getItem('hf_online_pid'); } catch (e) { myId = null; }
+    if (!myId) {
+      myId = 'P-' + Math.random().toString(36).slice(2, 7).toUpperCase();
+      try { if (SS) SS.setItem('hf_online_pid', myId); } catch (e) { }
+    }
+    return myId;
+  }
   const rpc = (fn, args) => (HF.cloud && HF.cloud.rpc ? HF.cloud.rpc(fn, args) : Promise.resolve({ ok: false, offline: true }));
   const row = data => (Array.isArray(data) ? data[0] : data) || null;
 
@@ -437,20 +456,15 @@
       const ps = api.players(room);
       const me = api.me(room);
       const status = room ? api.phaseLabel(room) : '';
-      const createCard = `<div class="card">
-        <b>Crear una sala</b>
-        <p class="dim small">Se juega con un mapa y una semilla compartidos; hasta 4 jugadores.</p>
-        <label>Jugadores</label>
-        <div class="row" id="scMax">${[2, 3, 4].map(n => `<button data-max="${n}" class="${n === 4 ? 'sel' : ''}">${n}</button>`).join('')}</div>
-        <button class="pri big" id="scCreate" style="margin-top:8px">Crear sala</button>
-      </div>
-      <div class="card">
+      const joinCard = `<div class="card">
         <b>Unirse a una sala</b>
+        <p class="dim small">Pide el código al anfitrión; él elige el mapa, el bioma y la niebla.</p>
         <label>Código</label>
         <div class="row"><input id="scCode" maxlength="5" placeholder="ABCDE" style="text-transform:uppercase;flex:1;min-width:0"><button id="scJoin" class="pri">Entrar</button></div>
       </div>
       <div class="card">
-        <div class="dim small">Si algo falla, comprueba que ejecutaste <b>sql/hf_multiplayer.sql</b> en Supabase.</div>
+        <div class="dim small">Para crear una sala, elige la configuración en <b>Nueva partida</b> y pulsa “🌐 Crear sala en línea”.</div>
+        <button id="scConfig" style="margin-top:6px">⚙️ Configurar partida</button>
         <button id="scTest" style="margin-top:6px">🔌 Probar conexión</button>
       </div>`;
       const rows = ps.map(p => `<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line)">
@@ -461,39 +475,29 @@
       const bank = room && room.game_phase === 'TURN_BASED' && me
         ? `<div class="small" style="margin-top:6px">⏱ Tu banco: ${api.fmtTime(api.timeLeft(room, pid()))}</div>` : '';
       const roomCodeTxt = room ? room.room_code : (s ? s.room_code : '');
+      const su = room && room.setup_json;
+      const suTxt = su && su.size && HF.SIZES[su.size] ? ` · ${HF.SIZES[su.size].name}` : '';
+      const biTxt = su && su.biome && HF.BIOMES[su.biome] ? ` · ${HF.BIOMES[su.biome].name}` : '';
+      const fogTxt = su && su.fog ? ` · ${({ FULL: 'niebla completa', EXPLORED: 'niebla explorada', NONE: 'sin niebla' })[su.fog] || ''}` : '';
       const roomCards = `<div class="card">
         <div class="row"><div class="grow"><div class="dim small">Sala</div><b style="font-size:22px;letter-spacing:3px">${HF.esc(roomCodeTxt)}</b></div>
         <button id="scCopy" style="min-height:36px">Copiar</button></div>
-        <div class="dim small">${status}${room && room.status === 'ACTIVE' ? ' · Turno ' + room.current_turn : ''}${room && room.setup_json && room.setup_json.seed ? ' · semilla ' + room.setup_json.seed : ''}</div>
+        <div class="dim small">${status}${room && room.status === 'ACTIVE' ? ' · Turno ' + room.current_turn : ''}${suTxt}${biTxt}${fogTxt}${su && su.seed ? ' · semilla ' + su.seed : ''}</div>
       </div>
       <div class="card"><b>Jugadores (${ps.length}/${room ? room.max_players : 4})</b>${rows}${bank}</div>
-      ${ps.length < 2 ? `<p class="dim small">Comparte el código con otro jugador. Para probar tú solo, abre el juego en una <b>ventana de incógnito</b>: dos pestañas normales comparten el mismo jugador.</p>` : ''}
+      ${ps.length < 2 ? `<p class="dim small">Comparte el código con otro jugador. Cada pestaña o ventana cuenta como un jugador distinto.</p>` : ''}
       <div class="row" style="gap:6px;flex-wrap:wrap">
         ${room && room.status === 'ACTIVE' ? `<button class="pri grow" id="scEnter">⚔️ Entrar al tablero</button>` : ''}
         ${room && room.status === 'WAITING' && api.isHost(room) ? `<button class="pri grow" id="scStart" ${ps.length < 2 ? 'disabled' : ''}>Iniciar partida</button>` : ''}
         ${room && room.status === 'ACTIVE' && room.game_phase === 'SIMULTANEOUS' && me && !me.is_ready ? `<button class="pri grow" id="scReady">Estoy listo</button>` : ''}
         <button id="scLeave">Salir de la sala</button>
       </div>
-      ${room && room.status === 'ACTIVE' ? `<p class="dim small" style="margin-top:8px">Niebla por jugador. La partida empieza en turnos simultáneos y pasa a turnos individuales con reloj cuando dos facciones se ven.</p>` : ''}
-      <p class="dim small" id="scMsg" style="min-height:16px"></p>`;
-      el.innerHTML = `<div class="screen">${HF.header('🌐 Multijugador')}<div class="scroll">${!s ? createCard : roomCards}<p class="dim small" id="scMsg" style="min-height:16px"></p></div></div>`;
+      ${room && room.status === 'ACTIVE' ? `<p class="dim small" style="margin-top:8px">Niebla por jugador. La partida empieza en turnos simultáneos y pasa a turnos individuales con reloj cuando dos facciones se ven.</p>` : ''}`;
+      el.innerHTML = `<div class="screen">${HF.header('🌐 Multijugador')}<div class="scroll">${!s ? joinCard : roomCards}<p class="dim small" id="scMsg" style="min-height:16px"></p></div></div>`;
       HF.wireBack(el);
       const msg = t => { const m = el.querySelector('#scMsg'); if (m) m.textContent = t || ''; };
-      const maxSel = el.querySelector('#scMax');
-      let max = 4;
-      if (maxSel) maxSel.querySelectorAll('[data-max]').forEach(b => b.onclick = () => {
-        max = +b.dataset.max;
-        maxSel.querySelectorAll('[data-max]').forEach(x => x.classList.toggle('sel', x === b));
-      });
       const q = s2 => el.querySelector(s2);
-      if (q('#scCreate')) q('#scCreate').onclick = async () => {
-        msg('Creando…');
-        try {
-          const r = await api.create({ max });
-          if (!r.ok) { console.error('[online] crear sala', r); return msg('⚠ ' + r.msg); }
-          HF.sfx('good'); startWatch(); render(api.room());
-        } catch (e) { console.error('[online] crear sala', e); msg('⚠ ' + (e.message || e)); }
-      };
+      if (q('#scConfig')) q('#scConfig').onclick = () => HF.go('newgame');
       if (q('#scJoin')) q('#scJoin').onclick = async () => {
         const code = (q('#scCode').value || '').trim().toUpperCase();
         if (code.length < 4) return msg('Escribe el código de la sala');

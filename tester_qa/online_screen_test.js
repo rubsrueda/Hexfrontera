@@ -48,12 +48,13 @@ HF.store.del('online_session');
 let threw = null;
 try { HF.go('online'); } catch (e) { threw = e; }
 ok(!threw, 'abre Online sin sesión');
-ok(el.innerHTML.includes('Crear una sala'), 'muestra el formulario de creación');
+ok(el.innerHTML.includes('Unirse a una sala'), 'muestra el formulario de unión');
+ok(el.innerHTML.includes('Configurar partida'), 'enlaza a la configuración de partida');
 ok(el.innerHTML.includes('Probar conexión'), 'muestra el diagnóstico de conexión');
 if (threw) console.error(threw);
 
 // 2. Con sesión pero sin sala cargada: no debe romper por s.room_code.
-HF.store.set('online_session', { room_code: 'ABCDE', player_id: HF.cloud.playerId() });
+HF.store.set('online_session', { room_code: 'ABCDE', player_id: HF.online.playerId() });
 threw = null;
 try { HF.go('online'); } catch (e) { threw = e; }
 ok(!threw, 'abre Online con sesión guardada');

@@ -29,7 +29,7 @@ for (const f of ['util.js', 'config.js', 'data.js', 'i18n.js', 'names.js', 'clou
 let fail = 0;
 const ok = (cond, msg) => { if (cond) console.log('ok   ' + msg); else { console.error('FAIL: ' + msg); fail++; } };
 
-const pid = HF.cloud.playerId();
+const pid = HF.online.playerId();
 let fakeRoom = null;
 HF.cloud.rpc = async (fn, args) => {
   if (fn === 'fn_hf_create_room' || fn === 'fn_hf_join_room') {
