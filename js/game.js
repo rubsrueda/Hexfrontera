@@ -145,7 +145,7 @@
       }
       board.draw();
     }
-    function refresh() { sync(); hud(); overlay(); if (HF.replays) HF.replays.touch(g); if (HF.bgm) HF.bgm.update(g); }
+    function refresh() { if (g.online) g.cur = P; sync(); hud(); overlay(); if (HF.replays) HF.replays.touch(g); if (HF.bgm) HF.bgm.update(g); }
     function clearSel() { st.sel = -1; st.opts = new Map(); }
     function select(i) { st.sel = i; st.focus = i; st.opts = HF.options(g, i); st.pending = null; closeDrawer(); }
 

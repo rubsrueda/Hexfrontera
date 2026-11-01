@@ -510,7 +510,7 @@
       const c = g.cells[car.path[car.pos]];
       if (!c) continue;
       // Las caravanas enemigas solo se ven en casillas visibles.
-      if (car.owner !== 0 && HF.visible && !HF.visible(g, c.i)) continue;
+      if (car.owner !== ((this.game && this.game.mySeat) || 0) && HF.visible && !HF.visible(g, c.i)) continue;
       const [x, y0] = this.toScreen(...this.pos(c));
       const y = y0 - this._lift(c);
       const s = fs * 1.2;
@@ -570,6 +570,7 @@
       ctx.translate(Math.sin(now * .11) * this._shakeAmp, Math.cos(now * .13) * this._shakeAmp);
     }
     const g = this.game, fog = this.fogMap, grid = HF.settings().grid;
+    const me = (g && g.mySeat) || 0;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const fs = s * z;
     if (this.hop && now - this.hop.t0 > this.hop.dur) this.hop = null;
@@ -831,7 +832,7 @@
         if (!drawn) { ctx.fillText('⚰️', x, y); }
         ctx.globalAlpha = 1;
       }
-      if (c.u && (f === 2 || c.u.owner === 0)) {
+      if (c.u && (f === 2 || c.u.owner === me)) {
         const u = c.u, hide = this.drag && this.drag.from === c.i;
         const hopping = this.hop && this.hop.to === c.i;
         if (!hide && !hopping) {
@@ -869,7 +870,7 @@
             ctx.fillStyle = this.colors[u.cargo.owner]; ctx.beginPath(); ctx.arc(kx, ky, fs * .3, 0, 7); ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.stroke();
             if (!HF.art.draw(ctx, 'unit', u.cargo.type, kx, ky, fs * .6, fs * .6)) { ctx.fillStyle = INK; ctx.font = fs * .4 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.cargo.type].icon, kx, ky); }
           }
-          if (u.owner === 0) {
+          if (u.owner === me) {
             if (u.mv > 0 || (u.cargo && u.cargo.mv > 0)) { ctx.fillStyle = '#4ade80'; ctx.beginPath(); ctx.arc(x - fs * .6, y - fs * .5, fs * .13, 0, 7); ctx.fill(); }
             if (u.at > 0) { ctx.fillStyle = '#f87171'; ctx.beginPath(); ctx.arc(x - fs * .35, y - fs * .62, fs * .13, 0, 7); ctx.fill(); }
           }
@@ -882,7 +883,7 @@
       if (c.wonder) { ctx.globalAlpha = .95; ctx.fillText('🏛', x, y - fs * .55); ctx.globalAlpha = 1; }
       if (c.fire > 0) ctx.fillText('🔥', x + fs * .55, y - fs * .5);
       else if (c.burn > 0) { ctx.globalAlpha = .8; ctx.fillText('🕳', x + fs * .55, y + fs * .5); ctx.globalAlpha = 1; }
-      if (c.trap === 0 && f === 2) { ctx.globalAlpha = .8; ctx.fillText('🪤', x - fs * .55, y + fs * .5); ctx.globalAlpha = 1; }
+      if (c.trap === me && f === 2) { ctx.globalAlpha = .8; ctx.fillText('🪤', x - fs * .55, y + fs * .5); ctx.globalAlpha = 1; }
       ctx.font = em + 'px sans-serif';
       if (f === 1) {
         hexPath(ctx, x, y, fs); ctx.fillStyle = 'rgba(8,14,28,.35)'; ctx.fill();

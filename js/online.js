@@ -8,6 +8,8 @@
   const POLL_MS = 1600;
   const HEARTBEAT_MS = 9000;
   const CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  // Cada asiento tiene un color distinto: el color de la tribu se repite.
+  const SEAT_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#eab308'];
 
   const getSession = () => HF.store.get(KEY, null);
   const setSession = s => (s ? HF.store.set(KEY, s) : HF.store.del(KEY));
@@ -208,7 +210,7 @@
       }
       let g;
       if (host) {
-        if (room.state_json) g = HF.deserialize(room.state_json);
+        if (room.state_json) { g = HF.deserialize(room.state_json); g._onlineAck = (room.actions || []).length; }
         else {
           const spec = Object.assign({}, room.setup_json || {});
           spec.mode = 'skirmish';
@@ -218,9 +220,11 @@
           g = HF.makeGame(spec, HF.loadTribe());
           g.f.forEach((f, i) => {
             const p = ps.find(x => x.seat === i + 1);
-            if (p) { f.name = p.name; f.crest = p.crest; f.color = p.color_hex; f.human = true; }
-            else f.human = false;
+            if (p) { f.name = p.name; f.crest = p.crest; f.color = SEAT_COLORS[i % SEAT_COLORS.length]; f.human = true; }
+            else { f.human = false; f.color = SEAT_COLORS[i % SEAT_COLORS.length]; }
           });
+          // El anfitrión aplicará desde la primera acción recibida.
+          g._onlineAck = 0;
         }
       } else {
         g = HF.deserialize(room.state_json);
@@ -272,7 +276,8 @@
     // Sondeo de la partida: el anfitrión aplica acciones ajenas y publica;
     // los invitados recargan el snapshot. Incluye relojes, bots y relevo.
     bind(g, refresh) {
-      let seq = -1, ack = null, stopped = false, claimTried = false, contactSent = false;
+      let seq = -1, stopped = false, claimTried = false, contactSent = false;
+      let ack = g._onlineAck != null ? g._onlineAck : ((lastRoom && lastRoom.actions) ? lastRoom.actions.length : 0);
       const runBot = seat => {
         try { g.cur = Math.max(0, seat); HF.aiPlay(g, Math.max(0, seat)); return true; }
         catch (e) { console.warn('[online] bot', e); return false; }
@@ -280,7 +285,6 @@
       };
       const applyHost = room => {
         const acts = room.actions || [];
-        if (ack === null) { ack = acts.length; return false; }
         let changed = false;
         for (; ack < acts.length; ack++) {
           const a = acts[ack];
@@ -293,8 +297,9 @@
             else if (ac.k === 'recruit') HF.recruit(g, ac.type, ac.i, undefined, ac.tier);
             changed = true;
           } catch (e) { console.warn('[online] acción remota', e); }
-          g.cur = 0;
+          g.cur = g.mySeat || 0;
         }
+        g._onlineAck = ack;
         return changed;
       };
       const applyGuest = room => {
@@ -450,7 +455,7 @@
       </div>`;
       const rows = ps.map(p => `<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line)">
         ${HF.crestHTML(p.crest, 24)}
-        <div class="grow"><b>${HF.esc(p.name)}</b>${p.player_id === pid() ? ' <span class="sc-you">Tú</span>' : ''}${p.is_bot ? ' <span class="dim small">bot</span>' : ''}${room && room.active_player === p.player_id ? ' <span class="small" style="color:var(--acc)">▶ turno</span>' : ''}</div>
+        <div class="grow"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${SEAT_COLORS[(p.seat - 1) % SEAT_COLORS.length]};margin-right:6px;vertical-align:middle"></span><b>${HF.esc(p.name)}</b>${p.player_id === pid() ? ' <span class="sc-you">Tú</span>' : ''}${p.is_bot ? ' <span class="dim small">bot</span>' : ''}${room && room.active_player === p.player_id ? ' <span class="small" style="color:var(--acc)">▶ turno</span>' : ''}</div>
         <span class="dim small">${p.is_ready ? '✔ listo' : '…'}</span>
       </div>`).join('');
       const bank = room && room.game_phase === 'TURN_BASED' && me
