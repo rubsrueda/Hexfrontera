@@ -35,7 +35,16 @@ HF.updateFog(g);
 ok(HF.hasContact(g) === true, 'detecta el primer contacto');
 ok(g.fogMap[at(-4, 0).i] === 2, 'el enemigo cercano queda visible');
 
-// con niebla desactivada también hay contacto
+// sin niebla: dos unidades lejanas NO son contacto; al acercarse, sí.
+const g2 = { R, turn: 1, cur: 0, fog: 'NONE', fogMap: null, cells: [], f: [{ id: 0 }, { id: 1 }], _grid: gr };
+for (const d of gr.list) g2.cells[d.i] = { i: d.i, q: d.q, r: d.r, t: T.LLANO, o: -1, b: 0, sup: 0, comp: 0 };
+g2.cells[gr.idx(-5, 0)].u = { type: 'INF', tier: 1, owner: 0, mv: 1, at: 1 };
+g2.cells[gr.idx(5, 0)].u = { type: 'INF', tier: 1, owner: 1, mv: 1, at: 1 };
+g2.mySeat = 0;
+ok(HF.hasContact(g2) === false, 'sin niebla, enemigos lejanos no son contacto');
+g2.cells[gr.idx(-4, 0)].u = { type: 'CAB', tier: 1, owner: 1, mv: 1, at: 1 };
+ok(HF.hasContact(g2) === true, 'sin niebla, unidades próximas sí son contacto');
+
 g.fog = 'NONE';
 ok(HF.hasContact(g) === true, 'sin niebla detecta igual');
 

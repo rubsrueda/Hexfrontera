@@ -1601,13 +1601,19 @@
     if (g.fog === 'EXPLORED') { /* el terreno descubierto se mantiene visible aunque sin unidades enemigas */ }
   };
   HF.visible = (g, i) => g.fog === 'NONE' || (g.fogMap && g.fogMap[i] === 2);
-  // ¿La facción `seat` ve alguna unidad enemiga? Primer contacto en red.
+  // Primer contacto: dos unidades de bandos distintos se encuentran (a 1
+  // casilla, o 2 si una está en colina). No cuenta la visión de las ciudades:
+  // con niebla desactivada, cualquier enemigo lejano dispararía el cambio.
   HF.hasContact = function (g, seat) {
     const me = seat == null ? (g.mySeat || 0) : seat;
-    if (g.fog === 'NONE') {
-      return g.cells.some(c => c && c.u && c.u.owner !== me);
+    const mine = [], foes = [];
+    for (const c of g.cells) if (c && c.u) (c.u.owner === me ? mine : foes).push(c);
+    if (!mine.length || !foes.length) return false;
+    for (const a of mine) {
+      const r = a.t === T.COLINA ? 2 : 1;
+      for (const b of foes) if (HF.hexDist(a, b) <= r) return true;
     }
-    return g.cells.some((c, i) => c && c.u && c.u.owner !== me && g.fogMap && g.fogMap[i] === 2);
+    return false;
   };
 
   // ---------- fin de partida ----------
