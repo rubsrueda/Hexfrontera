@@ -131,6 +131,7 @@
       else if (t[0] === 3) r = HF.recruit(g, t[1], t[2], t[3], t[4]);
       else if (t[0] === 4) { HF.replayPhase(g, t[1]); }
       else if (t[0] === 5) r = HF.loan(g, t[1]);
+      else if (t[0] === 9) r = HF.sendCargo(g, t[1], t[2], t[3], t[4]);
       if (r && !r.ok) throw new Error(r.msg || 'acción no válida');
     };
     const stopTimer = () => { if (timer) { clearInterval(timer); timer = 0; } };
@@ -138,8 +139,14 @@
       if (done) return; done = true; playing = false; stopTimer(); render();
       HF.modal(`<h3 style="text-align:center">🏆 Partida Concluida</h3>
         <p style="text-align:center">La repetición terminó en el turno <b>${g.turn}</b>${g.over ? (g.over.won ? ' · Victoria de ' + HF.esc(g.f[0].name) : ' · Derrota') : ''}.</p>
-        <div class="row"><button id="btnReplayRestart">🔄 Repetir</button><button id="btnPlayThisMap" class="pri grow">⚔️ ¿Puedes superarlo? Jugar este mapa</button></div>`, m => {
+        <div class="row"><button id="btnReplayRestart">🔄 Repetir</button><button id="btnPlayThisMap" class="pri grow">⚔️ ¿Puedes superarlo? Jugar este mapa</button><button id="btnReplayMenu">🏠 Menú</button></div>`, m => {
         m.querySelector('#btnReplayRestart').onclick = () => HF.playReplay(payload);
+        m.querySelector('#btnReplayMenu').onclick = () => {
+          HF.closeModal(); stopTimer();
+          if (HF.onLeave) { HF.onLeave(); HF.onLeave = null; }
+          try { history.replaceState(null, '', location.pathname); } catch (e) { }
+          HF.go('hub');
+        };
         m.querySelector('#btnPlayThisMap').onclick = () => {
           HF.closeModal();
           try { history.replaceState(null, '', location.pathname); } catch (e) { }

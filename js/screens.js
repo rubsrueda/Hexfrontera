@@ -36,6 +36,63 @@
   const wireBack = (el, to) => { const b = el.querySelector('[data-back]'); if (b) b.onclick = () => HF.go(to || 'hub'); };
   HF.wireBack = wireBack;
 
+  // ---------------------------------------------------------------------------
+  // PRÓLOGO CINEMATOGRÁFICO (opening crawl estilo Star Wars)
+  // ---------------------------------------------------------------------------
+  HF.introCrawl = function (g) {
+    if (typeof document === 'undefined' || !document.body) return;
+    if (!HF.settings().showIntroCrawl) return;
+    if (g && (g.isReplay || g.mode === 'replay' || g.online)) return;
+    if (document.querySelector('.crawl-overlay')) return;
+    const el = document.createElement('div');
+    el.className = 'crawl-overlay';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    el.setAttribute('aria-label', HF.t('CRAWL_TITLE'));
+    el.innerHTML = `
+      <div class="crawl-viewport">
+        <div class="crawl-content">
+          <h2>${HF.t('CRAWL_TITLE')}</h2>
+          <p><b>${HF.t('CRAWL_SEC1_TITLE')}:</b> ${HF.t('CRAWL_SEC1_DESC')}</p>
+          <p><b>${HF.t('CRAWL_SEC2_TITLE')}:</b> ${HF.t('CRAWL_SEC2_DESC')}</p>
+          <p><b>${HF.t('CRAWL_SEC3_TITLE')}:</b> ${HF.t('CRAWL_SEC3_DESC')}</p>
+          <p><b>${HF.t('CRAWL_SEC4_TITLE')}:</b> ${HF.t('CRAWL_SEC4_DESC')}</p>
+          <h2 class="crawl-cta">${HF.t('CRAWL_SEC5_CTA')}</h2>
+        </div>
+      </div>
+      <div class="crawl-footer">
+        <label><input type="checkbox" id="chkDontShow"> ${HF.t('CRAWL_DONT_SHOW')}</label>
+        <button class="pri" id="btnSkipCrawl">${HF.t('CRAWL_SKIP')}</button>
+      </div>`;
+    document.body.appendChild(el);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    let done = false;
+    const onKey = e => { if (e.key === 'Escape' || e.key === 'Esc') close(); };
+    const close = () => {
+      if (done) return; done = true;
+      const chk = el.querySelector('#chkDontShow');
+      if (chk && chk.checked) {
+        const s = HF.settings();
+        s.showIntroCrawl = false;
+        HF.store.set('settings', s);
+      }
+      document.removeEventListener('keydown', onKey);
+      el.style.transition = 'opacity .6s ease';
+      el.style.opacity = '0';
+      el.style.pointerEvents = 'none';
+      setTimeout(() => { el.remove(); document.body.style.overflow = prevOverflow; }, 620);
+    };
+    el.querySelector('#btnSkipCrawl').onclick = close;
+    // Tocar el texto también sale (el jugador tiene prisa).
+    el.querySelector('.crawl-viewport').onclick = close;
+    el.addEventListener('click', e => { if (e.target === el) close(); });
+    const content = el.querySelector('.crawl-content');
+    if (content) content.addEventListener('animationend', close);
+    document.addEventListener('keydown', onKey);
+    if (HF.sfx) HF.sfx('click');
+  };
+
   // ---------- CÓDICE ----------
   const CODEX_TABS = ['CODEX_TAB_LAYERS', 'CODEX_TAB_COMBAT', 'CODEX_TAB_SUPPLY', 'CODEX_TAB_SETTLEMENTS', 'CODEX_TAB_CREDO'];
   const CODEX_PAGES = ['CODEX_LAYERS', 'CODEX_COMBAT', 'CODEX_SUPPLY', 'CODEX_SETTLEMENTS', 'CODEX_CREDO'];
@@ -66,7 +123,7 @@
         ${save ? `<button class="pri big" id="cont">${HF.t('BTN_CONTINUE')} <span class="dim">· T${save.turn} · ${HF.esc(save.mode)}</span></button>` : ''}
         <button class="big" id="camp">${HF.t('BTN_CAMPAIGN')} <span class="dim">★ ${HF.totalStars()}/90</span></button>
         <button class="big" id="new">${HF.t('BTN_NEW_GAME')}</button>
-        <button class="big" id="online" disabled>${HF.t('BTN_ONLINE')} <span class="dim">(${HF.t('COMING_SOON')})</span></button>
+        <button class="big" id="online">${HF.t('BTN_ONLINE')} <span class="dim">🌐</span></button>
         <div class="card" id="standing" style="padding:8px 10px">
           <div class="row"><b class="grow">🏅 Tu posición</b><span class="dim small" id="stNote"></span></div>
           <div id="stBody" class="small" style="margin-top:3px">Consultando clasificación…</div>
@@ -82,6 +139,7 @@
       </div></div>`;
     const on = (id, fn) => { const b = el.querySelector('#' + id); if (b) b.onclick = fn; };
     on('daily', () => HF.go('daily')); on('camp', () => HF.go('campaign')); on('new', () => HF.go('newgame'));
+    on('online', () => HF.go('online'));
     on('tribe', () => HF.go('tribe')); on('editor', () => HF.go('editor')); on('stats', () => HF.go('stats'));
     // delegación: garantiza que Ajustes responda aunque otro handler reemplace el onclick
     el.addEventListener('click', e => {
@@ -491,7 +549,7 @@
     const prem = HF.cloud ? HF.cloud.isPremium() : false;
     const remail = HF.cloud ? HF.cloud.recoveryEmail() : '';
     el.innerHTML = `<div class="screen">${header(HF.t('SETTINGS'))}<div class="scroll">
-      ${row('sound', HF.t('SOUND'))}${row('vibrate', HF.t('VIBRATE'))}${row('grid', HF.t('GRID'))}
+      ${row('sound', HF.t('SOUND'))}${row('vibrate', HF.t('VIBRATE'))}${row('grid', HF.t('GRID'))}${row('showIntroCrawl', '📜 ' + HF.t('CRAWL_SETTING'))}
       <div class="card"><div class="row"><span class="grow">${HF.t('LANGUAGE')}</span></div>
         <div class="langs">${HF.LANGS.map(l => `<button data-lang="${l.code}" class="${HF.lang() === l.code ? 'sel' : ''}">${l.flag} ${l.name}</button>`).join('')}</div></div>
       <div class="card" id="cloudCard">
@@ -505,7 +563,7 @@
         <div class="row" style="margin-top:6px"><button id="syncCloud">🔄 Sincronizar</button><button id="linkDevice">🔄 Transferir a otro dispositivo</button><button id="recoverAccount">❓ Recuperar Cuenta</button></div>
       </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
-      <div class="dim small">HexFrontier v1.0 · build 77 · ${HF.t('NO_MULTIPLAYER')}</div></div></div>`;
+      <div class="dim small">HexFrontier v1.1 · build 104 · 🌐 Multijugador en línea</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
     el.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { HF.setLang(b.dataset.lang); HF.go('settings'); });

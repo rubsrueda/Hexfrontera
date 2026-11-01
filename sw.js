@@ -1,14 +1,14 @@
 // La version del cache debe subir en cada release: si no, el navegador sigue
 // sirviendo el JS viejo y los cambios de arte/tamaños no llegan a la partida.
-const C = 'hexfrontier-v94';
+const C = 'hexfrontier-v107';
 const FILES = [
   './', 'index.html', 'css/style.css', 'manifest.json', 'icon.svg',
   'fonts/plus-jakarta-sans-latin.woff2', 'fonts/plus-jakarta-sans-latin-ext.woff2', 'fonts/plus-jakarta-sans-cyrillic.woff2',
   'js/util.js', 'js/config.js', 'js/music.js', 'js/art.js', 'js/artdata.js', 'js/data.js', 'js/mapgen.js',
   'js/engine.js', 'js/ai.js', 'js/board.js', 'js/cloud.js', 'js/progress.js', 'js/i18n.js', 'js/names.js',
-  'js/screens.js', 'js/game.js', 'js/editor.js', 'js/replay.js', 'js/replays.js', 'js/main.js',
+  'js/screens.js', 'js/online.js', 'js/game.js', 'js/editor.js', 'js/replay.js', 'js/replays.js', 'js/main.js',
   // arte que no va incrustado en artdata.js (el resto son data URIs)
-  'art/nube.png', 'art/arbol.png',
+  'art/nube.png', 'art/arbol.png', 'art/carreta.png', 'art/urca.png',
   'assets/crests/c01.webp', 'assets/crests/c02.webp', 'assets/crests/c03.webp', 'assets/crests/c04.webp',
   'assets/crests/c05.webp', 'assets/crests/c06.webp', 'assets/crests/c07.webp', 'assets/crests/c08.webp',
   'assets/crests/c09.webp', 'assets/crests/c10.webp', 'assets/crests/c11.webp', 'assets/crests/c12.webp',

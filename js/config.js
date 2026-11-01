@@ -51,7 +51,13 @@
       autumnWheatFood: 1                      // otoño: +1 comida por casilla de trigo
     },
     roads: { fastCost: 0.25 },                // camino/asentamiento -> camino/asentamiento
-    commerce: { routeGold: 2, maxRoutes: 3 }, // +2 oro por extremo y ruta, máximo 3
+    commerce: {
+      maxRoutes: 3,        // rutas terrestres (parejas más lejanas por calzada)
+      maxSeaRoutes: 3,     // rutas marítimas (parejas más lejanas por agua)
+      caravanSpeed: 4,     // casillas que avanza la caravana por turno
+      caravanGold: 5,      // oro que devenga por turno (se entrega al llegar)
+      blockTurns: 2        // rondas que queda rota la ruta tras un saqueo
+    },
     loan: { amount: 50, perTurn: 6, turns: 10 }, // +50 oro, -6/turno durante 10 turnos
     barks: { chance: 0.4, life: 2 },          // probabilidad y duración de las burbujas de tropa
     ambience: { maxParticles: 25, clouds: 3, fps: 15 }, // límites del tablero animado
@@ -86,6 +92,9 @@
     },
 
     deficit: { tombTurns: 3, martyrGrace: 2 },
+    // Tumba de una unidad propia: al pisarla se consume y hay un 5% de que
+    // ocurra algo (recuperar la unidad, recursos, edificio ≤ bastión o nada).
+    tomb: { chance: 0.05, recover: 0.35, resources: 0.35, building: 0.2 },
 
     // --- parámetros de las doctrinas con gancho en el motor ---
     // Cada constante se lee desde engine.js; los tags viven en data.js (HF.DOCT).

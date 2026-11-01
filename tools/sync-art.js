@@ -41,7 +41,9 @@ const ASSET_MAP = [
   ["resMADERA", "madera.png"],
   ["resTRIGO", "trigo.png"],
   ["resORO_MONEDA", "oro_moneda.png"],
-  ["resORO_ROCA", "oro_roca.png"]
+  ["resORO_ROCA", "oro_roca.png"],
+  ["tradecart", "carreta.png"],
+  ["tradeship", "urca.png"]
 ];
 
 function main() {

@@ -4,7 +4,9 @@
     unit: { INF: 'infanteria', ENG: 'ingeniero', ARC: 'arquero', CAB: 'caballeria', SIE: 'asedio', BAR: 'barco' },
     build: { 1: 'arbol', 2: 'camino', 3: 'campamento', 4: 'pueblo', 5: 'ciudad', 6: 'bastion' },
     misc: { fog: 'nube', tomb: 'tumba' },
-    resource: { resMADERA: 'madera', resTRIGO: 'trigo', resORO_MONEDA: 'oro_moneda', resORO_ROCA: 'oro_roca' }
+    resource: { resMADERA: 'madera', resTRIGO: 'trigo', resORO_MONEDA: 'oro_moneda', resORO_ROCA: 'oro_roca' },
+    // Unidades comerciales (no reclutables): caravana terrestre y urca de mar.
+    trade: { cart: 'carreta', ship: 'urca' }
   };
   // textura: se recorta una zona sin la cruz central y se reduce, sin quitar fondo
   const RAW = { nube: { crop: [1090, 0, 318, 768], w: 160 } };

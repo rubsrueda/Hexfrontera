@@ -11,13 +11,44 @@
     return { conquer: 'Conquista: elimina todas las ciudades rivales', survive: `Sobrevive hasta el turno ${gl.n}`, gold: `Reúne ${gl.n} de oro`, territory: `Controla ${gl.n} casillas`, city: `Ten ${gl.n} ciudades`, maxTurns: `Gana antes del turno ${gl.n}` }[gl.type] || 'Conquista';
   };
 
+  // Resumen de una facción para el marcador: reservas y neto por recurso,
+  // ejército y su desglose, mantenimiento, territorio, estructuras y estado de
+  // la capital. Se expone para poder probarlo sin navegador.
+  HF.factionSummary = function (g, f) {
+    const stock = HF.stockFor(g, f, null) || { gold: 0, food: 0, wood: 0 };
+    const pv = HF.preview(g, f, null);
+    const loan = pv.loan || 0;
+    const netGold = pv.inc.gold - pv.upkeepGold - loan;
+    const netFood = pv.inc.food - pv.upkeep;
+    const netWood = pv.inc.wood;
+    const byType = {};
+    let units = 0;
+    for (const c of g.cells) if (c && c.u && c.u.owner === f.id) { units++; byType[c.u.type] = (byType[c.u.type] || 0) + 1; }
+    let cells = 0, roads = 0, camps = 0, towns = 0, bastions = 0, cities = 0;
+    for (const c of g.cells) {
+      if (!c || c.o !== f.id) continue;
+      cells++;
+      if (c.b === B.CAMINO) roads++;
+      else if (c.b === B.CAMPAMENTO) camps++;
+      else if (c.b === B.PUEBLO) towns++;
+      else if (c.b === B.BASTION) bastions++;
+      else if (c.b === B.CIUDAD) cities++;
+    }
+    const cap = g.cells.find(c => c && c.cap && c.o === f.id && c.b === B.CIUDAD) || null;
+    const threat = cap ? g.cells.some(c => c && c.u && c.u.owner !== f.id && HF.hexDist(c, cap) <= 2) : false;
+    const power = cells * 2 + cities * 14 + towns * 7 + bastions * 9 + camps * 4 + units * 3;
+    return { f, stock, pv, loan, netGold, netFood, netWood, byType, units, cells, roads, camps, towns, bastions, cities, cap, threat, power, alive: f.alive !== false };
+  };
+
   HF.startGame = function (g) {
+    // Facción que controla este cliente (0 en local; asiento en multijugador).
+    let P = g.mySeat || 0;
     HF.closeModal();
     if (HF.onLeave) { HF.onLeave(); HF.onLeave = null; }
     HF.lastGame = { mode: g.mode, meta: g.meta };
     const el = HF.$('#app');
     el.innerHTML = `<div class="screen game">
-      <div class="hud-top"><button id="menu">☰</button><span id="turn"></span><div class="res" id="res"></div><button id="bView"><img class="view-ico" src="assets/ui/map.webp" alt="" draggable="false"><small>${HF.t('VIEW_NORMAL')}</small></button><button id="board" title="${HF.lang() === 'en' ? 'Scoreboard' : 'Marcador'}"><img class="board-ico" src="assets/ui/codex.webp" alt="" draggable="false"></button></div>
+      <div class="hud-top"><button id="menu">☰</button><span id="turn"></span><span id="clock" class="small" style="color:var(--dim)"></span><div class="res" id="res"></div><button id="bView"><img class="view-ico" src="assets/ui/map.webp" alt="" draggable="false"><small>${HF.t('VIEW_NORMAL')}</small></button><button id="board" title="${HF.lang() === 'en' ? 'Scoreboard' : 'Marcador'}"><img class="board-ico" src="assets/ui/codex.webp" alt="" draggable="false"></button></div>
       <div class="boardwrap"><canvas id="cv"></canvas><div class="info" id="info"></div></div>
       <div class="drawer hidden" id="drawer"></div>
       <div class="hud-bot">
@@ -41,7 +72,7 @@
 
     function nextIdleUnit(g) {
       // Solo unidades con las DOS acciones intactas: mover y atacar.
-      const list = g.cells.filter(c => c && c.u && c.u.owner === 0 && c.u.mv > 0 && c.u.at > 0);
+      const list = g.cells.filter(c => c && c.u && c.u.owner === P && c.u.mv > 0 && c.u.at > 0);
       if (!list.length) {
         HF.toast(HF.lang() === 'en' ? 'No units with both actions' : 'No hay unidades con las dos acciones libres', 1800);
         return;
@@ -66,11 +97,13 @@
     const fmt = n => (n >= 0 ? '+' : '') + n;
 
     function hud() {
-      const f = g.f[0], fc = st.focus >= 0 ? g.cells[st.focus] : null;
+      const f = g.f[P], fc = st.focus >= 0 ? g.cells[st.focus] : null;
       const provs = HF.provinces(g, f);
-      let prov = fc && (fc.o === 0 || (fc.u && fc.u.owner === 0)) && provs.length > 1 ? HF.provOf(g, f, fc) : null;
+      let prov = fc && (fc.o === P || (fc.u && fc.u.owner === P)) && provs.length > 1 ? HF.provOf(g, f, fc) : null;
       if (prov != null && prov < 0) prov = null;
-      const pv = HF.preview(g, f, prov), sk = HF.stockFor(g, f, prov), tr = HF.tradeRoutes(g, f).length;
+      const pv = HF.preview(g, f, prov), sk = HF.stockFor(g, f, prov);
+      const trs = HF.tradeRoutes(g, f);
+      const trL = trs.filter(r => r.kind === 'land').length, trS = trs.filter(r => r.kind === 'sea').length;
       const season = HF.season(g), SICON = ['🌸', '☀️', '🍂', '❄️'];
       q('#turn').innerHTML = HF.crestHTML(f.crest, 18, 'hud-crest') + ' T' + g.turn + ' ' + (SICON[season] || '');
       q('#turn').title = HF.seasonName(season);
@@ -80,7 +113,8 @@
         `<span title="Ingreso bruto +${pv.inc.gold} · mantenimiento −${pv.upkeepGold}${loan ? ` · préstamo −${loan}` : ''}">${resIco('gold')}${sk.gold}<i class="pos">+${pv.inc.gold}</i><small class="upk">−${pv.upkeepGold + loan}</small></span>` +
         `<span title="Ingreso bruto +${pv.inc.food} · mantenimiento −${pv.upkeep}">${resIco('food')}${sk.food}<i class="pos">+${pv.inc.food}</i><small class="upk">−${pv.upkeep}</small></span>` +
         `<span>${resIco('wood')}${sk.wood}${pv.inc.wood ? `<i class="pos">+${pv.inc.wood}</i>` : ''}</span>` +
-        `${tr ? `<span title="Rutas comerciales activas">🛣${tr}</span>` : ''}`;
+        `${trL ? `<span title="Rutas terrestres activas">🛣${trL}</span>` : ''}` +
+        `${trS ? `<span title="Rutas marítimas activas">⛵${trS}</span>` : ''}`;
       q('#bUndo').disabled = !HF.canUndo(g);
       q('#bEnd').disabled = st.busy || !!g.over;
     }
@@ -100,6 +134,7 @@
           else if (o.k === 'fire') board.over.set(i, { fill: 'rgba(239,68,68,.5)', stroke: '#f87171', label: '🔥' });
           else if (o.k === 'takeover') board.over.set(i, { fill: 'rgba(234,179,8,.45)', stroke: '#fde047', label: '💰' });
           else if (o.k === 'pack_camp') board.over.set(i, { fill: 'rgba(34,197,94,.4)', stroke: '#4ade80', label: '⛺↩' });
+          else if (o.k === 'raid') { const ic = o.res === 'food' ? '🌾' : o.res === 'wood' ? '🪵' : '💰'; board.over.set(i, { fill: 'rgba(234,179,8,.5)', stroke: '#fde047', label: `${ic}${o.loot || 0}` }); }
           else if (o.k === 'wonder') board.over.set(i, { fill: 'rgba(234,179,8,.5)', stroke: '#fde047', label: '🏛' });
           if (o.alt && o.alt.length) {
             const icon = { trap: '🪤', fire: '🔥', takeover: '💰' };
@@ -138,27 +173,32 @@
       if (!HF.visible(g, i) && g.fogMap[i] === 0) return 'Territorio inexplorado';
       let t = `${HF.TNAME[c.t]}${c.b ? ' · ' + HF.BICON[c.b] + HF.BNAME[c.b] : ''}${c.res ? ' · ' + ['', 'Oro', 'Trigo', 'Madera'][c.res] : ''}`;
       t += c.o >= 0 ? ` · ${HF.crestHTML(g.f[c.o].crest, 16)} ${HF.esc(g.f[c.o].name)}${(c.sup && c.iso !== g.turn) ? '' : ' · AISLADO'}` : ' · Neutral';
-      if (c.u && (c.u.owner === 0 || HF.visible(g, i))) t += ` · ${HF.UNITS[c.u.type].icon}${HF.UNITS[c.u.type].name} N${c.u.tier}`;
-      if (c.u && c.u.owner === 0) t += ` · 👣${c.u.mv > 0 ? '✔' : '✖'} ⚔${c.u.at > 0 ? '✔' : '✖'}`;
-      if (c.u && c.u.owner === 0 && HF.unitRange) t += ` · alcance ${HF.unitRange(g, c.u, c)}`;
-      if (c.u && c.u.owner === 0) { const D = HF.UNITS[c.u.type], k = Math.min(c.u.tier, D.up.length) - 1; t += ` · paga ${costIcon('gold')}${D.upGold[k]} ${costIcon('food')}${D.up[k]}`; }
-      if (c.u && c.u.cargo && (c.u.owner === 0 || HF.visible(g, i))) { const k = c.u.cargo; t += ` · ⚓ lleva ${HF.UNITS[k.type].icon}${HF.UNITS[k.type].name} N${k.tier}${c.u.owner === 0 ? ' 👣' + (k.mv > 0 ? '✔' : '✖') : ''}`; }
+      if (c.u && (c.u.owner === P || HF.visible(g, i))) t += ` · ${HF.UNITS[c.u.type].icon}${HF.UNITS[c.u.type].name} N${c.u.tier}`;
+      if (c.u && c.u.owner === P) t += ` · 👣${c.u.mv > 0 ? '✔' : '✖'} ⚔${c.u.at > 0 ? '✔' : '✖'}`;
+      if (c.u && c.u.owner === P && HF.unitRange) t += ` · alcance ${HF.unitRange(g, c.u, c)}`;
+      if (c.u && c.u.owner === P) { const D = HF.UNITS[c.u.type], k = Math.min(c.u.tier, D.up.length) - 1; t += ` · paga ${costIcon('gold')}${D.upGold[k]} ${costIcon('food')}${D.up[k]}`; }
+      if (c.u && c.u.cargo && (c.u.owner === P || HF.visible(g, i))) { const k = c.u.cargo; t += ` · ⚓ lleva ${HF.UNITS[k.type].icon}${HF.UNITS[k.type].name} N${k.tier}${c.u.owner === P ? ' 👣' + (k.mv > 0 ? '✔' : '✖') : ''}`; }
       if (c.wonder) t += ` · 🏛 Pirámide${c.o >= 0 ? ' ' + (g.f[c.o].wonderTurns || 0) + '/' + HF.CFG.doctrine.wonderStandTurns : ''}`;
       if (c.burn > 0) t += ` · 🕳 cenizas ${c.burn}`;
       if (c.fire > 0) t += ` · 🔥 arde ${c.fire}`;
       if (c.trap === 0) t += ' · 🪤 trampa propia';
-      if (c.cap && c.b === B.CIUDAD && c.o === 0 && g.f[0].loan) t += ` · 💳 deuda ${g.f[0].loan.turns} turnos`;
+      if (c.cap && c.b === B.CIUDAD && c.o === P && g.f[P].loan) t += ` · 💳 deuda ${g.f[P].loan.turns} turnos`;
       return t;
     }
 
     // Panel contextual: describe la casilla y ofrece el empréstito en la capital.
     function renderInfo(i, extra) {
-      const c = g.cells[i], canLoan = !!(c && c.cap && c.b === B.CIUDAD && c.o === 0 && !g.f[0].loan);
-      const unitVisible = c && c.u && (c.u.owner === 0 || HF.visible(g, i));
+      const c = g.cells[i], canLoan = !!(c && c.cap && c.b === B.CIUDAD && c.o === P && !g.f[P].loan);
+      const unitVisible = c && c.u && (c.u.owner === P || HF.visible(g, i));
       const bd = c && (unitVisible || (c.b && HF.BDEF[c.b])) ? HF.defenseBreakdown(g, i) : null;
+      const canCargo = !!(c && c.o === P && c.sup && (c.b === B.PUEBLO || c.b === B.CIUDAD) &&
+        HF.isPort && HF.isPort(g, c) && HF.ports(g, g.f[P]).some(p => p.i !== i && HF.seaPath(g, g.f[P], i, p.i)));
       q('#info').innerHTML = describe(i) + (extra || '') +
         (bd && bd.parts.length ? `<div class="defbreak">🛡 <b>${bd.total}</b> · ${HF.esc(bd.detail)}</div>` : '') +
-        (canLoan ? ` <button class="loanbtn" id="loanBtn">${costIcon('gold')} Solicitar empréstito</button>` : '');
+        (canLoan ? ` <button class="loanbtn" id="loanBtn">${costIcon('gold')} Solicitar empréstito</button>` : '') +
+        (canCargo ? ` <button class="loanbtn" id="cargoBtn">⛵ Enviar carga</button>` : '');
+      const cb = q('#info #cargoBtn');
+      if (cb) cb.onclick = e => { e.stopPropagation(); cargoModal(i); };
       const b = q('#info #loanBtn');
       if (b) b.onclick = e => {
         e.stopPropagation();
@@ -168,6 +208,40 @@
         HF.toast(`Empréstito: +${r.amount} oro · deuda ${r.perTurn}/turno`);
         refresh(); renderInfo(i, extra);
       };
+    }
+
+    // Envío manual de carga entre dos puertos propios conectados por mar.
+    function cargoModal(fromIdx) {
+      const f = g.f[P], c = g.cells[fromIdx];
+      if (!f || !c || !HF.ports || !HF.seaPath) return;
+      const dests = HF.ports(g, f).filter(p => p.i !== fromIdx && HF.seaPath(g, f, fromIdx, p.i));
+      if (!dests.length) { HF.sfx('error'); return HF.toast(HF.lang() === 'en' ? 'No sea route to another port' : 'No hay otro puerto conectado por mar'); }
+      const comp = c.comp != null ? c.comp : 0;
+      const st = (f.stock && f.stock[comp]) || { gold: 0, food: 0, wood: 0 };
+      const pn = p => `${HF.BNAME[p.b] || 'Puerto'} (${p.q},${p.r})`;
+      HF.modal(`<h3>⛵ Enviar carga</h3>
+        <p class="dim small">Origen (${c.q},${c.r}) · disponible: 💰${st.gold} 🌾${st.food} 🪵${st.wood}</p>
+        <label>Puerto de destino</label>
+        <select id="ckDst">${dests.map(p => `<option value="${p.i}">${pn(p)}</option>`).join('')}</select>
+        <label>Recurso</label>
+        <select id="ckRes">
+          <option value="gold">💰 Oro (${st.gold})</option>
+          <option value="food">🌾 Comida (${st.food})</option>
+          <option value="wood">🪵 Madera (${st.wood})</option>
+        </select>
+        <label>Cantidad (máx. 50)</label>
+        <input id="ckQty" type="number" min="1" max="50" value="50">
+        <div class="row"><button id="ckGo" class="pri grow">Zarpar</button><button id="ckX">Cancelar</button></div>`, m => {
+        m.querySelector('#ckX').onclick = HF.closeModal;
+        m.querySelector('#ckGo').onclick = () => {
+          const r = HF.sendCargo(g, fromIdx, +m.querySelector('#ckDst').value, m.querySelector('#ckRes').value, +m.querySelector('#ckQty').value);
+          HF.closeModal();
+          if (!r.ok) { HF.sfx('error'); return HF.toast(r.msg); }
+          HF.sfx('good');
+          HF.toast(`⛵ ${r.qty} en camino`);
+          refresh(); renderInfo(fromIdx);
+        };
+      });
     }
 
     // Barks diegéticos: 40% al tocar una unidad propia.
@@ -182,15 +256,15 @@
     const pickBark = a => a[Math.floor(Math.random() * a.length)];
     function bark(c) {
       const u = c && c.u;
-      if (!u || u.owner !== 0 || g.over) return;
+      if (!u || u.owner !== P || g.over) return;
       const now = performance.now();
       if (st.barkAt && now - st.barkAt < 2500) return;
       if (Math.random() > HF.CFG.barks.chance) return;
       let txt, kind = 'info';
-      if (!c.sup || g.f[0].deficit) {
+      if (!c.sup || g.f[P].deficit) {
         txt = pickBark(['Las raciones se acaban...', '¡Líneas cortadas!', 'Necesitamos provisiones.']);
         kind = 'bad';
-      } else if ((u.type === 'INF' || u.type === 'ENG') && HF.hasTag(g.f[0], 'TESTUDO_SHIELD') && Math.random() < .45) {
+      } else if ((u.type === 'INF' || u.type === 'ENG') && HF.hasTag(g.f[P], 'TESTUDO_SHIELD') && Math.random() < .45) {
         txt = '¡Cierren filas!';
       } else {
         txt = pickBark(BARK[u.type] || BARK.INF);
@@ -206,6 +280,7 @@
       const D = HF.CFG.doctrine;
       const lbl = {
         atk: '⚔ Atacar', move: '➡ Mover', chop: '🪓 Talar', fuse: '🔷 Fusionar', shoot: '🏹 Disparar', siege: '💣 Asediar', board: '⚓ Embarcar',
+        raid: '💰 Asaltar caravana',
         trap: `🪤 Colocar trampa (${costIcon('gold')}${D.caltropCost.gold})`, fire: '🔥 Incendiar bosque',
         takeover: `Sobornar (${costIcon('gold')}${D.takeoverCost.gold})`, pack_camp: '⛺ Empacar campamento', wonder: `🏛 Erigir pirámide (${costIcon('gold')}${D.wonderCost.gold})`
       };
@@ -217,6 +292,20 @@
     }
 
     function act(from, to, kind) {
+      // En partida en red el invitado envía la acción al anfitrión; el estado
+      // local se actualiza cuando llega el snapshot.
+      if (g.online) {
+        const room = HF.online.room && HF.online.room();
+        if (room && room.game_phase === 'TURN_BASED' && room.active_player !== HF.online.playerId()) {
+          HF.toast(HF.lang() === 'en' ? 'Not your turn' : 'No es tu turno'); return;
+        }
+        if (!g.online.host) {
+          HF.online.submit({ k: 'act', from, to, kind: kind || undefined });
+          HF.toast(HF.lang() === 'en' ? 'Action sent' : 'Acción enviada');
+          clearSel(); refresh(); return;
+        }
+        g.cur = P;
+      }
       const target = g.cells[to], uBefore = g.cells[from] && g.cells[from].u;
       const beforeSup = g.cells.map(c => !!(c && c.sup));
       const wasCap = !!(target && target.cap), wasBastion = !!(target && target.b === B.BASTION);
@@ -225,6 +314,7 @@
         if (wasBastion && (kind === 'atk' || kind === 'siege')) board.burst('stone', to, 7);
         HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); return;
       }
+      if (g.online) HF.online.dirty(g);
       HF.sfx(r.kind === 'atk' ? 'good' : 'click');
       // salto parabólico del soldado al moverse, talar o conquistar
       if (uBefore && !r.shot && (r.kind === 'move' || r.kind === 'chop' || (r.kind === 'atk' && g.cells[to].u))) board.hopTo(from, to, uBefore);
@@ -238,7 +328,7 @@
       // el disparo parto no avanza: la unidad sigue en la casilla de origen y puede retirarse
       const u = g.cells[to].u || (r.shot ? g.cells[from].u : null);
       const at = r.shot ? from : to;
-      if (u && u.owner === 0 && HF.ready(u) && r.kind !== 'fuse') { select(at); renderInfo(at); } else clearSel();
+      if (u && u.owner === P && HF.ready(u) && r.kind !== 'fuse') { select(at); renderInfo(at); } else clearSel();
       pumpEvents(); refresh(); afterAction();
     }
     function afterAction() { if (g.over) showEnd(); }
@@ -250,7 +340,20 @@
       if (st.pending) {
         if (st.pending.cells.has(i)) {
           const p = st.pending, tier = p.tier || 1;
+          if (g.online) {
+            const room = HF.online.room && HF.online.room();
+            if (room && room.game_phase === 'TURN_BASED' && room.active_player !== HF.online.playerId()) {
+              HF.toast(HF.lang() === 'en' ? 'Not your turn' : 'No es tu turno'); return;
+            }
+            if (!g.online.host) {
+              HF.online.submit(p.kind === 'unit' ? { k: 'recruit', type: p.item, i, tier } : { k: 'build', b: p.item, i });
+              st.pending = null; closeDrawer(); HF.toast(HF.lang() === 'en' ? 'Action sent' : 'Acción enviada');
+              refresh(); return;
+            }
+            g.cur = P;
+          }
           const r = p.kind === 'unit' ? HF.recruit(g, p.item, i, undefined, tier) : HF.build(g, p.item, i);
+          if (r.ok && g.online) HF.online.dirty(g);
           st.focus = i;
           if (!r.ok) { HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); } else { HF.sfx('good'); }
           if (p.kind === 'unit') p.cells = new Set(HF.recruitCells(g, p.item, tier)); else p.cells = new Set(HF.buildCells(g, p.item));
@@ -265,7 +368,7 @@
         act(st.sel, i);
         return;
       }
-      if (c.u && c.u.owner === 0 && HF.ready(c.u) && st.sel !== i) {
+      if (c.u && c.u.owner === P && HF.ready(c.u) && st.sel !== i) {
         select(i); bark(c); renderInfo(i, ` · alcance ${st.opts.size} acciones`); refresh(); return;
       }
       if (st.sel >= 0 && !st.opts.has(i) && i !== st.sel) HF.vibrate(30);
@@ -275,7 +378,7 @@
     board.h.onDragStart = i => {
       if (st.busy || g.over || st.pending) return false;
       const c = g.cells[i];
-      if (c && c.u && c.u.owner === 0 && HF.ready(c.u)) { if (st.sel !== i) { select(i); bark(c); renderInfo(i, ` · alcance ${st.opts.size} acciones`); refresh(); } return true; }
+      if (c && c.u && c.u.owner === P && HF.ready(c.u)) { if (st.sel !== i) { select(i); bark(c); renderInfo(i, ` · alcance ${st.opts.size} acciones`); refresh(); } return true; }
       return false;
     };
     board.h.onDrop = (from, to) => { if (st.sel === from && st.opts.has(to)) act(from, to); else { HF.vibrate(50); HF.sfx('error'); refresh(); } };
@@ -324,7 +427,7 @@
     }
     function unitTip(type, tier) {
       const D = HF.UNITS[type], t = tier || 1, s = HF.unitStats(g, type, t, 0);
-      const k = Math.min(t, 3) - 1, cost = HF.recruitCost(g, g.f[0], type, t), rows = [];
+      const k = Math.min(t, 3) - 1, cost = HF.recruitCost(g, g.f[P], type, t), rows = [];
       rows.push(`<b>${D.icon} ${D.name} ${TIER_ROMAN[t - 1] || 'N' + t}</b>`);
       rows.push(`⚔ Ataque <b>${s.atk}</b> · 🛡 Defensa <b>${s.def}</b> · 👣 Movimiento <b>${s.move}</b> PA`);
       rows.push(`🎯 Alcance ${s.atkRange}${s.shoot ? ` · 🏹 Disparo ${s.shoot}` : ''}`);
@@ -343,7 +446,7 @@
     // ----- cajones -----
     function closeDrawer() { hideTip(); st.drawer = null; q('#drawer').classList.add('hidden'); }
     function drawerRender() {
-      const d = q('#drawer'), f = g.f[0];
+      const d = q('#drawer'), f = g.f[P];
       if (!st.drawer) { d.classList.add('hidden'); return; }
       d.classList.remove('hidden');
       const cs = c => Object.entries(c).map(([k, v]) => costIcon(k) + v).join(' ');
@@ -439,6 +542,20 @@
     }
     q('#bEnd').onclick = () => {
       if (st.busy || g.over) return;
+      if (g.online) {
+        // En red no se cierra el turno local: en simultáneo cada jugador marca
+        // "listo"; en turnos individuales se entrega el turno.
+        const room = HF.online.room && HF.online.room();
+        if (room && room.game_phase === 'TURN_BASED') {
+          if (room.active_player !== HF.online.playerId()) { HF.toast(HF.lang() === 'en' ? 'Wait for your turn' : 'Espera tu turno'); return; }
+          HF.online.endTurn();
+          HF.toast(HF.lang() === 'en' ? 'Turn ended' : 'Turno entregado', 1500);
+        } else {
+          HF.online.ready();
+          HF.toast(HF.lang() === 'en' ? '✅ Ready — waiting for the others' : '✅ Listo — esperando a los demás', 1500);
+        }
+        return;
+      }
       st.busy = true; clearSel(); st.pending = null; closeDrawer(); refresh();
       HF.toast('⏳ Turno de los rivales…', 1500);
       setTimeout(() => {
@@ -446,20 +563,79 @@
         st.busy = false; pumpEvents();
         if (g.over) { refresh(); return showEnd(); }
         save(); refresh();
-        const idle = g.cells.filter(c => c && c.u && c.u.owner === 0 && HF.ready(c.u)).length;
+        const idle = g.cells.filter(c => c && c.u && c.u.owner === P && HF.ready(c.u)).length;
         info(`Turno ${g.turn} · ${idle} unidades listas · ${goalText(g)}`);
       }, 40);
     };
     const onHide = () => { if (document.visibilityState === 'hidden' && cur && cur.g === g) save(); };
     document.addEventListener('visibilitychange', onHide); G.addEventListener('pagehide', save);
-    HF.onLeave = () => { board.stopAnim(); if (HF.bgm) HF.bgm.stop(); document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null; };
+    HF.onLeave = () => {
+      if (g._onlineStop) { try { g._onlineStop(); } catch (e) { } g._onlineStop = null; }
+      if (g._clockStop) { try { g._clockStop(); } catch (e) { } g._clockStop = null; }
+      board.stopAnim(); if (HF.bgm) HF.bgm.stop(); document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null;
+    };
+    // Partida en red: sincronización con la sala (anfitrión autoritativo).
+    if (g.online && HF.online && HF.online.bind) {
+      g._setSeat = seat => { P = seat; };
+      g._onlineStop = HF.online.bind(g, refresh);
+      // Reloj del jugador activo (banco de 210 s, +3 s por acción).
+      let clockId = 0;
+      const tickClock = () => {
+        const el = q('#clock'); if (!el) return;
+        const room = HF.online.room && HF.online.room();
+        if (!room || room.game_phase !== 'TURN_BASED') { el.textContent = ''; return; }
+        const act = (room.players_data || []).find(p => p.player_id === room.active_player);
+        el.textContent = '⏱' + HF.online.fmtTime(act ? HF.online.timeLeft(room, act.player_id) : null);
+      };
+      clockId = setInterval(tickClock, 1000); tickClock();
+      g._clockStop = () => clearInterval(clockId);
+    }
 
     // ----- menús -----
+    // Marcador por tarjetas: identidad, capital, recursos (+neto), ejército y
+    // territorio. Cada tarjeta se expande al tocarla para ver el desglose.
     function scoreboard() {
-      HF.modal(`<h3><img class="modal-ico" src="assets/ui/codex.webp" alt="" draggable="false"> Marcador · Turno ${g.turn}</h3><table><tr><th></th><th>Casillas</th><th>Ciudades</th><th>Unid.</th><th>${costIcon('gold')}</th></tr>${g.f.map(f => {
-        const known = f.human || g.fog === 'NONE' || true;
-        return `<tr style="${f.alive ? '' : 'opacity:.4'}"><td style="color:${f.color}">${HF.crestHTML(f.crest, 22)} ${HF.esc(f.name)}</td><td>${HF.territory(g, f.id)}</td><td>${g.cells.filter(c => c && c.o === f.id && c.b === B.CIUDAD).length}</td><td>${g.cells.filter(c => c && c.u && c.u.owner === f.id).length}</td><td>${f.human ? f.gold : '?'}</td></tr>`;
-      }).join('')}</table><div class="dim small">🎯 ${goalText(g)}</div><br><button id="x" class="pri">Cerrar</button>`, m => m.querySelector('#x').onclick = HF.closeModal);
+      const stats = g.f.map((f, idx) => Object.assign(HF.factionSummary(g, f), { idx }));
+      const maxPower = Math.max(1, ...stats.map(s => s.power));
+      const card = s => {
+        const f = s.f, mine = s.idx === 0;
+        const capTxt = !s.alive ? 'Eliminado' : !s.cap ? 'Sin capital' : s.threat ? 'En peligro' : 'Segura';
+        const capCls = !s.alive || !s.cap ? 'bad' : s.threat ? 'warn' : 'safe';
+        const net = (v, unit) => `<b>${s.stock[unit]}</b><i class="sc-net ${v >= 0 ? 'pos' : 'neg'}">${fmt(v)}</i>`;
+        const tags = [];
+        if (!s.alive) tags.push(['bad', '☠ Eliminado']);
+        if (s.threat) tags.push(['bad', '🏰 Capital amenazada']);
+        if (s.alive && s.netFood < 0) tags.push(['bad', '¡Déficit de trigo!']);
+        if (s.alive && s.netGold < 0) tags.push(['warn', '¡Déficit de oro!']);
+        const structs = [
+          ['🏕️', s.camps], ['🏘️', s.towns], ['🛡️', s.bastions], ['🏙️', s.cities], ['🛤️', s.roads]
+        ].filter(x => x[1] > 0).map(x => `<span title="${x[1]}">${x[0]}${x[1]}</span>`).join(' ');
+        const detail = Object.keys(HF.UNITS).map(t => s.byType[t] ? `${HF.UNITS[t].icon} ${HF.UNITS[t].name}: <b>${s.byType[t]}</b>` : '').filter(Boolean).join(' · ') || 'Sin tropas';
+        return `<div class="score-card ${mine ? 'me' : ''} ${s.alive ? '' : 'dead'}" data-sc="${s.idx}" style="border-left-color:${f.color}">
+          <div class="sc-head">${HF.crestHTML(f.crest, 24)}<b>${HF.esc(f.name)}</b>${mine ? '<span class="sc-you">Tú</span>' : ''}<span class="sc-cap ${capCls}">🏰 ${capTxt}</span></div>
+          <div class="sc-row"><span>🪙 Oro</span>${net(s.netGold, 'gold')}</div>
+          <div class="sc-row"><span>🌾 Trigo</span>${net(s.netFood, 'food')}</div>
+          <div class="sc-row"><span>🪵 Madera</span>${net(s.netWood, 'wood')}</div>
+          <div class="sc-row"><span>⚔️ Tropas</span><b>${s.units}</b><i class="sc-net dim">${s.units === 1 ? 'activa' : 'activas'}</i></div>
+          <div class="sc-row"><span>📉 Mantenimiento</span><b>−${s.pv.upkeepGold + s.loan} oro · −${s.pv.upkeep} trigo</b></div>
+          <div class="sc-row"><span>📍 Hexágonos</span><b>${s.cells}</b></div>
+          <div class="sc-row"><span class="lbl">${structs || '<span class="dim">Sin estructuras</span>'}</span></div>
+          <div class="sc-bar"><i style="width:${Math.round(s.power / maxPower * 100)}%;background:${f.color}"></i></div>
+          ${tags.map(t => `<span class="sc-tag ${t[0]}">${t[1]}</span>`).join('')}
+          <div class="sc-detail">
+            <div><b>Detalle del ejército</b><br>${detail}</div>
+            <div style="margin-top:4px"><b>Infraestructura</b><br>🛤️ Caminos ${s.roads} · 🏕️ Campamentos ${s.camps} · 🏘️ Pueblos ${s.towns} · 🛡️ Bastiones ${s.bastions} · 🏙️ Ciudades ${s.cities}</div>
+            <div style="margin-top:4px"><b>Capital</b>: ${s.cap ? `${capTxt} (${s.cap.q},${s.cap.r})` : 'sin capital'}${s.loan ? ` · 💳 deuda ${s.loan}/turno` : ''}</div>
+          </div>
+        </div>`;
+      };
+      HF.modal(`<div class="score-top"><h3><img class="modal-ico" src="assets/ui/codex.webp" alt="" draggable="false"> Marcador · Turno ${g.turn}</h3><button id="scClose" aria-label="Cerrar">✕</button></div>
+        <div class="dim small" style="margin:-4px 0 6px">🎯 ${goalText(g)}</div>
+        <div class="score-grid">${stats.map(card).join('')}</div>
+        <div class="dim small" style="margin-top:6px">Toca una tarjeta para ver el desglose completo.</div>`, m => {
+        m.querySelector('#scClose').onclick = HF.closeModal;
+        m.querySelectorAll('[data-sc]').forEach(el => el.onclick = () => el.classList.toggle('open'));
+      });
     }
     q('#board').onclick = scoreboard;
     q('#menu').onclick = () => HF.modal(`<h3>${HF.t('GAME_MENU')}</h3><div class="dim small">🎯 ${goalText(g)}</div><br>
@@ -480,7 +656,7 @@
       const won = g.over.won;
       HF.sfx(won ? 'win' : 'lose');
       const s = g.stat, m = g.meta || {};
-      const me = g.f[0];
+      const me = g.f[P];
       const surplus = (me.gold || 0) + (me.food || 0) + (me.wood || 0);
       const score = HF.calculateScore(g);
       const mapKey = HF.cloud && HF.cloud.getMapKey ? HF.cloud.getMapKey(g) : 'local';
@@ -696,11 +872,13 @@
 
     refresh();
     board.startView();
+    // Prólogo cinematográfico: solo la primera vez (configurable en Ajustes).
+    if (HF.introCrawl) HF.introCrawl(g);
     if (g.turn === 1 && g.mode !== 'skirmish' || g.mode === 'daily') {
       const m = g.meta || {};
       HF.modal(`<h3>${HF.esc(m.name || 'Desafío')}</h3><p>${goalText(g)}</p>${m.par ? `<div class="dim small">★ en ≤ ${m.par} turnos · ★ ${HF.CHTXT[m.challenge]}</div>` : ''}<br><button class="pri" id="x" style="width:100%">¡Vamos!</button>`, mm => mm.querySelector('#x').onclick = HF.closeModal);
     }
-    const capi = g.cells.findIndex(c => c && c.o === 0 && c.cap);
+    const capi = g.cells.findIndex(c => c && c.o === P && c.cap);
     if (capi >= 0) board.centerOn(capi);
     info(`${goalText(g)}`);
     if (g.over) showEnd();

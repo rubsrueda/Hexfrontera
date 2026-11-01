@@ -87,7 +87,7 @@
     }
   };
 
-  HF.settings = () => Object.assign({ sound: true, vibrate: true, grid: true, speed: 1, lang: 'es' }, HF.store.get('settings', {}));
+  HF.settings = () => Object.assign({ sound: true, vibrate: true, grid: true, speed: 1, lang: 'es', showIntroCrawl: true }, HF.store.get('settings', {}));
   HF.vibrate = ms => { if (HF.settings().vibrate && G.navigator && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) { } };
   let ac = null;
   // Crea o reanuda el AudioContext. Las políticas de autoplay lo dejan en

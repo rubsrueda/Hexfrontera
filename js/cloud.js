@@ -54,8 +54,9 @@
     options = options || {};
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { lastOffline = true; return { ok: false, offline: true }; }
     if (typeof G.fetch !== 'function') { lastOffline = true; return { ok: false, offline: true }; }
+    const ms = options.timeout || TIMEOUT;
     const ctrl = typeof G.AbortController === 'function' ? new G.AbortController() : null;
-    const timer = G.setTimeout(() => { if (ctrl) ctrl.abort(); }, TIMEOUT);
+    const timer = G.setTimeout(() => { if (ctrl) ctrl.abort(); }, ms);
     try {
       const headers = Object.assign({}, HEADERS, options.headers || {});
       const opts = Object.assign({}, options, { headers });
@@ -337,4 +338,9 @@
     replayMissing: () => replayColumnMissing,
     get online() { return typeof navigator === 'undefined' || navigator.onLine !== false; }
   };
+  // RPC y consultas genéricas para el multijugador (sql/hf_multiplayer.sql).
+  // Las RPC llevan más margen: crear sala o publicar un estado puede tardar.
+  HF.cloud.rpc = (fn, args) => request('/rpc/' + fn, { method: 'POST', body: args || {}, timeout: 9000 });
+  HF.cloud.select = (table, query) => request('/' + table + '?' + query, { method: 'GET', timeout: 6000 });
+  HF.cloud.patch = (table, query, body) => request('/' + table + '?' + query, { method: 'PATCH', body: body, timeout: 9000 });
 })(typeof window !== 'undefined' ? window : globalThis);

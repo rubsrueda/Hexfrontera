@@ -503,6 +503,31 @@
     ctx.restore();
     ctx.globalAlpha = 1;
   };
+  P._drawCaravans = function (ctx, fs) {
+    const g = this.game;
+    if (!g || !g.caravans || !g.caravans.length) return;
+    for (const car of g.caravans) {
+      const c = g.cells[car.path[car.pos]];
+      if (!c) continue;
+      // Las caravanas enemigas solo se ven en casillas visibles.
+      if (car.owner !== 0 && HF.visible && !HF.visible(g, c.i)) continue;
+      const [x, y0] = this.toScreen(...this.pos(c));
+      const y = y0 - this._lift(c);
+      const s = fs * 1.2;
+      const art = car.kind === 'land' ? 'cart' : 'ship';
+      if (!HF.art.draw(ctx, 'trade', art, x, y - fs * .14, s, s)) continue;
+      const badge = car.kind === 'cargo'
+        ? (({ gold: '💰', food: '🌾', wood: '🪵' }[car.cargo.res] || '📦') + car.cargo.qty)
+        : (car.gold > 0 ? '💰' + car.gold : '');
+      if (badge) {
+        ctx.font = '700 ' + Math.max(9, fs * .42) + 'px "Plus Jakarta Sans", sans-serif';
+        const w = ctx.measureText(badge).width;
+        ctx.fillStyle = 'rgba(8,14,28,.82)';
+        this._roundRect(ctx, x - w / 2 - 4, y - fs * .8, w + 8, fs * .42, 6); ctx.fill();
+        ctx.fillStyle = '#ffd34d'; ctx.fillText(badge, x, y - fs * .59);
+      }
+    }
+  };
   P._drawFx = function (ctx, now) {
     if (!this.fx.length && !this.pulses.length) return;
     const fs = this.size * this.cam.z;
@@ -761,6 +786,8 @@
     for (const w of _wallsArr) this._wallGroup(ctx, w);
     _itemsArr.length = 0;
     for (const it of items) _itemsArr.push(it);
+    // Las caravanas van sobre el suelo pero por debajo de las unidades.
+    this._drawCaravans(ctx, fs);
     // Orden por profundidad: las casillas del sur se dibujan después, así una
     // unidad alta tapa correctamente a la de detrás y no al revés.
     _itemsArr.sort((a, b) => (a[2] - b[2]) || (a[0].i - b[0].i));

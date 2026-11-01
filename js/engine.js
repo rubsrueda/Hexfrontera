@@ -72,6 +72,7 @@
       v: 1, mode: o.mode || 'skirmish', seed: o.seed >>> 0, R: o.R, biome: o.biome, fog: o.fog || 'FULL', difficulty: o.difficulty || 'normal',
       turn: 1, cur: 0, over: null, goal: o.goal || { type: 'conquer' }, meta: o.meta || {}, rs: (o.seed * 7 + 13) >>> 0,
       f: [], cells: null, fogMap: null, timeline: [], events: [], undo: [],
+      caravans: [], tradeBlocked: {},
       replayLog: o.isReplay ? null : [], isReplay: !!o.isReplay, noReplay: !!o.isReplay,
       startRes: o.startRes || HF.CFG.start, _customCells: o.customCells || null,
       stat: { kills: 0, lost: 0, cuts: 0, deserts: 0, isolatedEver: false, built: 0, captured: 0, recruited: 0 }
@@ -328,6 +329,7 @@
     const comp = c && c.comp != null ? c.comp : mainComp(g, f);
     if (f.stock && f.stock[comp]) { f.stock[comp].gold += amount; syncTotals(f); }
     else f.gold = (f.gold || 0) + amount;
+    ev(g, cellId, 'Caravana entregada: +' + amount + ' oro', 'good');
   }
   // Al final de cada ronda: aparecen caravanas para las rutas activas, avanzan
   // 4 casillas y devengan 5 de oro por turno. Al llegar entregan la carga.
@@ -339,6 +341,17 @@
     const perTurn = Math.max(1, C.caravanGold || 5);
     const blockTurns = Math.max(0, C.blockTurns || 2);
     const alive = new Set();
+    // 1) urcas de carga manuales: navegan y entregan al llegar al puerto.
+    for (const car of g.caravans) {
+      if (car.kind !== 'cargo') continue;
+      const last = car.path.length - 1;
+      const pos = (car.pos || 0) + speed;
+      if (pos >= last) {
+        car.pos = last;
+        creditRes(g, car.path[last], car.owner, car.cargo.res, car.cargo.qty);
+        car.dead = true;
+      } else car.pos = pos;
+    }
     for (const f of g.f) {
       if (!f || f.alive === false) continue;
       const routes = tradeRoutes(g, f);
@@ -369,7 +382,7 @@
         }
         car.pos = pos;
       }
-      for (const car of g.caravans) if (car.owner === f.id && !keys.has(car.key)) car.dead = true;
+      for (const car of g.caravans) if (car.owner === f.id && car.kind !== 'cargo' && !keys.has(car.key)) car.dead = true;
     }
     g.caravans = g.caravans.filter(c => !c.dead);
     for (const k in g.tradeBlocked) if (g.tradeBlocked[k] <= g.turn) delete g.tradeBlocked[k];
@@ -379,23 +392,102 @@
   HF.raidCaravan = function (g, from, to) {
     const c = g.cells[from], u = c && c.u;
     if (!u || u.owner !== g.cur) return { ok: false, msg: 'No es tu unidad' };
-    if (u.type !== 'CAB' || u.at <= 0) return { ok: false, msg: 'Solo la caballería con ataque disponible' };
+    if (u.at <= 0) return { ok: false, msg: 'Sin ataque disponible' };
     const list = (g.caravans || []).filter(k => k.owner !== u.owner && k.path[k.pos] === to);
     if (!list.length) return { ok: false, msg: 'No hay caravana en esa casilla' };
     const car = list[0], f = g.f[u.owner];
-    const loot = Math.max(0, car.gold || 0);
+    const naval = u.type === 'BAR';
+    if (!(u.type === 'CAB' || (naval && car.kind !== 'land'))) {
+      return { ok: false, msg: naval ? 'Un barco no puede asaltar una carreta' : 'Solo la caballería o un barco de guerra' };
+    }
     const comp = c.comp != null ? c.comp : mainComp(g, f);
-    if (f.stock && f.stock[comp]) { f.stock[comp].gold += loot; syncTotals(f); }
-    else f.gold = (f.gold || 0) + loot;
+    let loot = 0;
+    if (car.kind === 'cargo') {
+      loot = Math.max(0, (car.cargo && car.cargo.qty) || 0);
+      const res = car.cargo.res;
+      if (f.stock && f.stock[comp]) { f.stock[comp][res] += loot; syncTotals(f); }
+      else f[res] = (f[res] || 0) + loot;
+      ev(g, to, 'Urca capturada: +' + loot + ' ' + res, 'good');
+    } else {
+      loot = Math.max(0, car.gold || 0);
+      if (f.stock && f.stock[comp]) { f.stock[comp].gold += loot; syncTotals(f); }
+      else f.gold = (f.gold || 0) + loot;
+      g.tradeBlocked = g.tradeBlocked || {};
+      g.tradeBlocked[car.key || caravanKey(car)] = g.turn + Math.max(0, HF.CFG.commerce.blockTurns || 2);
+      ev(g, to, 'Caravana saqueada: +' + loot + ' oro', 'good');
+    }
     g.caravans = g.caravans.filter(k => k !== car);
-    g.tradeBlocked = g.tradeBlocked || {};
-    g.tradeBlocked[car.key || caravanKey(car)] = g.turn + Math.max(0, HF.CFG.commerce.blockTurns || 2);
     u.at = 0;
-    ev(g, to, 'Caravana saqueada: +' + loot + ' oro', 'good');
     g._trade = null;
     return { ok: true, kind: 'raid', loot };
   };
   HF.caravansAt = (g, cellId) => (g.caravans || []).filter(c => c.path[c.pos] === cellId);
+
+  // ---------- carga manual entre puertos ----------
+  // Puerto: asentamiento propio con suministro y al menos una casilla de agua
+  // adyacente. El stock es por provincia (f.stock[comp]).
+  HF.isPort = function (g, c) {
+    if (!c || !c.sup || (c.b !== B.PUEBLO && c.b !== B.CIUDAD)) return false;
+    return grid(g).nb[c.i].some(j => isWater(g.cells[j]));
+  };
+  HF.ports = function (g, f) {
+    const out = [];
+    for (const c of g.cells) if (c && c.o === f.id && HF.isPort(g, c)) out.push(c);
+    return out;
+  };
+  // Camino marítimo entre dos puertos concretos (null si no hay conexión).
+  HF.seaPath = function (g, f, aId, bId) {
+    const gr = grid(g), a = g.cells[aId], b = g.cells[bId];
+    if (!a || !b) return null;
+    const prev = new Map(), q = [];
+    for (const j of gr.nb[aId]) {
+      if (tradeWalkable(g.cells[j], f, 'sea')) { prev.set(j, aId); q.push(j); }
+    }
+    for (let h = 0; h < q.length; h++) {
+      const x = q[h];
+      for (const y of gr.nb[x]) {
+        if (prev.has(y) || !tradeWalkable(g.cells[y], f, 'sea')) continue;
+        prev.set(y, x); q.push(y);
+      }
+    }
+    return tradePath(g, a, b, prev, 'sea');
+  };
+  function creditRes(g, cellId, owner, res, qty) {
+    if (!qty) return;
+    const c = g.cells[cellId], f = g.f[owner];
+    if (!f) return;
+    const comp = c && c.comp != null ? c.comp : mainComp(g, f);
+    if (f.stock && f.stock[comp] && f.stock[comp][res] != null) { f.stock[comp][res] += qty; syncTotals(f); }
+    else f[res] = (f[res] || 0) + qty;
+    ev(g, cellId, 'Carga entregada: +' + qty + ' ' + res, 'good');
+  }
+  // Crea una urca de carga: viaja sola y es saqueable como el comercio naval.
+  HF.sendCargo = function (g, fromId, toId, res, qty) {
+    const from = g.cells[fromId], to = g.cells[toId];
+    if (!from || !to) return { ok: false, msg: 'Puerto no válido' };
+    const f = g.f[from.o];
+    if (!f || from.o !== to.o) return { ok: false, msg: 'Los puertos deben ser tuyos' };
+    if (['gold', 'food', 'wood'].indexOf(res) < 0) return { ok: false, msg: 'Recurso no válido' };
+    if (!HF.isPort(g, from) || !HF.isPort(g, to)) return { ok: false, msg: 'No son puertos' };
+    const path = HF.seaPath(g, f, fromId, toId);
+    if (!path) return { ok: false, msg: 'Sin ruta marítima entre los puertos' };
+    const comp = from.comp != null ? from.comp : mainComp(g, f);
+    const stock = f.stock && f.stock[comp];
+    const have = stock ? (stock[res] || 0) : 0;
+    const q = Math.max(0, Math.min(50, Math.floor(qty || 0), have));
+    if (q <= 0) return { ok: false, msg: 'Sin existencias suficientes' };
+    stock[res] = have - q; syncTotals(f);
+    if (!g.caravans) g.caravans = [];
+    const id = (g.cargoSeq = (g.cargoSeq || 0) + 1);
+    g.caravans.push({
+      key: 'cargo:' + f.id + ':' + id, owner: f.id, kind: 'cargo',
+      path: path.slice(), pos: 0, dir: 1, cargo: { res, qty: q }
+    });
+    ev(g, fromId, 'Urca de carga: ' + q + ' ' + res + ' rumbo al puerto', 'info');
+    // La repetición reconstruye la partida: registrar el envío manual.
+    if (g.replayLog && !g.noReplay) g.replayLog.push([9, fromId, toId, res, q]);
+    return { ok: true, qty: q };
+  };
   HF.income = (g, f, comp) => {
     const inc = { gold: 0, food: 0, wood: 0 }, C = HF.CFG.income;
     const mult = has(f, 'EXTRACTIVE_ENCLAVE') ? C.enclaveMult : 1;
@@ -427,10 +519,72 @@
     return { inc: i, upkeep: u, upkeepGold: ug, loan, netFood: i.food - u, netGold: i.gold - ug - loan };
   };
 
+  // Deja una tumba recordando de quién era y qué unidad cayó: al pisarla su
+  // dueño puede recuperarla (5%).
+  function layTomb(c, u) {
+    c.tomb = HF.CFG.deficit.tombTurns;
+    c.tombOwner = u ? u.owner : null;
+    c.tombUnit = u ? { type: u.type, tier: u.tier } : null;
+  }
+  // Primera casilla libre alrededor para devolver la unidad caída.
+  function tombSpot(g, f, cell, naval) {
+    for (const j of HF.nbs(g, cell.i)) {
+      const n = g.cells[j];
+      if (!n || n.u) continue;
+      const water = n.t === T.MAR || n.t === T.RIO;
+      if (naval ? !water : water) continue;
+      if (n.o !== f.id && n.o !== -1) continue;
+      return n;
+    }
+    return null;
+  }
+  // Al pisar la tumba de una unidad propia: se consume y hay un 5% de que
+  // ocurra algo (recuperar la unidad, recursos, edificio ≤ bastión o nada).
+  function visitTomb(g, u, t, f) {
+    if (!(t.tomb > 0)) return null;
+    const mine = t.tombOwner === u.owner, info = t.tombUnit;
+    // Cualquier visita consume la tumba (evita farmear el 5%).
+    t.tomb = 0; t.tombOwner = null; t.tombUnit = null;
+    if (!mine || !info) return null;
+    const C = HF.CFG.tomb || {};
+    if (rnd(g)() >= (C.chance == null ? .05 : C.chance)) return null;
+    const roll = rnd(g)();
+    const comp = t.comp != null ? t.comp : mainComp(g, f);
+    const add = (k, v) => {
+      if (f.stock && f.stock[comp] && f.stock[comp][k] != null) { f.stock[comp][k] += v; syncTotals(f); }
+      else f[k] = (f[k] || 0) + v;
+    };
+    const rRec = C.recover == null ? .35 : C.recover;
+    const rRes = C.resources == null ? .35 : C.resources;
+    const rBld = C.building == null ? .2 : C.building;
+    if (roll < rRec) {
+      const spot = tombSpot(g, f, t, info.type === 'BAR');
+      if (spot) {
+        spot.u = { type: info.type, tier: info.tier, owner: u.owner, mv: 0, at: 0 };
+        ev(g, spot.i, 'Reliquia: recuperas ' + HF.UNITS[info.type].name + ' N' + info.tier, 'good');
+        return 'recover';
+      }
+    }
+    if (roll < rRec + rRes) {
+      add('gold', 25); add('food', 15); add('wood', 10);
+      ev(g, t.i, 'Reliquia: +25 oro, +15 comida, +10 madera', 'good');
+      return 'resources';
+    }
+    if (roll < rRec + rRes + rBld && !t.b && t.t !== T.MAR && t.t !== T.RIO) {
+      const pool = [B.CAMINO, B.CAMPAMENTO, B.PUEBLO, B.BASTION];
+      t.b = pool[Math.floor(rnd(g)() * pool.length)];
+      g._trade = null;
+      ev(g, t.i, 'Reliquia: ' + HF.BNAME[t.b] + ' gratis', 'good');
+      return 'building';
+    }
+    ev(g, t.i, 'La tumba estaba vacía…', 'info');
+    return 'nothing';
+  }
+  HF.visitTomb = visitTomb;   // expuesto para pruebas
   function degradeUnit(g, c, f) {
     const u = c.u;
     if (u.tier > 1) { u.tier--; return 'baja'; }
-    c.u = null; c.tomb = HF.CFG.deficit.tombTurns; if (f.human) { g.stat.deserts++; } return 'deserta';
+    layTomb(c, u); c.u = null; if (f.human) { g.stat.deserts++; } return 'deserta';
   }
   // C3.2.1 · INDUCED_BANKRUPTCY: una tropa que muere en una casilla sin suministro
   // acredita a los rivales que llevan la doctrina (el cerco estrangula la economía).
@@ -545,7 +699,7 @@
     if (mart.length) {
       f.grace++;
       if (f.grace > HF.CFG.deficit.martyrGrace) {
-        for (const c of g.cells) if (c && c.u && c.u.owner === f.id && mart.indexOf(pm[c.i]) >= 0) { c.u = null; c.tomb = HF.CFG.deficit.tombTurns; }
+        for (const c of g.cells) if (c && c.u && c.u.owner === f.id && mart.indexOf(pm[c.i]) >= 0) { layTomb(c, c.u); c.u = null; }
         if (f.human) ev(g, null, 'Martirio: las unidades de la provincia perecen', 'bad');
       }
     } else if (!anyDef) f.grace = 0;
@@ -920,6 +1074,21 @@
         else if (u.type === 'SIE' && !t.u && t.o !== u.owner && isSettle(t.b)) out.set(t.i, { k: 'siege' });
       }
     }
+    // Asalto de caravanas: la caballería corta las líneas de suministro
+    // enemigas; un barco de guerra puede asaltar caravanas navales.
+    if ((u.type === 'CAB' || u.type === 'BAR') && u.at > 0 && g.caravans && g.caravans.length) {
+      for (const car of g.caravans) {
+        if (car.owner === u.owner) continue;
+        if (u.type === 'BAR' && car.kind === 'land') continue;
+        const cid = car.path[car.pos];
+        if (cid == null || HF.hexDist(c, g.cells[cid]) > 1) continue;
+        const raid = { k: 'raid', loot: car.kind === 'cargo' ? (car.cargo.qty || 0) : (car.gold || 0), res: car.cargo ? car.cargo.res : 'gold' };
+        const prev = out.get(cid);
+        if (!prev) out.set(cid, raid);
+        else if (prev.k === 'raid') { if (raid.loot > (prev.loot || 0)) out.set(cid, raid); }
+        else (prev.alt = prev.alt || []).push(raid);
+      }
+    }
     doctrineOptions(g, ci, c, u, f, out);
     return out;
   };
@@ -1032,6 +1201,14 @@
       if (!alt) return { ok: false, msg: 'Acción no disponible' };
       opt = alt;
     }
+    // Asalto a caravana: no es un ataque normal, no mueve la unidad.
+    if (opt.k === 'raid') {
+      const human = !!(g.f[u.owner] && g.f[u.owner].human);
+      if (human) snap(g);
+      const r = HF.raidCaravan(g, from, to);
+      if (r.ok) { HF.updateFog(g); HF.checkEnd(g); }
+      return r;
+    }
     const t = g.cells[to], f = g.f[u.owner], D = HF.CFG.doctrine;
     const human = f.human;
     // si desembarca, la unidad que actúa es la carga y el barco se queda en su casilla
@@ -1048,7 +1225,8 @@
     } else if (opt.k === 'move') {
       if (human) snap(g);
       const wasOwn = c.o === u.owner, safe = t.o === u.owner;
-      t.u = u; vacate(); t.tomb = 0; u.mv = 0; u.retreat = 0;
+      t.u = u; vacate(); u.mv = 0; u.retreat = 0;
+      visitTomb(g, u, t, f);
       if (u.type === 'SIE') u.at = 0;
       // A3.3.2 · SCORCHED_EARTH: retirarse de una casilla propia hacia territorio seguro la deja en cenizas
       if (has(f, 'SCORCHED_EARTH') && wasOwn && safe && !isSettle(c.b) && !isWater(c)) {
@@ -1060,6 +1238,7 @@
       if (human) snap(g);
       t.u = u; vacate(); t.b = B.NINGUNO;
       addWood(g, f, t, chopWood(f)); u.mv = 0; u.retreat = 0;
+      visitTomb(g, u, t, f);
       if (!triggerTrap(g, to, u)) bastionFire(g, to, u);
     } else if (opt.k === 'fuse') {
       if (human) snap(g);
@@ -1102,7 +1281,8 @@
         checkElim(g); HF.updateFog(g); HF.checkEnd(g);
         return { ok: true, kind: 'atk', shot: true };
       }
-      t.u = u; vacate(); u.at = 0; if (opt.from !== from || shipU) u.mv = 0; u.retreat = 0; t.tomb = 0;
+      t.u = u; vacate(); u.at = 0; if (opt.from !== from || shipU) u.mv = 0; u.retreat = 0;
+      visitTomb(g, u, t, f);
       let chopped = false;
       if (!naval && t.b === B.ARBOL) { t.b = B.NINGUNO; chopped = true; }
       const trapped = triggerTrap(g, to, u);
@@ -1263,7 +1443,7 @@
     for (const c of g.cells) {
       if (!c || !c.u || c.u.owner !== victim) continue;
       if (victim === 0) g.stat.lost += 1 + (c.u.cargo ? 1 : 0);
-      c.u = null; c.tomb = HF.CFG.deficit.tombTurns; n++;
+      layTomb(c, c.u); c.u = null; n++;
     }
     if (n) ev(g, null, (vf ? vf.name : 'Rival') + ': decapitación, ' + n + ' tropas se desbandan', victim === 0 ? 'bad' : 'good');
   }
@@ -1400,7 +1580,10 @@
   };
 
   // ---------- niebla ----------
-  HF.updateFog = function (g) {
+  HF.updateFog = function (g, seat) {
+    // En red cada cliente calcula su propia niebla; el estado serializado no la
+    // incluye. `seat` permite forzar una facción concreta.
+    const me = seat == null ? (g.mySeat || 0) : seat;
     const n = g.cells.length;
     if (!g.fogMap) g.fogMap = new Int8Array(n);
     if (g.fog === 'NONE') { g.fogMap.fill(2); return; }
@@ -1410,14 +1593,22 @@
     for (const c of gr.list) {
       const x = g.cells[c.i];
       let r = 0;
-      if (x.o === 0) r = 1;
-      if (x.u && x.u.owner === 0) r = Math.max(r, 1 + (x.t === T.COLINA ? 1 : 0));
-      if (x.o === 0 && (x.b === B.CIUDAD || x.b === B.PUEBLO || x.b === B.BASTION)) r = 2;
+      if (x.o === me) r = 1;
+      if (x.u && x.u.owner === me) r = Math.max(r, 1 + (x.t === T.COLINA ? 1 : 0));
+      if (x.o === me && (x.b === B.CIUDAD || x.b === B.PUEBLO || x.b === B.BASTION)) r = 2;
       if (r) mark(x, r);
     }
     if (g.fog === 'EXPLORED') { /* el terreno descubierto se mantiene visible aunque sin unidades enemigas */ }
   };
   HF.visible = (g, i) => g.fog === 'NONE' || (g.fogMap && g.fogMap[i] === 2);
+  // ¿La facción `seat` ve alguna unidad enemiga? Primer contacto en red.
+  HF.hasContact = function (g, seat) {
+    const me = seat == null ? (g.mySeat || 0) : seat;
+    if (g.fog === 'NONE') {
+      return g.cells.some(c => c && c.u && c.u.owner !== me);
+    }
+    return g.cells.some((c, i) => c && c.u && c.u.owner !== me && g.fogMap && g.fogMap[i] === 2);
+  };
 
   // ---------- fin de partida ----------
   function checkElim(g) {
@@ -1499,12 +1690,25 @@
     }
     for (const i of add) g.cells[i].b = B.ARBOL;
     g.turn++;
+    // Caravanas: aparecen/avanzan/entregan al empezar la ronda nueva.
+    HF.syncCaravans(g);
     startTurn(g, g.f[0]);
     HF.updateFog(g);
     HF.recordTimeline(g);
     HF.checkEnd(g);
     save_rs(g);
   }
+  // Cierre de ronda multijugador: sin IA. roundEnd ya cobra a la facción 0;
+  // aquí se arranca el turno de las demás facciones humanas.
+  HF.mpEndRound = function (g) {
+    if (!g || g.over) return g;
+    noUndo(g);
+    roundEnd(g);
+    for (let i = 1; i < g.f.length; i++) if (g.f[i] && g.f[i].alive) startTurn(g, g.f[i]);
+    HF.updateFog(g);
+    HF.checkEnd(g);
+    return g;
+  };
   // Marca [4] con el estado RNG exacto. Así la repetición no depende de las
   // tiradas internas de la IA: al llegar a cada frontera de fase se restaura.
   const markPhase = g => { if (g.replayLog && !g.noReplay) g.replayLog.push([4]); };
@@ -1557,8 +1761,8 @@
       u.elite = 0;
       ev(g, c.i, 'Cerco: ' + name + ' N' + from + ' capitula y baja a N' + u.tier, human ? 'bad' : 'good');
     } else {
+      layTomb(c, u);
       c.u = null;
-      c.tomb = HF.CFG.deficit.tombTurns;
       if (u.owner === 0) g.stat.lost += 1 + (u.cargo ? 1 : 0);
       ev(g, c.i, 'Cerco: ' + name + ' N1 capitula y deja una tumba', human ? 'bad' : 'good');
     }
@@ -1590,6 +1794,9 @@
       const d = { i: c.i, q: c.q, r: c.r };
       for (const k of ['t', 'res', 'b', 'o', 'cap', 'tomb', 'deg', 'sup', 'conq',
         'burn', 'fire', 'wonder', 'wonderAt', 'lastStand', 'lastStandTurn', 'builtTurn', 'firedTurn', 'noCamp', 'iso', 'autoCampTurn']) if (c[k]) d[k] = c[k];
+      // El dueño 0 es un valor válido: se guarda aparte de la lista anterior.
+      if (c.tombOwner != null) d.tombOwner = c.tombOwner;
+      if (c.tombUnit) d.tombUnit = c.tombUnit;
       if (c.comp !== undefined) d.comp = c.comp;
       if (c.degBy != null) d.degBy = c.degBy;         // el dueño 0 es un valor válido
       if (c.trap != null) d.trap = c.trap;           // el dueño 0 es un valor válido
