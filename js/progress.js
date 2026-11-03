@@ -80,6 +80,9 @@
     const k = dkey(), r = HF.rng(k);
     return { mode: 'daily', seed: k, size: 'medium', n: 2 + r.int(2), biome: BIO[r.int(4)], fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }, aiPreset: r.int(5), startRes: HF.CFG.start, meta: { daily: k } };
   };
+  // Nombre de la crónica del día (estable por fecha) para el banner del Hub.
+  const DAILY_NAMES = ['Asalto a la Brecha', 'La Última Calzada', 'Ceniza y Trigo', 'El Paso del Cuervo', 'Invierno de Hierro', 'La Corona Rota', 'Ríos de Sal', 'El Bastión del Alba'];
+  HF.dailyName = () => DAILY_NAMES[HF.rng(dkey()).int(DAILY_NAMES.length)];
   HF.dailyState = () => HF.store.get('daily_challenge', { date: 0, attempts: 0, best: null, medal: null, streak: 0, lastWin: 0, history: [] });
   const medal = t => t <= 12 ? '🥇' : t <= 18 ? '🥈' : '🥉';
   HF.medal = medal;

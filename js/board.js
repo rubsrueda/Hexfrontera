@@ -844,10 +844,12 @@
             ctx.beginPath(); ctx.arc(x, y + fs * .05, fs * .63, 0, 7); ctx.stroke();
             const def = g ? HF.defenseAt(g, c.i) : 0;
             ctx.font = '700 ' + Math.max(8, fs * .4) + 'px "Plus Jakarta Sans", sans-serif';
+            // Nivel justo encima de la unidad (centrado), no en el lateral.
             const tl = 'N' + u.tier, tw = ctx.measureText(tl).width;
+            const lw = tw + 8, lh = fs * .44, ly = y - fs * 1.45 - lh / 2;
             ctx.fillStyle = 'rgba(8,14,28,.86)';
-            ctx.fillRect(x - fs * .95, y + fs * .58, tw + 5, fs * .44);
-            ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x - fs * .95 + (tw + 5) / 2, y + fs * .8);
+            ctx.fillRect(x - lw / 2, ly, lw, lh);
+            ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x, ly + lh / 2);
             const dl = '🛡' + def, dw = ctx.measureText(dl).width;
             ctx.fillStyle = 'rgba(8,14,28,.86)';
             ctx.fillRect(x + fs * .3, y + fs * .58, dw + 5, fs * .44);
@@ -932,27 +934,49 @@
       const u = this.cells[this.drag.from].u;
       if (u) { ctx.globalAlpha = .85; ctx.fillStyle = this.colors[u.owner]; ctx.beginPath(); ctx.arc(this.drag.x, this.drag.y - 20, fs * .6, 0, 7); ctx.fill(); if (!HF.art.drawStretched(ctx, 'unit', u.type, this.drag.x, this.drag.y - 20 - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.font = fs * .8 + 'px sans-serif'; ctx.fillStyle = INK; ctx.fillText(HF.UNITS[u.type].icon, this.drag.x, this.drag.y - 20); } ctx.globalAlpha = 1; }
     }
+    // Burbujas de diálogo: texto envuelto, colores por bando y apilado por
+    // casilla para que dos frases simultáneas no se pisen.
+    const bubbleStack = {};
     if (this.bubbles) for (const b of this.bubbles) {
       const c = this.cells[b.i]; if (!c) continue;
       const [x, y0] = this.toScreen(...this.pos(c));
-      const y = y0 - this._lift(c) - fs * 1.9;
       const born = b.born || (now - 80);
       const age = Math.max(0, (now - born) / 1000);
       const popT = Math.min(1, age / .22);
       const pop = popT < 1 ? 1 + 2.70158 * Math.pow(popT - 1, 3) + 1.70158 * Math.pow(popT - 1, 2) : 1;
-      ctx.font = '700 12px "Plus Jakarta Sans", sans-serif';
-      const w = ctx.measureText(b.txt).width + 16, h = 24;
-      const fill = b.kind === 'bad' ? 'rgba(94,36,42,.94)' : b.kind === 'good' ? 'rgba(31,75,56,.94)' : 'rgba(22,34,54,.94)';
+      const isEnemy = b.kind === 'enemy', isAlly = b.kind === 'ally', isInt = b.kind === 'interrupt';
+      ctx.font = (isInt ? 'italic 700 12px' : '700 12px') + ' "Plus Jakarta Sans", sans-serif';
+      const maxW = Math.min(250, Math.max(150, fs * 7));
+      const words = String(b.txt || '').split(' ');
+      const lines = []; let line = '';
+      for (const w of words) {
+        const test = line ? line + ' ' + w : w;
+        if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; } else line = test;
+      }
+      if (line) lines.push(line);
+      if (!lines.length) continue;
+      const tw = Math.max(...lines.map(l => ctx.measureText(l).width)) + 16;
+      const lh = 15, h = lines.length * lh + 10;
+      const stack = bubbleStack[b.i] || 0;
+      bubbleStack[b.i] = stack + 1;
+      const y = y0 - this._lift(c) - fs * 1.9 - stack * (h + 6);
+      const fill = isEnemy ? 'rgba(127,29,29,.95)'
+        : isAlly ? 'rgba(30,41,59,.96)'
+        : isInt ? 'rgba(58,46,16,.96)'
+        : b.kind === 'bad' ? 'rgba(94,36,42,.94)'
+        : b.kind === 'good' ? 'rgba(31,75,56,.94)' : 'rgba(22,34,54,.94)';
       ctx.save();
       ctx.globalAlpha = Math.min(1, Math.max(0, b.life / .45));
       ctx.translate(x, y); ctx.scale(pop, pop);
       ctx.shadowColor = 'rgba(10,15,29,.45)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
-      this._roundRect(ctx, -w / 2, -h, w, h, 9); ctx.fillStyle = fill; ctx.fill();
+      this._roundRect(ctx, -tw / 2, -h, tw, h, 9); ctx.fillStyle = fill; ctx.fill();
       ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(244,239,234,.18)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.strokeStyle = isEnemy ? '#b91c1c' : isAlly ? '#3b82f6' : isInt ? '#f5b942' : 'rgba(244,239,234,.18)';
+      ctx.lineWidth = isInt ? 1.5 : 1; ctx.stroke();
       ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(5, 0); ctx.lineTo(0, 8); ctx.closePath();
       ctx.fillStyle = fill; ctx.fill();
-      ctx.fillStyle = INK; ctx.fillText(b.txt, 0, -h / 2 + 1);
+      ctx.fillStyle = isInt ? '#f5d67a' : INK;
+      lines.forEach((l, k) => ctx.fillText(l, 0, -h + 7 + lh / 2 + k * lh));
       ctx.restore();
     }
     this._drawFx(ctx, now);

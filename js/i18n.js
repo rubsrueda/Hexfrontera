@@ -2,7 +2,7 @@
   const HF = G.HF = G.HF || {};
   HF.LOCALES = {
     es: {
-      HUB_TITLE: 'HEXFRONTIER',
+      HUB_TITLE: 'FEDERATI',
       HUB_SUBTITLE: 'Estrategia hexagonal por turnos',
       BTN_CONTINUE: '▶ Continuar',
       BTN_CAMPAIGN: '⚔️ Campaña',
@@ -69,7 +69,7 @@
       NO_MULTIPLAYER: 'sin multijugador'
     },
     en: {
-      HUB_TITLE: 'HEXFRONTIER',
+      HUB_TITLE: 'FEDERATI',
       HUB_SUBTITLE: 'Turn-based Hexagonal Strategy',
       BTN_CONTINUE: '▶ Continue',
       BTN_CAMPAIGN: '⚔️ Campaign',
@@ -553,6 +553,128 @@
     }
   };
   for (const k in CRAWL) if (HF.LOCALES[k]) Object.assign(HF.LOCALES[k], CRAWL[k]);
+
+  // Prólogo del final del crawl (antes del CTA): 13 idiomas.
+  const CRAWL_PRO = {
+    es: `El Imperio ha muerto.
+
+Hay calzadas rotas, arcas vacías y sin Corona.
+
+Sobre las cenizas del viejo orden, los señores reclaman valles, ríos y las calzadas que antaño alimentaron a millones.
+
+En este tablero no hay dioses que escuchen tus plegarias ni dados que tuerzan el destino. Solo impera la ley de la logística y el hierro, la división que avance sin pan perecerá en la nieve; el bastión protegido resistirá por los siglos.
+
+Los mapas están desplegados, las fichas esperan tu orden.`,
+    en: `The Empire is dead.
+
+Broken roads remain, treasuries lie empty, and there is no Crown.
+
+Upon the ashes of the old order, lords claim valleys, rivers, and the roads that once fed millions.
+
+On this board there are no gods to hear your prayers, nor dice to bend fate. Only the law of logistics and iron holds sway, the division that marches without bread shall perish in the snow; the protected bastion shall stand for centuries.
+
+The maps are unfurled, the pieces await your command.`,
+    fr: `L'Empire est mort.
+
+Il reste des routes brisées, des coffres vides et plus de Couronne.
+
+Sur les cendres de l'ancien ordre, les seigneurs revendiquent vallées, rivières et les routes qui nourrissaient jadis des millions d'âmes.
+
+Sur ce plateau, nul dieu n'écoute tes prières, nul dé ne courbe le destin. Seule règne la loi de la logistique et du fer, la division qui avance sans pain périra dans la neige ; le bastion protégé résistera pendant des siècles.
+
+Les cartes sont déployées, les pièces attendent ton ordre.`,
+    it: `L'Impero è morto.
+
+Restano strade spezzate, casse vuote e nessuna Corona.
+
+Sulle ceneri del vecchio ordine, i signori rivendicano valli, fiumi e le strade che un tempo nutrivano milioni di persone.
+
+Su questa plancia non ci sono dèi che ascoltino le tue preghiere né dadi che pieghino il destino. Regna solo la legge della logistica e del ferro, la divisione che avanza senza pane perirà nella neve; il bastione protetto resisterà per secoli.
+
+Le mappe sono dispiegate, i pezzi attendono il tuo ordine.`,
+    pt: `O Império morreu.
+
+Restam estradas quebradas, cofres vazios e nenhuma Coroa.
+
+Sobre as cinzas da velha ordem, os senhores reclamam vales, rios e as estradas que outrora alimentaram milhões.
+
+Neste tabuleiro não há deuses que ouçam as tuas preces nem dados que torçam o destino. Só impera a lei da logística e do ferro, a divisão que avança sem pão perecerá na neve; o bastião protegido resistirá por séculos.
+
+Os mapas estão abertos, as peças aguardam a tua ordem.`,
+    de: `Das Imperium ist tot.
+
+Gebrochene Straßen, leere Kassen und keine Krone.
+
+Auf der Asche der alten Ordnung erheben die Herren Anspruch auf Täler, Flüsse und die Straßen, die einst Millionen nährten.
+
+Auf diesem Brett gibt es keine Götter, die deine Gebete hören, und keine Würfel, die das Schicksal beugen. Nur das Gesetz der Logistik und des Eisens herrscht, die Division, die ohne Brot marschiert, vergeht im Schnee; die geschützte Bastion wird Jahrhunderte überdauern.
+
+Die Karten sind entrollt, die Figuren erwarten deinen Befehl.`,
+    ru: `Империя мертва.
+
+Остались разбитые дороги, пустые казны и нет Короны.
+
+На пепле старого порядка государи требуют долины, реки и дороги, что некогда кормили миллионы.
+
+На этой доске нет богов, что услышат твои молитвы, и нет костей, что изменят судьбу. Правит лишь закон логистики и железа, дивизия, идущая без хлеба, погибнет в снегах; защищённый бастион простоит века.
+
+Карты развёрнуты, фигуры ждут твоего приказа.`,
+    zh: `帝国已亡。
+
+道路破碎，国库空虚，王冠不再。
+
+在旧秩序的灰烬之上，诸侯争夺山谷、河流，以及曾经养活千万人的道路。
+
+在这张棋盘上，没有神明聆听你的祈祷，也没有骰子能扭转命运。唯有后勤与钢铁的法则：无粮而进的军队将葬身风雪；受护的堡垒将屹立百年。
+
+地图已展开，棋子等待你的号令。`,
+    ja: `帝国は死んだ。
+
+壊れた街道、空の財庫、そして王冠はない。
+
+旧秩序の灰の上で、領主たちは谷と川、かつて何百万もの人々を養った道を求めている。
+
+この盤上に祈りを聞く神も、運命を曲げる賽もない。あるのは兵站と鉄の掟だけだ。パンなく進む部隊は雪中に果て、守られた要塞は幾世紀も耐える。
+
+地図は広げられ、駒はあなたの命令を待つ。`,
+    ko: `제국은 죽었다.
+
+부서진 길, 텅 빈 금고, 그리고 왕관은 없다.
+
+옛 질서의 재 위에서 군주들은 계곡과 강, 한때 수백만을 먹여 살린 길을 요구한다.
+
+이 판 위에는 기도를 듣는 신도, 운명을 비트는 주사위도 없다. 오직 병참과 철의 법칙만이 군림한다. 빵 없이 나아가는 부대는 눈 속에서 쓰러지고, 보호된 요새는 수백 년을 버틴다.
+
+지도는 펼쳐졌고, 말들은 너의 명령을 기다린다.`,
+    hi: `साम्राज्य मर चुका है।
+
+टूटी सड़कें, खाली कोष, और कोई मुकुट नहीं।
+
+पुरानी व्यवस्था की राख पर, सरदार घाटियों, नदियों और उन मार्गों पर दावा करते हैं जो कभी लाखों का पेट भरते थे।
+
+इस बिसात पर न कोई देवता हैं जो तुम्हारी प्रार्थना सुनें, न कोई पासा जो भाग्य मोड़े। केवल रसद और लोहे का नियम चलता है: बिना रोटी के बढ़ता दल बर्फ़ में मिट जाएगा; सुरक्षित गढ़ सदियों तक टिकेगा।
+
+नक्शे खुले हैं, मोहरे तुम्हारे आदेश की प्रतीक्षा करते हैं।`,
+    bn: `সাম্রাজ্য মরে গেছে।
+
+ভাঙা রাজপথ, শূন্য ভাণ্ডার, আর কোনো মুকুট নেই।
+
+পুরনো ব্যবস্থার ছাইয়ের উপর, প্রভুরা উপত্যকা, নদী আর সেই পথগুলো দাবি করে যা একদিন লক্ষ লক্ষ মানুষকে খাওয়াত।
+
+এই বোর্ডে কোনো দেবতা নেই যিনি তোমার প্রার্থনা শোনেন, কোনো পাশা নেই যা ভাগ্য বদলায়। কেবল সরবরাহ ও লোহার নিয়ম চলে: রুটি ছাড়া অগ্রসর হওয়া বাহিনী তুষারে মরবে; সুরক্ষিত দুর্গ শতাব্দী ধরে টিকে থাকবে।
+
+মানচিত্র খোলা, গুটিগুলো তোমার আদেশের অপেক্ষায়।`,
+    ar: `ماتت الإمبراطورية.
+
+بقيت طرق مكسورة وخزائن فارغة ولا تاج.
+
+على رماد النظام القديم، يطالب السادة بالوديان والأنهار والطرق التي كانت تُطعم الملايين.
+
+على هذه الرقعة لا آلهة تسمع صلاتك ولا نرد يلوي القدر. لا يحكم إلا قانون الإمداد والحديد: الفرقة التي تتقدم بلا خبز تهلك في الثلج؛ والحصن المحصّن يصمد قرونًا.
+
+الخرائط منشورة، والقطع تنتظر أمرك.`
+  };
+  for (const k in CRAWL_PRO) if (HF.LOCALES[k]) HF.LOCALES[k].CRAWL_PROLOGUE = CRAWL_PRO[k];
 
   HF.t = function (key, fallback) {
     const s = HF.settings ? HF.settings() : {};

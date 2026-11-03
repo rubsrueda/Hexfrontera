@@ -17,7 +17,7 @@ const ok = (cond, msg) => { if (cond) console.log('ok   ' + msg); else { console
 ok(HF.settings().showIntroCrawl === true, 'la introducción se muestra por defecto');
 const langs = HF.LANGS.map(l => l.code);
 ok(langs.length === 13, `13 idiomas (${langs.length})`);
-const keys = ['CRAWL_TITLE', 'CRAWL_SEC1_TITLE', 'CRAWL_SEC1_DESC', 'CRAWL_SEC2_TITLE', 'CRAWL_SEC2_DESC',
+const keys = ['CRAWL_TITLE', 'CRAWL_PROLOGUE', 'CRAWL_SEC1_TITLE', 'CRAWL_SEC1_DESC', 'CRAWL_SEC2_TITLE', 'CRAWL_SEC2_DESC',
   'CRAWL_SEC3_TITLE', 'CRAWL_SEC3_DESC', 'CRAWL_SEC4_TITLE', 'CRAWL_SEC4_DESC', 'CRAWL_SEC5_CTA',
   'CRAWL_DONT_SHOW', 'CRAWL_SKIP', 'CRAWL_SETTING'];
 for (const code of langs) {

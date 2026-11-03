@@ -22,6 +22,16 @@ button.big{font-size:18px;padding:14px;font-weight:700}
 button:disabled{opacity:.4}
 button.sel{border-color:var(--acc);background:rgba(58,58,32,.82)}
 .hub{justify-content:space-between}
+/* Fondo del menú principal (art/fondo.png). El degradado oscurece lo justo
+   para que el título, las tarjetas y los botones sigan legibles. */
+body.hub-bg{
+  background-image:
+    linear-gradient(180deg,rgba(7,11,22,.55) 0%,rgba(7,11,22,.32) 32%,rgba(7,11,22,.42) 68%,rgba(7,11,22,.72) 100%),
+    url('../art/fondo.png');
+  background-size:cover;
+  background-position:center;
+  background-repeat:no-repeat;
+}
 .hub-mid{display:flex;flex-direction:column;gap:12px;margin:auto 0;width:100%;max-width:420px;align-self:center}
 .dock{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
 .dock button{display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:12px;padding:8px 2px}
@@ -196,18 +206,21 @@ canvas.chart{width:100%;height:210px;background:rgba(14,24,48,.72);border-radius
   background-size:200px 200px;
 }
 .crawl-viewport{
-  position:relative;width:100%;max-width:620px;height:80vh;overflow:hidden;
-  perspective:320px;perspective-origin:50% 100%;
+  position:relative;width:180%;max-width:1220px;height:85vh;overflow:hidden;
+  perspective:620px;perspective-origin:50% 100%;
   -webkit-mask-image:linear-gradient(to bottom,rgba(0,0,0,0) 0%,#000 25%,#000 82%,rgba(0,0,0,0) 100%);
   mask-image:linear-gradient(to bottom,rgba(0,0,0,0) 0%,#000 25%,#000 82%,rgba(0,0,0,0) 100%);
 }
 .crawl-content{
-  position:absolute;top:100%;left:9%;right:9%;
+  /* 100% = borde inferior del viewport. -15vh lo sube un 15 % de la pantalla. */
+  position:absolute;top:calc(100% - 20vh);left:8%;right:8%;
   transform-origin:50% 100%;transform:rotateX(25deg);
   text-align:justify;color:var(--acc,#f5b942);
   font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;
   font-size:clamp(15px,4.1vw,18px);line-height:1.6;
-  animation:crawlAnimation 45s linear forwards;
+  
+  animation:crawlAnimation 75s linear forwards;
+  
   will-change:transform;
   text-shadow:0 0 18px rgba(245,185,66,.18);
 }
@@ -217,10 +230,10 @@ canvas.chart{width:100%;height:210px;background:rgba(14,24,48,.72);border-radius
 }
 .crawl-content p{margin:0 0 18px}
 .crawl-content b{color:#fff;letter-spacing:.5px}
-.crawl-cta{font-size:clamp(16px,4.6vw,20px);color:var(--good,#6fcf97);text-align:center;margin-top:32px}
+.crawl-cta{font-size:clamp(56px,4.6vw,60px);color:var(--good,#6fcf97);text-align:center;margin-top:32px}
 @keyframes crawlAnimation{
-  from{transform:rotateX(25deg) translateY(0)}
-  to{transform:rotateX(25deg) translateY(-125%)}
+  from{transform:rotateX(20deg) translateY(0)}
+  to{transform:rotateX(20deg) translateY(-185%)}
 }
 .crawl-footer{
   position:absolute;bottom:calc(var(--sab,0px) + 16px);left:16px;right:16px;
@@ -242,3 +255,21 @@ canvas.chart{width:100%;height:210px;background:rgba(14,24,48,.72);border-radius
   .crawl-content{animation:none;top:8%;transform:none}
   .crawl-viewport{overflow:auto;-webkit-mask-image:none;mask-image:none}
 }
+
+/* ---------- botones de arte del Hub ---------- */
+.art-btn{position:relative;min-width:42px;min-height:42px;padding:2px;background:transparent;border-color:transparent;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none;display:grid;place-items:center}
+.art-btn img{width:34px;height:34px;object-fit:contain;display:block;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}
+.art-btn:active{transform:scale(.94)}
+.art-dot{position:absolute;top:0;right:0;min-width:14px;height:14px;border-radius:8px;background:var(--acc);color:#101828;font-size:10px;line-height:14px;text-align:center;font-weight:800;padding:0 3px}
+.dock-art{width:28px;height:28px;object-fit:contain;display:block;margin:0 auto 2px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+.art-big{display:flex;align-items:center;justify-content:center;gap:10px}
+.art-big img{width:44px;height:44px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}
+
+/* ---------- banner de acción rápida del Hub ---------- */
+.cta-banner{display:flex;align-items:center;gap:10px;width:100%;background:linear-gradient(135deg,rgba(245,185,66,.16),rgba(16,28,54,.94));border:1px solid rgba(245,185,66,.45);border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.28)}
+.cta-ico{font-size:26px;line-height:1}
+.cta-kicker{font-size:10px;letter-spacing:1.4px;color:var(--acc);font-weight:800;text-transform:uppercase}
+.cta-title{display:block;font-size:16px;line-height:1.2;margin-top:1px}
+.cta-sub{font-size:11px;color:var(--dim);margin-top:2px}
+.cta-go{min-height:42px;white-space:nowrap}
+@media (max-width:420px){.cta-banner{flex-wrap:wrap}.cta-banner .cta-go{width:100%}}

@@ -1,4 +1,4 @@
-/* HEXFRONTIER · parámetros de juego.
+/* FEDERATI · parámetros de juego.
    Todos los números de equilibrio viven aquí; el motor, el generador de mapas
    y la IA solo leen de HF.CFG. Edita este archivo para reajustar el juego. */
 (function (G) {
@@ -59,7 +59,22 @@
       blockTurns: 2        // rondas que queda rota la ruta tras un saqueo
     },
     loan: { amount: 50, perTurn: 6, turns: 10 }, // +50 oro, -6/turno durante 10 turnos
-    barks: { chance: 0.4, life: 2 },          // probabilidad y duración de las burbujas de tropa
+    barks: { chance: 0.5, life: 2 },          // probabilidad y duración de las burbujas de tropa
+    // Diálogos vivos entre unidades y edificios (js/banter.js).
+    banter: {
+      idle: 13,           // segundos sin tocar la pantalla → chisme de la tropa
+      cooldown: 6,        // segundos mínimos entre conversaciones
+      perTurn: 1,         // conversaciones máximas por turno
+      delay: 16.4,         // retardo entre pregunta y respuesta (Call & Response)
+      life: 12.4,          // duración de una burbuja normal
+      interruptLife: 1.2, // duración de "¡A callar!"
+      enemyChance: .45,   // duelo al quedar adyacente a un enemigo
+      allyChance: .45,    // rencilla al quedar adyacente a un aliado de otro cuerpo
+      buildingChance: .45, // probabilidad de que un edificio suelte su frase
+      ambientStart: 2.2,  // primera charla ambiental tras abrir el tablero
+      ambientEvery: 15,    // cada cuánto se comprueba si toca otra charla
+      ambientGap: 30       // silencio tras terminar una conversación
+    },
     ambience: { maxParticles: 25, clouds: 3, fps: 15 }, // límites del tablero animado
 
     // unidades: coste, mantenimiento por turno según nivel (up = comida, upGold = oro), edificios de origen,

@@ -20,6 +20,7 @@
   HF.screen = (name, fn) => { screens[name] = fn; };
   HF.go = (name, arg) => {
     HF.closeModal();
+    if (G.document && document.body && document.body.classList) document.body.classList.toggle('hub-bg', name === 'hub');
     if (HF.onLeave) { const leave = HF.onLeave; HF.onLeave = null; try { leave(); } catch (e) { console.error('onLeave', e); } }
     app().innerHTML = '';
     HF.sfx('click');
@@ -57,6 +58,7 @@
           <p><b>${HF.t('CRAWL_SEC2_TITLE')}:</b> ${HF.t('CRAWL_SEC2_DESC')}</p>
           <p><b>${HF.t('CRAWL_SEC3_TITLE')}:</b> ${HF.t('CRAWL_SEC3_DESC')}</p>
           <p><b>${HF.t('CRAWL_SEC4_TITLE')}:</b> ${HF.t('CRAWL_SEC4_DESC')}</p>
+          ${(HF.t('CRAWL_PROLOGUE') || '').split(/\n\s*\n/).map((p, k) => `<p>${k === 0 ? '<b>' + HF.esc(p) + '</b>' : HF.esc(p)}</p>`).join('')}
           <h2 class="crawl-cta">${HF.t('CRAWL_SEC5_CTA')}</h2>
         </div>
       </div>
@@ -81,14 +83,19 @@
       el.style.transition = 'opacity .6s ease';
       el.style.opacity = '0';
       el.style.pointerEvents = 'none';
-      setTimeout(() => { el.remove(); document.body.style.overflow = prevOverflow; }, 620);
+      setTimeout(() => {
+        el.remove();
+        document.body.style.overflow = prevOverflow;
+        // Al quedar el tablero a la vista, la capital saluda a la primera unidad.
+        if (HF.banter && HF.banter.kick) HF.banter.kick(g);
+      }, 620);
     };
     el.querySelector('#btnSkipCrawl').onclick = close;
     // Tocar el texto también sale (el jugador tiene prisa).
     el.querySelector('.crawl-viewport').onclick = close;
     el.addEventListener('click', e => { if (e.target === el) close(); });
     const content = el.querySelector('.crawl-content');
-    if (content) content.addEventListener('animationend', close);
+    if (content) content.addEventListener('animationend', () => setTimeout(close, 2500));
     document.addEventListener('keydown', onKey);
     if (HF.sfx) HF.sfx('click');
   };
@@ -115,14 +122,24 @@
     const tribe = HF.loadTribe(), save = HF.store.get('savegame_active', null);
     const d = HF.dailyState(), doneToday = d.date === HF.dailyKey() && d.attempts > 0;
     const localStats = HF.getStats();
+    // Los textos de Campaña/Nueva partida traen un emoji delante; con la imagen
+    // de arte ya no hace falta, así que se quita el símbolo inicial.
+    const plain = s => String(s).replace(/^[^\p{L}\p{N}]+/u, '');
     el.innerHTML = `<div class="screen hub">
-      <div class="bar"><button id="daily" class="badge">${HF.t('BTN_DAILY')}${doneToday ? ' ✔' : ' <b style="color:var(--acc)">!</b>'}</button><div class="grow"></div><button id="set2" data-nav="settings" title="${HF.t('DOCK_SETTINGS')}">⚙️</button><button id="hist" title="Historial de partidas">📜</button><button id="rep" title="Ver repetición">🎬</button><button id="news" title="${HF.lang() === 'en' ? 'News' : 'Noticias'}" aria-label="${HF.lang() === 'en' ? 'News' : 'Noticias'}"><img class="top-ico" src="assets/ui/news.webp" alt="" draggable="false"></button></div>
+      <div class="bar">
+        <button id="daily" class="art-btn" title="Diario"><img src="art/boton-reto-diario.png" alt="Diario">${doneToday ? '' : '<b class="art-dot">!</b>'}</button>
+        <div class="grow"></div>
+        <button id="hist" class="art-btn" title="Historial de partidas"><img src="art/boton-mapa.png" alt="Historial"></button>
+        <button id="rep" class="art-btn" title="Ver repetición"><img src="art/boton-reproducir.png" alt="Repetición"></button>
+        <button id="news" class="art-btn" title="${HF.lang() === 'en' ? 'News' : 'Noticias'}" aria-label="${HF.lang() === 'en' ? 'News' : 'Noticias'}"><img src="art/boton-noticias.png" alt="Noticias"></button>
+      </div>
+      <div id="cta" style="width:100%;max-width:560px;margin:6px auto 0"></div>
       <div class="hub-mid">
         <h1>${HF.t('HUB_TITLE')}</h1>
         <div class="dim" style="text-align:center">${HF.t('HUB_SUBTITLE')}</div>
         ${save ? `<button class="pri big" id="cont">${HF.t('BTN_CONTINUE')} <span class="dim">· T${save.turn} · ${HF.esc(save.mode)}</span></button>` : ''}
-        <button class="big" id="camp">${HF.t('BTN_CAMPAIGN')} <span class="dim">★ ${HF.totalStars()}/90</span></button>
-        <button class="big" id="new">${HF.t('BTN_NEW_GAME')}</button>
+        <button class="big art-big" id="camp"><img src="art/boton-reclutar.png" alt=""><span>${plain(HF.t('BTN_CAMPAIGN'))} <span class="dim">★ ${HF.totalStars()}/90</span></span></button>
+        <button class="big art-big" id="new"><img src="art/boton-construir.png" alt=""><span>${plain(HF.t('BTN_NEW_GAME'))}</span></button>
         <div class="card" id="standing" style="padding:8px 10px">
           <div class="row"><b class="grow">🏅 Tu posición</b><span class="dim small" id="stNote"></span></div>
           <div id="stBody" class="small" style="margin-top:3px">Consultando clasificación…</div>
@@ -131,10 +148,10 @@
       </div>
       <div class="dock">
         <button id="tribe" title="${HF.esc(tribe.name)}" aria-label="${HF.esc(tribe.name)}"><span class="dock-crest" style="border-color:${tribe.color}">${HF.crestHTML(tribe.crest, 30)}</span><span class="dock-name">${HF.esc(tribe.name)}</span></button>
-        <button id="editor"><span>🗺️</span>${HF.t('DOCK_MAPS')}</button>
-        <button id="stats"><span class="dock-medal"><img class="dock-ico" src="assets/ui/stats.webp" alt="" draggable="false"></span>${HF.t('DOCK_STATS')}</button>
-        <button id="set" data-nav="settings"><span>⚙️</span>${HF.t('DOCK_SETTINGS')}</button>
-        <button id="wiki"><span>📖</span>${HF.t('DOCK_WIKI')}</button>
+        <button id="editor"><img class="dock-art" src="art/boton-campana.png" alt="">${HF.t('DOCK_MAPS')}</button>
+        <button id="stats"><img class="dock-art" src="art/boton-estadisticas.png" alt="">${HF.t('DOCK_STATS')}</button>
+        <button id="set" data-nav="settings"><img class="dock-art" src="art/boton-historial.png" alt="">${HF.t('DOCK_SETTINGS')}</button>
+        <button id="wiki"><img class="dock-art" src="art/boton-codice.png" alt="">${HF.t('DOCK_WIKI')}</button>
       </div></div>`;
     const on = (id, fn) => { const b = el.querySelector('#' + id); if (b) b.onclick = fn; };
     on('daily', () => HF.go('daily')); on('camp', () => HF.go('campaign')); on('new', () => HF.go('newgame'));
@@ -150,6 +167,43 @@
     on('cont', () => { try { HF.startGame(HF.deserialize(save)); } catch (e) { console.error(e); HF.store.del('savegame_active'); HF.toast(HF.lang() === 'en' ? 'Corrupted save' : 'Guardado dañado'); HF.go('hub'); } });
     on('news', () => HF.modal(`<h3><img class="modal-ico" src="assets/ui/news.webp" alt="" draggable="false"> ${HF.lang() === 'en' ? 'News' : 'Noticias'}</h3><p class="dim">${HF.lang() === 'en' ? 'Version 1.0 · local offline mode.<br>Multiplayer and online games are coming in future versions.' : 'Versión 1.0 · modo local sin conexión.<br>Multijugador y partidas en línea llegarán en próximas versiones.'}</p>
       <div class="row"><button disabled>Discord</button><button disabled>Web</button><button disabled>${HF.lang() === 'en' ? 'Social' : 'Redes'}</button></div><br><button id="x" class="pri">${HF.lang() === 'en' ? 'Close (X)' : 'Cerrar (X)'}</button>`, m => m.querySelector('#x').onclick = HF.closeModal));
+    // Banner de acción rápida: reto diario → mapa de la comunidad → partida rápida.
+    const cta = el.querySelector('#cta');
+    if (cta) {
+      const paint = (kicker, title, sub, icon, go) => {
+        cta.innerHTML = `<div class="cta-banner"><div class="cta-ico">${icon}</div><div class="grow"><div class="cta-kicker">${kicker}</div><b class="cta-title">${HF.esc(title)}</b><div class="cta-sub">${HF.esc(sub)}</div></div><button class="pri cta-go">▶ Iniciar</button></div>`;
+        cta.querySelector('.cta-go').onclick = () => { HF.sfx('click'); go(); };
+      };
+      const biomes = Object.keys(HF.BIOMES);
+      const quick = () => {
+        const spec = {
+          mode: 'skirmish', seed: Math.floor(Math.random() * 1e9), size: 'small', n: 2,
+          biome: biomes[Math.floor(Math.random() * biomes.length)],
+          fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }
+        };
+        HF.startGame(HF.makeGame(spec, HF.loadTribe()));
+      };
+      const daily = HF.dailySpec();
+      if (!doneToday) {
+        paint('RETO DIARIO', HF.dailyName ? HF.dailyName() : 'Reto diario',
+          `${HF.BIOMES[daily.biome].name} · ${daily.n} facciones · niebla completa`, '📜',
+          () => HF.startGame(HF.makeGame(daily, HF.loadTribe())));
+      } else {
+        paint('PARTIDA RÁPIDA', 'Un mapa en un toque', 'Mapa pequeño · 2 facciones', '⚡', quick);
+        if (HF.cloud && HF.cloud.getCommunityMaps) {
+          HF.cloud.getCommunityMaps().then(maps => {
+            if (!maps || !maps.length || !cta.isConnected) return;
+            const m = maps[Math.floor(Math.random() * Math.min(5, maps.length))];
+            paint('MAPA DE LA COMUNIDAD', m.name || 'Mapa de la comunidad',
+              `${m.author || 'Anónimo'} · R${m.radius || 7} · ${m.factions_count || 2} facciones`, '🌍', () => {
+                const r = HF.importMap(m.code || '');
+                if (r.error) { HF.sfx('error'); return HF.toast(r.error); }
+                HF.playMap(r.R, r.cells, r.seed, { mapId: m.id, name: m.name });
+              });
+          }).catch(() => { });
+        }
+      }
+    }
     // Posición global: se pinta con la última copia y se refresca en segundo plano.
     const stBody = el.querySelector('#stBody'), stNote = el.querySelector('#stNote');
     const paintStanding = st => {
@@ -252,7 +306,7 @@
   });
 
   // ---------- MAPAS DE LA COMUNIDAD ----------
-  HF.manualMapModal = () => HF.modal(`<h3>🗺️ Mapa por código</h3><div class="dim small">Pega un código de mapa de HexFrontier.</div>
+  HF.manualMapModal = () => HF.modal(`<h3>🗺️ Mapa por código</h3><div class="dim small">Pega un código de mapa de Federati.</div>
     <textarea id="manualMap" style="min-height:100px" placeholder="v1:7:123:..."></textarea><br>
     <div class="row"><button id="mmNo">Cancelar</button><button id="mmGo" class="pri grow">Jugar</button></div>`, m => {
     m.querySelector('#mmNo').onclick = HF.closeModal;
@@ -592,7 +646,7 @@
         <div class="row" style="margin-top:6px"><button id="syncCloud">🔄 Sincronizar</button><button id="linkDevice">🔄 Transferir a otro dispositivo</button><button id="recoverAccount">❓ Recuperar Cuenta</button></div>
       </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
-      <div class="dim small">HexFrontier v1.2 · build 112 · 🌐 Multijugador en línea</div></div></div>`;
+      <div class="dim small">Federati v1.2 · build 133 · 🌐 Multijugador en línea</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
     el.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { HF.setLang(b.dataset.lang); HF.go('settings'); });

@@ -43,6 +43,7 @@
   HF.startGame = function (g) {
     // Facción que controla este cliente (0 en local; asiento en multijugador).
     let P = g.mySeat || 0;
+    if (typeof document !== 'undefined' && document.body && document.body.classList) document.body.classList.remove('hub-bg');
     HF.closeModal();
     if (HF.onLeave) { HF.onLeave(); HF.onLeave = null; }
     HF.lastGame = { mode: g.mode, meta: g.meta };
@@ -69,6 +70,7 @@
     if (HF.bgm) { HF.bgm.start(); HF.bgm.update(g); }
     cur.board = board; HF.cur = () => cur;
     if (HF.replays) HF.replays.init(g);
+    if (HF.banter) HF.banter.init(g);
 
     function nextIdleUnit(g) {
       // Solo unidades con las DOS acciones intactas: mover y atacar.
@@ -145,9 +147,39 @@
       }
       board.draw();
     }
-    function refresh() { if (g.online) g.cur = P; sync(); hud(); overlay(); if (HF.replays) HF.replays.touch(g); if (HF.bgm) HF.bgm.update(g); }
+    function refresh() {
+      if (g.online) g.cur = P;
+      sync(); hud(); overlay();
+      if (HF.replays) HF.replays.touch(g);
+      if (HF.bgm) HF.bgm.update(g);
+      // Pánico logístico al empezar un turno en déficit (una vez por turno).
+      if (HF.banter && g.f[P] && g.f[P].deficit && g._banterPanicTurn !== g.turn) {
+        g._banterPanicTurn = g.turn;
+        HF.banter.triggerSupplyPanic(g);
+      }
+    }
     function clearSel() { st.sel = -1; st.opts = new Map(); }
     function select(i) { st.sel = i; st.focus = i; st.opts = HF.options(g, i); st.pending = null; closeDrawer(); }
+
+    function startBubbles() {
+      if (!st.bubbles.length || st.anim) return;
+      st.anim = true; let last = performance.now();
+      const loop = t => {
+        const dt = (t - last) / 1000; last = t;
+        for (const b of st.bubbles) b.life -= dt;
+        for (let k = st.bubbles.length - 1; k >= 0; k--) if (st.bubbles[k].life <= 0) st.bubbles.splice(k, 1);
+        board.draw();
+        if (st.bubbles.length && cur && cur.g === g) requestAnimationFrame(loop); else st.anim = false;
+      };
+      requestAnimationFrame(loop);
+    }
+    // El motor de banter empuja burbujas por aquí (no conoce el estado interno).
+    HF.bubbleAt = (gg, i, txt, kind, life) => {
+      if (!cur || cur.g !== gg || gg.over) return;
+      st.bubbles.push({ i, txt, kind: kind || 'ally', life: life || 3, born: performance.now() });
+      if (st.bubbles.length > 12) st.bubbles.shift();
+      startBubbles();
+    };
 
     function pumpEvents() {
       for (; st.evPtr < g.events.length; st.evPtr++) {
@@ -155,17 +187,7 @@
         if (e.i == null || !HF.visible(g, e.i)) { if (e.i == null) HF.toast(e.txt, 2800); continue; }
         st.bubbles.push({ i: e.i, txt: e.txt, kind: e.kind, life: 3, born: performance.now() });
       }
-      if (st.bubbles.length && !st.anim) {
-        st.anim = true; let last = performance.now();
-        const loop = t => {
-          const dt = (t - last) / 1000; last = t;
-          for (const b of st.bubbles) b.life -= dt;
-          for (let k = st.bubbles.length - 1; k >= 0; k--) if (st.bubbles[k].life <= 0) st.bubbles.splice(k, 1);
-          board.draw();
-          if (st.bubbles.length && cur && cur.g === g) requestAnimationFrame(loop); else st.anim = false;
-        };
-        requestAnimationFrame(loop);
-      }
+      startBubbles();
     }
 
     function describe(i) {
@@ -325,6 +347,17 @@
       const newlyIsolated = [];
       g.cells.forEach((c, i) => { if (c && c.o >= 0 && !c.sup && beforeSup[i]) newlyIsolated.push(i); });
       if (newlyIsolated.length) board.pulseCells(newlyIsolated);
+      // Banter: duelo/rencilla al quedar adyacente y pánico si se cortó el suministro.
+      if (HF.banter) {
+        const moved = g.cells[to] && g.cells[to].u;
+        if (moved && (r.kind === 'move' || r.kind === 'atk' || r.kind === 'chop')) {
+          for (const j of HF.nbs(g, to)) {
+            const n = g.cells[j];
+            if (n && n.u && HF.banter.triggerAdjacent(g, to, j)) break;
+          }
+        }
+        if (newlyIsolated.length) HF.banter.triggerSupplyPanic(g, newlyIsolated[0]);
+      }
       // el disparo parto no avanza: la unidad sigue en la casilla de origen y puede retirarse
       const u = g.cells[to].u || (r.shot ? g.cells[from].u : null);
       const at = r.shot ? from : to;
@@ -336,6 +369,7 @@
     function tap(i) {
       hideTip();
       if (st.busy || g.over) return;
+      if (HF.banter) { HF.banter.resetIdle(g); if (HF.banter.isTalking(i)) HF.banter.silence(i); }
       const c = g.cells[i];
       if (st.pending) {
         if (st.pending.cells.has(i)) {
@@ -362,6 +396,8 @@
         }
         HF.vibrate(50); HF.sfx('error'); st.pending = null; refresh(); return;
       }
+      // Voz del edificio al tocarlo (una vez por turno y con probabilidad).
+      if (HF.banter && c.b && c.b !== B.ARBOL) HF.banter.triggerBuildingBanter(g, i);
       if (st.sel >= 0 && st.opts.has(i)) {
         const o = st.opts.get(i);
         if (o.alt && o.alt.length) { chooseAction(st.sel, i, o); return; }
@@ -377,11 +413,16 @@
     board.h.onTap = tap;
     board.h.onDragStart = i => {
       if (st.busy || g.over || st.pending) return false;
+      if (HF.banter) { HF.banter.resetIdle(g); if (HF.banter.isTalking(i)) HF.banter.silence(i); }
       const c = g.cells[i];
       if (c && c.u && c.u.owner === P && HF.ready(c.u)) { if (st.sel !== i) { select(i); bark(c); renderInfo(i, ` · alcance ${st.opts.size} acciones`); refresh(); } return true; }
       return false;
     };
     board.h.onDrop = (from, to) => { if (st.sel === from && st.opts.has(to)) act(from, to); else { HF.vibrate(50); HF.sfx('error'); refresh(); } };
+    // Cualquier toque, arrastre o zoom reinicia el temporizador de inactividad.
+    const banterTouch = () => { if (HF.banter) HF.banter.resetIdle(g); };
+    el.addEventListener('pointerdown', banterTouch);
+    el.addEventListener('wheel', banterTouch, { passive: true });
 
     // ----- ficha emergente (hover/tap) de edificios y unidades -----
     const tip = q('#tip');
@@ -578,6 +619,8 @@
     HF.onLeave = () => {
       if (g._onlineStop) { try { g._onlineStop(); } catch (e) { } g._onlineStop = null; }
       if (g._clockStop) { try { g._clockStop(); } catch (e) { } g._clockStop = null; }
+      if (HF.banter) HF.banter.stop();
+      HF.bubbleAt = null;
       board.stopAnim(); if (HF.bgm) HF.bgm.stop(); document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null;
     };
     // Partida en red: sincronización con la sala (anfitrión autoritativo).
