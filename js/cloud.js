@@ -366,6 +366,45 @@
     return !!r.ok;
   }
 
+  // ---------- enlaces cortos de mapas del editor (?m=X9K2A) ----------
+  // El mapa editado no se reconstruye con semilla: la nube guarda una fila
+  // pequeña (código → v1:…). sql/short_links.sql.
+  async function shortenMap(mapCode, name) {
+    const code = String(mapCode || '');
+    if (!/^v1:/i.test(code)) return { ok: false, msg: 'Código de mapa no válido' };
+    const r = await rpcCheck('fn_hf_shorten_map', {
+      p_player: playerId(), p_secret: secretKey(), p_code: code, p_name: name || ''
+    });
+    if (r.ok && r.code) return { ok: true, code: String(r.code).toUpperCase() };
+    if (r.missing) return { ok: false, msg: 'Enlaces cortos no disponibles: falta aplicar sql/short_links.sql' };
+    return { ok: false, offline: !!r.offline, msg: r.msg || 'No se pudo crear el enlace' };
+  }
+
+  // Cache local acotada: el segundo intento funciona aunque no haya red.
+  const MAP_LINK_CACHE_MAX = 25;
+  function cacheMapLink(code, mapCode) {
+    const key = String(code || '').toUpperCase();
+    if (!key || !mapCode) return;
+    const cache = get('map_links', {});
+    cache[key] = String(mapCode);
+    const keys = Object.keys(cache);
+    if (keys.length > MAP_LINK_CACHE_MAX) {
+      for (const k of keys.slice(0, keys.length - MAP_LINK_CACHE_MAX)) delete cache[k];
+    }
+    set('map_links', cache);
+  }
+
+  async function resolveShortMap(code) {
+    const key = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (key.length < 4 || key.length > 10) return { ok: false, msg: 'Código no válido' };
+    const cache = get('map_links', {});
+    if (cache[key]) return { ok: true, code: cache[key], cached: true };
+    const r = await rpcCheck('fn_hf_resolve_map', { p_code: key });
+    if (r.ok && r.code) { cacheMapLink(key, r.code); return { ok: true, code: r.code, name: r.name }; }
+    if (r.missing) return { ok: false, msg: 'Enlaces cortos no disponibles: falta aplicar sql/short_links.sql' };
+    return { ok: false, offline: !!r.offline, msg: r.offline ? 'Sin conexión: no se pudo resolver el enlace' : (r.msg || 'Enlace no encontrado') };
+  }
+
   // ---------- clasificación por mapa (competencia asíncrona) ----------
   // Clave determinista del mapa jugado: diario y comunitario usan su id; la
   // campaña, su nivel; el resto, un hash corto de los parámetros base.
@@ -526,6 +565,7 @@
     getMapKey, submitMapScore, getMapLeaderboard, getMapRank, getGlobalTop, getPlayerStanding, getMapReplay, submitReplayCode,
     mapKeyLabel,
     publishMap, getCommunityMaps, getCommunityMap, upvoteMap,
+    shortenMap, resolveShortMap,
     queuedScores: () => get('daily_queue', []),
     lastOffline: () => lastOffline,
     replayMissing: () => replayColumnMissing,

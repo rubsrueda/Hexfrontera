@@ -198,7 +198,9 @@
     if (entry.publishedId) return HF.mapShareModal({ id: entry.publishedId, name: entry.name });
     HF.modal(`<h3>🔗 ${tr('Compartir mapa', 'Share map')}</h3>
       <p class="dim small">${tr('El enlace comparte el mapa publicado en la comunidad. Este mapa aún no está publicado.', 'The link shares the map published to the community. This map is not published yet.')}</p>
-      <div class="row"><button id="shNo">${tr('Cancelar', 'Cancel')}</button><button id="shGo" class="pri grow">🌐 ${tr('Publicar y compartir', 'Publish and share')}</button></div>`, m => {
+      <div class="row"><button id="shNo">${tr('Cancelar', 'Cancel')}</button><button id="shGo" class="pri grow">🌐 ${tr('Publicar y compartir', 'Publish and share')}</button></div>
+      <button id="shShort" style="width:100%;margin-top:8px">🔗 ${tr('Enlace corto de 5 letras (sin publicar)', 'Short 5-letter link (no publishing)')}</button>
+      <p class="dim small" style="margin-top:4px">${tr('Un código corto guardado en la nube. Sirve para cualquier mapa editado, publicado o no.', 'A short code stored in the cloud. Works for any edited map, published or not.')}</p>`, m => {
       m.querySelector('#shNo').onclick = HF.closeModal;
       m.querySelector('#shGo').onclick = () => {
         HF.closeModal();
@@ -207,7 +209,46 @@
           onDone: info => HF.mapShareModal({ id: info.id, name: info.name || entry.name })
         });
       };
+      m.querySelector('#shShort').onclick = () => { HF.closeModal(); HF.shareShortMapLink(entry); };
     });
+  };
+
+  // Enlace corto de un mapa del editor: crea (o recupera) el código en la nube
+  // y muestra la URL lista para copiar. sql/short_links.sql.
+  HF.shareShortMapLink = function (entry) {
+    entry = entry || {};
+    const code = entry.code || '';
+    if (!/^v1:/i.test(code)) return HF.toast(tr('Este mapa no tiene código válido', 'This map has no valid code'));
+    if (!HF.cloud || !HF.cloud.shortenMap) return HF.toast(tr('Enlaces cortos no disponibles', 'Short links unavailable'));
+
+    HF.toast(tr('Creando enlace…', 'Creating link…'), 1200);
+    HF.cloud.shortenMap(code, entry.name).then(r => {
+      if (!r || !r.ok || !r.code) {
+        return HF.toast((r && r.msg) || tr('No se pudo crear el enlace', 'Could not create the link'), 3600);
+      }
+      const url = HF.shareUrl('m', r.code);
+      if (!url) {
+        if (HF.askShareBase) HF.askShareBase(() => HF.shareShortMapLink(entry));
+        return HF.toast(tr('Configura la dirección pública', 'Set the public address'));
+      }
+      HF.modal(`<h3>🔗 ${tr('Enlace corto del mapa', 'Short map link')}</h3>
+        <div class="dim small">${esc(entry.name || tr('Mapa', 'Map'))} · ${tr('código', 'code')} <b>${esc(r.code)}</b></div>
+        <textarea readonly id="slUrl" style="min-height:52px;margin-top:8px">${esc(url)}</textarea>
+        <p class="dim small">${tr('Funciona sin publicar el mapa. El código se guarda en la nube y no expone tu cuenta.', 'Works without publishing. The code is stored in the cloud and does not expose your account.')}</p>
+        <div class="row"><button id="slCp" class="pri grow">${tr('Copiar enlace', 'Copy link')}</button><button id="slX">${tr('Cerrar', 'Close')}</button></div>`, m => {
+        m.querySelector('#slX').onclick = HF.closeModal;
+        m.querySelector('#slCp').onclick = () => {
+          const done = () => HF.toast(tr('Enlace copiado', 'Link copied'), 2400);
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(url).then(done).catch(() => { });
+              return;
+            }
+          } catch (e) { }
+          HF.toast(tr('Copia el enlace del cuadro', 'Copy the link from the box'), 2400);
+        };
+      });
+    }).catch(() => HF.toast(tr('No se pudo crear el enlace', 'Could not create the link')));
   };
 
   // ---------------------------------------------------------------------------

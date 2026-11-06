@@ -152,11 +152,17 @@
     HF.store.set('share_base', v);
     return v;
   };
-  // kind: 'map' | 'replay'. raw = true para códigos de repetición ya seguros.
+  // kind: 'map' | 'replay' | 'seed' | 'm'. raw = true para códigos ya seguros.
+  // 'seed' y 'm' usan query para que el enlace corto quede limpio:
+  //   https://federati.org/?seed=7K2M9QXAB
+  //   https://federati.org/?m=X9K2A
   HF.shareUrl = (kind, value, raw) => {
     const base = HF.shareBase();
     if (!base || value == null || value === '') return '';
-    return base + '#' + kind + '=' + (raw ? String(value) : encodeURIComponent(String(value)));
+    const v = raw ? String(value) : encodeURIComponent(String(value));
+    if (kind === 'seed') return base + '?seed=' + v;
+    if (kind === 'm') return base + '?m=' + v;
+    return base + '#' + kind + '=' + v;
   };
   let ac = null;
   // Crea o reanuda el AudioContext. Las políticas de autoplay lo dejan en

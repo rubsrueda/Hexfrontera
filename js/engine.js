@@ -72,7 +72,7 @@
       v: 1, mode: o.mode || 'skirmish', seed: o.seed >>> 0, R: o.R, biome: o.biome, fog: o.fog || 'FULL', difficulty: o.difficulty || 'normal',
       turn: 1, cur: 0, over: null, goal: o.goal || { type: 'conquer' }, meta: o.meta || {}, rs: (o.seed * 7 + 13) >>> 0,
       f: [], cells: null, fogMap: null, timeline: [], events: [], undo: [],
-      caravans: [], tradeBlocked: {},
+      caravans: [], tradeBlocked: {}, storms: [],
       replayLog: o.isReplay ? null : [], isReplay: !!o.isReplay, noReplay: !!o.isReplay,
       startRes: o.startRes || HF.CFG.start, _customCells: o.customCells || null,
       stat: { kills: 0, lost: 0, cuts: 0, deserts: 0, isolatedEver: false, built: 0, captured: 0, recruited: 0 }
@@ -1721,6 +1721,138 @@
   };
 
   // ---------- turnos ----------
+  // ---------- tormentas marinas (peligro ambiental) ----------
+  // Nacen sólo en mar abierto (distancia a costa >= 2), avanzan 1 casilla por
+  // turno en una dirección fija, viven 3-6 turnos y se disipan al tocar costa.
+  // Si comparten casilla con un barco en alta mar lo hunden; en aguas costeras
+  // (distancia <= 1) el barco se resguarda.
+  const stormCfg = () => (HF.CFG && HF.CFG.storm) || {};
+
+  /** Distancia en anillos desde una casilla de agua hasta la primera tierra. */
+  HF.coastDistance = function (g, i, cap) {
+    const cells = g.cells, gr = grid(g), max = cap || 6;
+    if (!cells[i]) return max + 1;
+    if (cells[i].t !== T.MAR) return 0;         // ya es tierra: distancia 0
+    let ring = [i], d = 0;
+    const seen = {};
+    seen[i] = 1;
+    while (ring.length && d <= max) {
+      d++;
+      const next = [];
+      for (const idx of ring) {
+        for (const j of gr.nb[idx]) {
+          const n = cells[j];
+          if (!n) continue;
+          if (n.t !== T.MAR) return d;          // tierra o río: costa alcanzada
+          if (seen[j]) continue;
+          seen[j] = 1;
+          next.push(j);
+        }
+      }
+      ring = next;
+    }
+    return max + 1;                             // mar abierto (o borde del mapa)
+  };
+
+  /** Índice del vecino de c en la dirección d (o null si se sale del mapa). */
+  function stormNeighbor(g, c, d) {
+    if (!c || !d) return null;
+    const gr = grid(g), q = c.q + d[0], r = c.r + d[1];
+    for (const j of gr.nb[c.i]) {
+      const n = g.cells[j];
+      if (n && n.q === q && n.r === r) return j;
+    }
+    return null;
+  }
+
+  const isNavalUnit = u => !!(u && HF.UNITS[u.type] && HF.UNITS[u.type].naval);
+
+  /** Hunde la unidad naval de la casilla si está en alta mar. */
+  function stormHit(g, c) {
+    const u = c && c.u;
+    if (!isNavalUnit(u)) return false;
+    const lethal = stormCfg().lethalCoastDist == null ? 2 : stormCfg().lethalCoastDist;
+    if (HF.coastDistance(g, c.i, 4) < lethal) return false;   // resguardo costero
+    const name = (HF.UNITS[u.type] && HF.UNITS[u.type].name) || 'Barco';
+    c.u = null;                                   // el mar se lo traga (sin tumba)
+    if (u.owner === 0) g.stat.lost += 1 + (u.cargo ? 1 : 0);
+    ev(g, c.i, '⛈ La tormenta hunde ' + name + (u.cargo ? ' con su carga' : '') + ' en alta mar', 'bad');
+    return true;
+  }
+
+  /** Crea una tormenta si el azar lo decide y hay mar abierto disponible. */
+  function stormSpawn(g, r) {
+    const cfg = stormCfg();
+    if (cfg.enabled === false) return null;
+    if (g.storms.length >= (cfg.max || 3)) return null;
+    if (r() >= (cfg.spawnChance == null ? 0.35 : cfg.spawnChance)) return null;
+
+    const gr = grid(g);
+    const min = cfg.minCoastDist == null ? 2 : cfg.minCoastDist;
+    const gap = cfg.minGap == null ? 2 : cfg.minGap;
+    const free = [];
+    for (const d of gr.list) {
+      const c = g.cells[d.i];
+      if (!c || c.t !== T.MAR) continue;
+      if (HF.coastDistance(g, d.i, 4) < min) continue;                 // sólo alta mar
+      if (g.storms.some(s => s.i === d.i)) continue;
+      if (g.storms.some(s => HF.hexDist(gr.cells[s.i] || c, c) < gap)) continue;
+      free.push(d.i);
+    }
+    if (!free.length) return null;
+
+    const i = free[r.int(free.length)];
+    const c = g.cells[i];
+    const dirs = [];
+    for (let k = 0; k < HF.DIRS.length; k++) if (stormNeighbor(g, c, HF.DIRS[k]) != null) dirs.push(k);
+    if (!dirs.length) return null;
+
+    const lo = cfg.minLife || 3, hi = Math.max(lo, cfg.maxLife || 6);
+    const s = {
+      id: (g._stormId = (g._stormId || 0) + 1),
+      i: i,
+      dir: dirs[r.int(dirs.length)],
+      life: lo + r.int((hi - lo) + 1),
+      born: g.turn
+    };
+    g.storms.push(s);
+    ev(g, i, '⛈ Se forma una tormenta en alta mar', 'info');
+    return s;
+  }
+
+  /** Avanza un turno todas las tormentas y decide nacimientos nuevos. */
+  HF.stormStep = function (g) {
+    if (!g || g.over || !g.cells) return;
+    const cfg = stormCfg();
+    if (cfg.enabled === false) return;
+    const r = rnd(g);
+    if (!g.storms) g.storms = [];
+
+    const keep = [];
+    for (const s of g.storms) {
+      const c = g.cells[s.i];
+      const j = c ? stormNeighbor(g, c, HF.DIRS[s.dir]) : null;
+      const n = j == null ? null : g.cells[j];
+      if (!n || n.t !== T.MAR) continue;      // choca con la costa: se disipa
+      s.i = j;
+      stormHit(g, n);
+      s.life -= 1;
+      if (s.life > 0) keep.push(s);
+    }
+    g.storms = keep;
+
+    // Nacimientos al final, para que la tormenta nueva no avance al nacer.
+    const born = stormSpawn(g, r);
+    if (born) stormHit(g, g.cells[born.i]);
+  };
+
+  /** Tormenta que ocupa una casilla, o null. */
+  HF.stormAt = function (g, i) {
+    if (!g || !g.storms) return null;
+    for (const s of g.storms) if (s.i === i) return s;
+    return null;
+  };
+
   function roundEnd(g) {
     // fin de ronda: tumbas, cenizas y fuegos
     for (const c of g.cells) if (c) {
@@ -1747,6 +1879,9 @@
       }
     }
     for (const i of add) g.cells[i].b = B.ARBOL;
+    // Peligro ambiental: tormentas en alta mar (antes de cerrar la ronda, para
+    // que los avisos queden en el turno que termina).
+    HF.stormStep(g);
     g.turn++;
     // Caravanas: aparecen/avanzan/entregan al empezar la ronda nueva.
     HF.syncCaravans(g);

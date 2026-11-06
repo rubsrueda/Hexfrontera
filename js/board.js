@@ -721,6 +721,112 @@
     this.pulses = this.pulses.filter(p => (now - p.born) / 1000 <= .8);
     ctx.globalAlpha = 1;
   };
+  // ---------- tormentas marinas ----------
+  // El arte es una ficha hexagonal (art/tormenta.png): se recorta con la misma
+  // silueta de la casilla para que no se vea el fondo cuadrado.
+  let stormSprite = null, stormTried = false;
+  function stormImage() {
+    if (stormTried || typeof Image !== 'function') return stormSprite;
+    stormTried = true;
+    try { const im = new Image(); im.src = 'art/tormenta.png'; stormSprite = im; } catch (e) { stormSprite = null; }
+    return stormSprite;
+  }
+
+  P._drawStorms = function (ctx, fs, now) {
+    const g = this.game, cells = this.cells, fog = this.fogMap;
+    if (!g || !g.storms || !g.storms.length) return;
+    const t = now / 1000;
+    const img = stormImage();
+    const ready = !!(img && img.complete && img.naturalWidth);
+
+    for (const s of g.storms) {
+      const c = cells[s.i];
+      if (!c) continue;
+      if (fog && !fog[c.i]) continue;                  // no se revela en niebla total
+      const [x, y0] = this.toScreen.apply(this, this.pos(c));
+      const y = y0 - this._level(c);
+
+      // 1. Mar encrespado bajo la tormenta
+      ctx.save();
+      hexPath(ctx, x, y, fs * .99);
+      const grad = ctx.createRadialGradient(x, y, fs * .08, x, y, fs);
+      grad.addColorStop(0, 'rgba(16,26,44,.92)');
+      grad.addColorStop(.6, 'rgba(10,18,32,.72)');
+      grad.addColorStop(1, 'rgba(6,10,20,.35)');
+      ctx.fillStyle = grad; ctx.fill();
+      ctx.restore();
+
+      // 2. La ficha de tormenta (recortada a la silueta del hexágono)
+      ctx.save();
+      hexPath(ctx, x, y, fs * .99);
+      ctx.clip();
+      if (ready) {
+        // El hexágono dibujado ocupa ~89% del alto de la imagen.
+        const h = fs * 2.24, w = h * (img.naturalWidth / img.naturalHeight);
+        const sway = Math.sin(t * 1.7 + (s.id || 0)) * fs * .035;
+        ctx.globalAlpha = .97;
+        ctx.drawImage(img, x - w / 2 + sway, y - h / 2, w, h);
+      } else {
+        // Respaldo procedural (mientras carga o si falta el archivo)
+        const g2 = ctx.createRadialGradient(x, y, fs * .1, x, y, fs);
+        g2.addColorStop(0, 'rgba(120,170,220,.55)');
+        g2.addColorStop(.5, 'rgba(40,70,110,.75)');
+        g2.addColorStop(1, 'rgba(8,14,26,.85)');
+        ctx.fillStyle = g2; ctx.fill();
+        ctx.strokeStyle = 'rgba(200,225,255,.55)';
+        ctx.lineWidth = Math.max(1, fs * .05);
+        for (let k = 0; k < 3; k++) {
+          const rr = fs * (.35 + k * .2), a0 = t * 1.8 + k * 2.1;
+          ctx.beginPath(); ctx.arc(x, y, rr, a0, a0 + 1.9); ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      // 3. Pips de vida restante
+      const pips = Math.max(0, Math.min(6, s.life || 0));
+      for (let k = 0; k < pips; k++) {
+        ctx.beginPath();
+        ctx.arc(x + (k - (pips - 1) / 2) * fs * .22, y + fs * .62, fs * .055, 0, 7);
+        ctx.fillStyle = 'rgba(226,238,255,.9)'; ctx.fill();
+      }
+
+      // 4. Vector de desplazamiento: hacia dónde irá el próximo turno
+      const d = HF.DIRS[s.dir] || HF.DIRS[0];
+      const nc = this._neighbor ? this._neighbor(c, d[0], d[1]) : null;
+      if (nc) {
+        const [tx0, ty0] = this.toScreen.apply(this, this.pos(nc));
+        const ty = ty0 - this._level(nc);
+        const ang = Math.atan2(ty - y, tx0 - x);
+        const rr = fs * .92;                            // desde el borde de la casilla
+        const sx = x + Math.cos(ang) * rr, sy = y + Math.sin(ang) * rr;
+        const ex = x + Math.cos(ang) * (fs * 1.62), ey = y + Math.sin(ang) * (fs * 1.62);
+
+        ctx.save();
+        ctx.setLineDash([Math.max(3, fs * .16), fs * .12]);
+        ctx.lineDashOffset = -t * fs * .5;
+        ctx.strokeStyle = 'rgba(255,214,120,.92)';
+        ctx.lineWidth = Math.max(2, fs * .085);
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.setLineDash([]);
+        // punta de flecha
+        const ah = Math.max(6, fs * .28);
+        ctx.fillStyle = 'rgba(255,214,120,.95)';
+        ctx.beginPath();
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - Math.cos(ang - .42) * ah, ey - Math.sin(ang - .42) * ah);
+        ctx.lineTo(ex - Math.cos(ang + .42) * ah, ey - Math.sin(ang + .42) * ah);
+        ctx.closePath(); ctx.fill();
+        // casilla de destino: aviso de peligro
+        const pulse = .5 + .5 * Math.sin(t * 3.1);
+        ctx.globalAlpha = .35 + pulse * .35;
+        ctx.strokeStyle = 'rgba(255,150,120,.95)';
+        ctx.lineWidth = Math.max(1.5, fs * .05);
+        hexPath(ctx, tx0, ty, fs * .92); ctx.stroke();
+        ctx.restore();
+      }
+    }
+  };
+
   P.draw = function () {
     const ctx = this.ctx; if (!ctx || !this.cells) return;
     const d = this.dpr, z = this.cam.z, s = this.size;
@@ -1087,6 +1193,8 @@
       vg.addColorStop(0, 'rgba(10,15,29,0)'); vg.addColorStop(.7, 'rgba(10,15,29,.18)'); vg.addColorStop(1, 'rgba(10,15,29,.68)');
       ctx.fillStyle = vg; ctx.fillRect(0, 0, this.W, this.H);
     }
+    // Peligro ambiental por encima del terreno y las unidades.
+    if (this.mode === 'play' && !editor) this._drawStorms(ctx, fs, now);
     for (const [i, o] of this.over) {
       const c = this.cells[i]; if (!c) continue;
       const [x, y0] = this.toScreen(...this.pos(c));

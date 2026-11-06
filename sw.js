@@ -1,15 +1,15 @@
 // La version del cache debe subir en cada release: si no, el navegador sigue
 // sirviendo el JS viejo y los cambios de arte/tamaÃ±os no llegan a la partida.
-const C = 'federati-v152';
+const C = 'federati-v155';
 const FILES = [
   './', 'index.html', 'css/style.css', 'manifest.json', 'icon.svg',
   'fonts/plus-jakarta-sans-latin.woff2', 'fonts/plus-jakarta-sans-latin-ext.woff2', 'fonts/plus-jakarta-sans-cyrillic.woff2',
-  'js/util.js', 'js/telemetry.js', 'js/platform.js', 'js/config.js', 'js/security.js', 'js/music.js', 'js/art.js', 'js/artdata.js', 'js/data.js', 'js/mapgen.js',
+  'js/util.js', 'js/telemetry.js', 'js/platform.js', 'js/config.js', 'js/security.js', 'js/music.js', 'js/art.js', 'js/artdata.js', 'js/data.js', 'js/links.js', 'js/mapgen.js',
   'js/engine.js', 'js/ai.js', 'js/board.js', 'js/cloud.js', 'js/progress.js', 'js/i18n.js', 'js/names.js',
   'js/banter_data.js', 'js/banter.js', 'js/screens.js', 'js/feedback.js', 'js/online.js', 'js/game.js', 'js/editor.js', 'js/maps.js', 'js/replay.js', 'js/replays.js', 'js/main.js',
   // pantalla de introducciÃ³n / lore (especificacion_pantalla_lore.md)
   'js/ui/components/lore-screen/lore-data.js', 'js/ui/components/lore-screen/LoreScreen.js', 'js/ui/components/lore-screen/lore-screen.css',
-  'art/escena.png', 'art/pantalla.png', 'art/mapa.png', 'art/informacion.png', 'art/botones.png',
+  'art/escena.png', 'art/pantalla.png', 'art/mapa.png', 'art/informacion.png', 'art/botones.png', 'art/tormenta.png',
   // arte que no va incrustado en artdata.js (el resto son data URIs)
   'art/nube.png', 'art/arbol.png', 'art/carreta.png', 'art/urca.png',
   'art/boton-reto-diario.png', 'art/boton-reproducir.png', 'art/boton-mapa.png', 'art/boton-historial.png',

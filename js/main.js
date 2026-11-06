@@ -30,6 +30,42 @@
     HF.store.recover('tribe_profile');
 
     const hash = location.hash || '';
+
+    // Enlace corto de mapa del editor: federati.org/?m=X9K2A
+    // El código se resuelve en la nube (tabla pequeña de enlaces).
+    const shortMapCode = HF.links && HF.links.shortMapFromUrl ? HF.links.shortMapFromUrl() : null;
+    if (shortMapCode) {
+      dropBootSplash();
+      const fail = (msg) => { if (msg) HF.toast(msg, 3200); openHub(); };
+      if (!HF.cloud || !HF.cloud.resolveShortMap) return fail('Enlaces cortos no disponibles');
+      HF.toast('Abriendo mapa compartido…', 1200);
+      HF.cloud.resolveShortMap(shortMapCode).then(r => {
+        if (!r || !r.ok || !r.code) return fail((r && r.msg) || 'Enlace no válido');
+        HF.openSharedMap(r.code);
+      }).catch(() => fail('No se pudo abrir el enlace'));
+      return;
+    }
+
+    // Enlace corto de mapa: federati.org/?seed=XXXXXXXXX
+    // Se resuelve sin red: la semilla reconstruye el mapa idéntico.
+    const seedInUrl = /[?&](?:seed|s)=/.test(String(location.search || '')) || /^#(?:seed|s)=/.test(hash);
+    if (seedInUrl) {
+      const spec = HF.links && HF.links.fromUrl ? HF.links.fromUrl() : null;
+      dropBootSplash();
+      if (!spec) {
+        HF.toast('Enlace de mapa no válido');
+        openHub();
+        return;
+      }
+      try {
+        HF.startGame(HF.makeGame(Object.assign({ mode: 'skirmish', goal: { type: 'conquer' } }, spec), HF.loadTribe()));
+      } catch (e) {
+        console.error('[links] no se pudo abrir el mapa compartido:', e);
+        openHub();
+      }
+      return;
+    }
+
     if (hash.startsWith('#map=')) {
       // Enlace compartido de un mapa publicado en la comunidad.
       dropBootSplash();

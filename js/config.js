@@ -87,6 +87,24 @@
       autumnWheatFood: 1                      // otoño: +1 comida por casilla de trigo
     },
     roads: { fastCost: 0.25 },                // camino/asentamiento -> camino/asentamiento
+    // Peligro ambiental: tormentas en alta mar.
+    //   spawnChance   probabilidad por ronda de que nazca una tormenta nueva
+    //   max           tormentas vivas a la vez
+    //   minLife/maxLife  duración en turnos (se sortea entre ambos)
+    //   minCoastDist  sólo nacen a >= 2 anillos de la costa (mar abierto)
+    //   lethalCoastDist  a partir de aquí (>= 2) la tormenta hunde al barco;
+    //                 en distancia <= 1 el barco se resguarda en la costa
+    //   minGap        separación mínima entre tormentas (hexágonos)
+    storm: {
+      enabled: true,
+      spawnChance: 0.35,
+      max: 3,
+      minLife: 3,
+      maxLife: 6,
+      minCoastDist: 2,
+      lethalCoastDist: 2,
+      minGap: 2
+    },
     commerce: {
       maxRoutes: 3,        // rutas terrestres (parejas más lejanas por calzada)
       maxSeaRoutes: 3,     // rutas marítimas (parejas más lejanas por agua)

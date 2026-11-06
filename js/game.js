@@ -732,10 +732,12 @@
     }
     q('#board').onclick = scoreboard;
     q('#menu').onclick = () => HF.modal(`<h3>${HF.t('GAME_MENU')}</h3><div class="dim small">🎯 ${goalText(g)}</div><br>
-      <div class="grid3" style="grid-template-columns:1fr"><button id="r" class="pri">${HF.t('GAME_CONTINUE')}</button><button id="c">${HF.t('GAME_CENTER')}</button><button id="w">${HF.t('GAME_CODEX')}</button><button id="rp">🎬 Compartir partida</button><button id="s">${HF.t('GAME_SAVE_EXIT')}</button><button id="a">${HF.t('GAME_ABANDON')}</button></div>`, m => {
+      <div class="grid3" style="grid-template-columns:1fr"><button id="r" class="pri">${HF.t('GAME_CONTINUE')}</button><button id="c">${HF.t('GAME_CENTER')}</button><button id="w">${HF.t('GAME_CODEX')}</button><button id="sm">🔗 Enlace del mapa</button><button id="rp">🎬 Compartir partida</button><button id="s">${HF.t('GAME_SAVE_EXIT')}</button><button id="a">${HF.t('GAME_ABANDON')}</button></div>`, m => {
       m.querySelector('#r').onclick = HF.closeModal;
       m.querySelector('#c').onclick = () => { board.fit(); HF.closeModal(); };
       m.querySelector('#w').onclick = () => HF.codex();
+      const sm = m.querySelector('#sm');
+      if (sm) sm.onclick = () => { HF.closeModal(); HF.shareMapLink(g); };
       m.querySelector('#rp').onclick = () => { HF.closeModal(); if (HF.replays) HF.replays.share(g.replayId, g); };
       m.querySelector('#s').onclick = () => { save(); HF.go('hub'); };
       m.querySelector('#a').onclick = () => { if (confirm(HF.lang() === 'en' ? 'Surrender the game? Progress will be lost.' : '¿Abandonar la partida? Se perderá el progreso.')) { HF.store.del('savegame_active'); HF.go('hub'); } };
@@ -802,7 +804,8 @@
           <div id="mapLB" class="dim small" style="margin-top:6px">Cargando clasificación mundial…</div>
         </div>
         <div class="dim small" style="text-align:center">Conquistadas ${s.captured} · Edificios ${s.built} · Deserciones ${s.deserts}</div><br>
-        <button id="btnShareReplay" class="pri" style="width:100%;margin-bottom:6px">🎬 Compartir Repetición</button>
+        <button id="btnShareMap" class="pri" style="width:100%;margin-bottom:6px">🔗 Enlace corto del mapa</button>
+        <button id="btnShareReplay" style="width:100%;margin-bottom:6px">🎬 Compartir Repetición</button>
         <div class="dim small" style="text-align:center;margin:2px 0 6px">${HF.t('FB_PROMPT')}</div>
         <button id="btnFeedback" style="width:100%;margin-bottom:6px">💬 ${HF.t('FB_CTA')}</button>
         <div class="row"><button id="menu2" class="grow">Menú</button>${g.mode === 'campaign' && won && m.idx < 29 ? '<button id="nx" class="pri grow">Siguiente ▶</button>' : '<button id="again" class="pri grow">Repetir</button>'}</div>`, mm => {
@@ -869,6 +872,8 @@
         if (ag) ag.onclick = () => HF.go(g.mode === 'campaign' ? 'campaign' : g.mode === 'daily' ? 'daily' : 'newgame');
         const fbk = mm.querySelector('#btnFeedback');
         if (fbk) fbk.onclick = () => { if (HF.feedback) HF.feedback.open({ stack: true }); };
+        const shm = mm.querySelector('#btnShareMap');
+        if (shm) shm.onclick = () => HF.shareMapLink(g);
         const sh = mm.querySelector('#btnShareReplay');
         if (sh) sh.onclick = async () => {
           sh.disabled = true;
@@ -988,5 +993,50 @@
     if (capi >= 0) board.centerOn(capi);
     info(`${goalText(g)}`);
     if (g.over) showEnd();
+  };
+
+  // ---------------------------------------------------------------------------
+  // Enlace corto del mapa: federati.org/?seed=XXXXXXXXX
+  // Una escaramuza es determinista (semilla + tamaño + bioma + facciones +
+  // niebla + dificultad), así que 9 caracteres reproducen el mapa idéntico.
+  // ---------------------------------------------------------------------------
+  HF.shareMapLink = function (g) {
+    if (!HF.links) return HF.toast('Enlaces no disponibles');
+    if (!g) return;
+
+    if (g.mode !== 'skirmish') {
+      // Campaña y diario se identifican por su nivel/fecha; los mapas de la
+      // comunidad llevan casillas editadas que una semilla no puede reproducir.
+      return HF.toast(g.mode === 'online'
+        ? 'Las partidas en línea se comparten desde su sala'
+        : 'Solo las escaramuzas se comparten con enlace de semilla');
+    }
+
+    const short = HF.links.urlFromGame(g);
+    if (!short) {
+      if (HF.askShareBase) HF.askShareBase(() => HF.shareMapLink(g));
+      return HF.toast('Configura la dirección pública para compartir enlaces');
+    }
+
+    const copy = (txt) => {
+      const done = () => HF.toast('Enlace copiado', 2400);
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt).then(done).catch(() => { });
+          return;
+        }
+      } catch (e) { }
+      HF.toast('Copia el enlace del cuadro', 2400);
+    };
+
+    HF.modal(`<h3>🔗 Enlace del mapa</h3>
+      <div class="dim small">9 caracteres. Quien lo abra jugará exactamente esta escaramuza.</div>
+      <textarea readonly id="mapUrl" style="min-height:52px;margin-top:8px">${HF.esc(short)}</textarea>
+      <div class="dim small" style="margin-top:4px">Semilla ${HF.esc(String(g.seed))} · ${HF.SIZES[HF.links.fromGame(g).size].name} · ${HF.BIOMES[g.biome].name}</div>
+      <div class="row" style="margin-top:8px"><button id="cpMap" class="pri grow">Copiar enlace</button><button id="xMap">Cerrar</button></div>`, m => {
+      const cp = m.querySelector('#cpMap');
+      if (cp) cp.onclick = () => copy(short);
+      m.querySelector('#xMap').onclick = HF.closeModal;
+    });
   };
 })(window);
