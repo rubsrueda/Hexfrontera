@@ -1,6 +1,8 @@
 (function (G) {
   const HF = G.HF = G.HF || {};
   const BASE = 'https://wwafeitljxnlvmjtwsjz.supabase.co/rest/v1';
+  // Clave PÚBLICA (publishable/anon). La service_role NUNCA va en el cliente:
+  // si alguna vez hace falta, se usa en una Edge Function con secreto de servidor.
   const API_KEY = 'sb_publishable_9jlzQGRdEZhBtbofd-poZw_pIG74t42';
   const HEADERS = {
     apikey: API_KEY,
@@ -11,24 +13,41 @@
   const TIMEOUT = 1500;
   const enc = encodeURIComponent;
 
+  // ---------- política de seguridad ----------
+  // El servidor (PostgreSQL) es la única fuente de verdad para puntuaciones,
+  // votos y licencia: sql/security_hardening.sql. Si las RPC no están
+  // desplegadas todavía, se usa la ruta antigua para no romper el juego; en
+  // cuanto se aplica el SQL, manda el servidor.
+  const cfgSec = () => (HF.CFG && HF.CFG.security) || {};
+  const strict = () => cfgSec().strictServerValidation !== false;
+  const onlineAllowed = () => !(HF.security && HF.security.locked);
+
   // ---------- almacenamiento local ----------
   const get = (k, d) => HF.store.get(k, d);
   const set = (k, v) => HF.store.set(k, v);
 
   function makeId() {
-    let id;
-    do { id = 'HF-' + Math.floor(1000 + Math.random() * 9000); } while (get('player_id', null) === id);
-    return id;
+    // Identidad opaca y persistente. Antes eran 4 dígitos: dos jugadores podían
+    // colisionar y el upsert por player_id fusionaba cuentas (historial y tribu).
+    const t = Date.now().toString(36).toUpperCase().slice(-4);
+    const r = (Math.random().toString(36) + '000000').slice(2, 8).toUpperCase();
+    return 'HF-' + t + r;
   }
   function makeKey() { return 'K-' + Math.random().toString(36).substring(2, 8).toUpperCase(); }
   function playerId() {
     let id = get('player_id', null);
-    if (!id) { id = makeId(); set('player_id', id); }
+    if (!id) {
+      id = makeId();
+      if (!set('player_id', id)) console.warn('[cloud] no se pudo persistir player_id: la identidad no sobrevivirá al reinicio');
+    }
     return id;
   }
   function secretKey() {
     let k = get('secret_key', null);
-    if (!k) { k = makeKey(); set('secret_key', k); }
+    if (!k) {
+      k = makeKey();
+      if (!set('secret_key', k)) console.warn('[cloud] no se pudo persistir secret_key');
+    }
     return k;
   }
   const isPremium = () => !!get('is_premium', false);
@@ -52,6 +71,7 @@
   let lastOffline = false;
   async function request(endpoint, options) {
     options = options || {};
+    if (!onlineAllowed()) return { ok: false, blocked: true, offline: false };
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { lastOffline = true; return { ok: false, offline: true }; }
     if (typeof G.fetch !== 'function') { lastOffline = true; return { ok: false, offline: true }; }
     const ms = options.timeout || TIMEOUT;
@@ -76,36 +96,97 @@
     }
   }
 
+  // RPC genérica (más margen: crear sala o publicar un estado puede tardar).
+  const rpcRaw = (fn, args, ms) => request('/rpc/' + fn, { method: 'POST', body: args || {}, timeout: ms || 9000 });
+
+  // RPC "validada": distingue "no existe la función" (falta migrar el SQL) de
+  // "el servidor dijo que no" (msg). Así el cliente puede degradar con criterio.
+  async function rpcCheck(fn, args, ms) {
+    if (!onlineAllowed()) return { ok: false, blocked: true, missing: false };
+    const r = await rpcRaw(fn, args, ms);
+    if (r.ok) {
+      const d = r.data || {};
+      return Object.assign({ ok: d.ok !== false }, d, { rpc: true });
+    }
+    // 404/400 en PostgREST = función inexistente o firma distinta.
+    const missing = (r.status === 404) || (r.status === 400);
+    return { ok: false, missing, offline: !!r.offline, status: r.status, msg: d3msg(r.data) };
+  }
+  function d3msg(data) {
+    if (!data) return '';
+    if (typeof data === 'string') return data;
+    return String((data && (data.message || data.msg || data.error)) || '');
+  }
+
   // ---------- identidad ----------
   function initIdentity() {
     const id = playerId(), key = secretKey();
     if (!get('cloud_registered', false)) {
-      // Upsert silencioso: si ya existe la fila, no duplica.
-      request('/hf_players?on_conflict=player_id', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-        body: Object.assign({ player_id: id, secret_key: key }, profileData())
-      }).then(r => { if (r && r.ok) set('cloud_registered', true); }).catch(() => { });
+      const p = profileData();
+      // 1) Camino nuevo: registro validado en servidor (no sobreescribe cuentas).
+      rpcCheck('fn_hf_register', {
+        p_player: id, p_secret: key,
+        p_tribe_name: p.tribe_name, p_tribe: p.tribe_data, p_stats: p.stats_data
+      }).then(r => {
+        if (r.ok) { set('cloud_registered', true); return; }
+        if (!r.missing) return;                 // el servidor rechazó: no insistir
+        // 2) Compatibilidad: instalaciones sin sql/security_hardening.sql.
+        return request('/hf_players?on_conflict=player_id', {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+          body: Object.assign({ player_id: id, secret_key: key }, p)
+        }).then(rr => { if (rr && rr.ok) set('cloud_registered', true); });
+      }).catch(() => { });
     }
+    // Si una edición de la tribu se quedó sin subir (cierre inesperado), se
+    // reintenta al arrancar: el perfil de la nube vuelve a coincidir.
+    if (get('tribe_dirty', false)) saveProfileCloud().catch(() => { });
     return { player_id: id, secret_key: key };
   }
 
   async function saveProfileCloud() {
-    const id = playerId(), key = secretKey();
-    const r = await request(`/hf_players?player_id=eq.${enc(id)}&secret_key=eq.${enc(key)}`, {
-      method: 'PATCH', body: profileData()
+    const id = playerId(), key = secretKey(), p = profileData();
+    const r = await rpcCheck('fn_hf_save_profile', {
+      p_player: id, p_secret: key,
+      p_tribe_name: p.tribe_name, p_tribe: p.tribe_data, p_stats: p.stats_data
     });
-    if (r.ok) set('cloud_registered', true);
-    return r;
+    if (r.ok) { set('cloud_registered', true); set('tribe_dirty', false); return { ok: true, data: r }; }
+    if (!r.missing) return { ok: false, offline: !!r.offline, msg: r.msg };
+    // Compatibilidad pre-migración.
+    const legacy = await request(`/hf_players?player_id=eq.${enc(id)}&secret_key=eq.${enc(key)}`, {
+      method: 'PATCH', body: p
+    });
+    if (legacy.ok) { set('cloud_registered', true); set('tribe_dirty', false); }
+    return legacy;
   }
 
-  function restoreFromRow(row) {
+  // Subida diferida del perfil (la tribu se edita al teclear/colorear).
+  let profileTimer = 0;
+  function saveProfileSoon(delay) {
+    set('tribe_dirty', true);
+    if (profileTimer) G.clearTimeout(profileTimer);
+    const wait = delay == null ? 1200 : delay;
+    profileTimer = G.setTimeout(() => {
+      profileTimer = 0;
+      saveProfileCloud().catch(() => { });
+    }, wait);
+  }
+
+  // Restaura una fila de la nube en local. `force` lo usan vincular/recuperar
+  // (el usuario lo pide explícitamente); el resto conserva la tribu local si es
+  // más reciente que la copia de la nube.
+  function restoreFromRow(row, force) {
     if (!row) return false;
+    if (row.tribe_data && typeof row.tribe_data === 'object') {
+      const local = get('tribe_profile', null);
+      const localAt = +(local && local.updatedAt) || 0;
+      const cloudAt = +(row.tribe_data.updatedAt) || 0;
+      if (force || !local || cloudAt > localAt) set('tribe_profile', row.tribe_data);
+    }
     set('player_id', row.player_id);
-    set('secret_key', row.secret_key);
+    if (row.secret_key) set('secret_key', row.secret_key);
     set('is_premium', !!row.is_premium);
     set('recovery_email', row.recovery_email || '');
-    if (row.tribe_data && typeof row.tribe_data === 'object') set('tribe_profile', row.tribe_data);
     if (row.stats_data && typeof row.stats_data === 'object') {
       const st = Object.assign({}, row.stats_data);
       if (st.campaign_progress) { set('campaign_progress', st.campaign_progress); delete st.campaign_progress; }
@@ -116,39 +197,74 @@
   }
 
   async function linkDevice(targetId, targetKey) {
-    const r = await request(`/hf_players?player_id=eq.${enc(String(targetId || '').trim())}&secret_key=eq.${enc(String(targetKey || '').trim())}&select=*`);
-    if (!r.ok) return { ok: false, offline: !!r.offline, msg: r.offline ? 'Modo sin conexión' : 'ID o clave incorrecta' };
-    const row = Array.isArray(r.data) ? r.data[0] : r.data;
+    const pid = String(targetId || '').trim();
+    const pkey = String(targetKey || '').trim();
+    if (!pid || !pkey) return { ok: false, msg: 'ID o clave incorrecta' };
+
+    // El servidor devuelve el perfil SIN la clave; la clave la aporta el jugador.
+    const r = await rpcCheck('fn_hf_profile', { p_player: pid, p_secret: pkey });
+    if (r.ok && r.player_id) {
+      restoreFromRow(Object.assign({ secret_key: pkey }, r), true);
+      return { ok: true };
+    }
+    if (!r.missing) return { ok: false, offline: !!r.offline, msg: r.offline ? 'Modo sin conexión' : 'ID o clave incorrecta' };
+
+    // Compatibilidad pre-migración: nunca se pide select=* (eso exponía la clave).
+    const legacy = await request(`/hf_players?player_id=eq.${enc(pid)}&secret_key=eq.${enc(pkey)}&select=player_id,tribe_name,tribe_data,stats_data,is_premium,recovery_email`);
+    if (!legacy.ok) return { ok: false, offline: !!legacy.offline, msg: legacy.offline ? 'Modo sin conexión' : 'ID o clave incorrecta' };
+    const row = Array.isArray(legacy.data) ? legacy.data[0] : legacy.data;
     if (!row) return { ok: false, msg: 'ID o clave incorrecta' };
-    restoreFromRow(row);
-    return { ok: true, player: row };
+    restoreFromRow(Object.assign({ secret_key: pkey }, row), true);
+    return { ok: true };
   }
 
   async function refreshProfile() {
-    const id = playerId();
-    const r = await request(`/hf_players?player_id=eq.${enc(id)}&select=*`);
-    if (!r.ok) return r;
-    const row = Array.isArray(r.data) ? r.data[0] : r.data;
+    const id = playerId(), key = secretKey();
+    const r = await rpcCheck('fn_hf_profile', { p_player: id, p_secret: key });
+    if (r.ok && r.player_id) { restoreFromRow(Object.assign({ secret_key: key }, r)); return { ok: true, data: r }; }
+    if (!r.missing) return { ok: false, offline: !!r.offline };
+    // Compatibilidad: sin select=* (la clave ya no viaja al navegador).
+    const legacy = await request(`/hf_players?player_id=eq.${enc(id)}&select=player_id,tribe_name,tribe_data,stats_data,is_premium,recovery_email`);
+    if (!legacy.ok) return legacy;
+    const row = Array.isArray(legacy.data) ? legacy.data[0] : legacy.data;
     if (row) restoreFromRow(row);
     return { ok: !!row, data: row };
   }
 
   async function setRecoveryEmail(email) {
     const id = playerId(), key = secretKey();
-    const r = await request(`/hf_players?player_id=eq.${enc(id)}&secret_key=eq.${enc(key)}`, {
-      method: 'PATCH', body: { recovery_email: String(email || '').trim(), is_premium: true }
+    const value = String(email || '').trim();
+    const r = await rpcCheck('fn_hf_set_recovery_email', { p_player: id, p_secret: key, p_email: value });
+    if (r.ok) { set('recovery_email', value); return { ok: true }; }
+    if (!r.missing) return { ok: false, offline: !!r.offline, msg: r.msg || 'No se pudo guardar el correo' };
+
+    // Compatibilidad: la licencia premium NO se regala desde el cliente; el
+    // servidor mantiene el valor que ya tuviera.
+    const legacy = await request(`/hf_players?player_id=eq.${enc(id)}&secret_key=eq.${enc(key)}`, {
+      method: 'PATCH', body: { recovery_email: value }
     });
-    if (r.ok) { set('recovery_email', String(email || '').trim()); set('is_premium', true); }
-    return r;
+    if (legacy.ok) set('recovery_email', value);
+    return legacy;
   }
 
+  // Recuperación: se pide al servidor y NUNCA se recibe la clave secreta.
+  // Sin el SQL aplicado, esta función queda deshabilitada a propósito: la ruta
+  // antigua (SELECT por correo) permitía quedarse con la cuenta de otro.
   async function recoverByEmail(email) {
-    const r = await request(`/hf_players?recovery_email=eq.${enc(String(email || '').trim())}&select=*`);
-    if (!r.ok) return { ok: false, offline: !!r.offline, msg: r.offline ? 'Modo sin conexión' : 'No se encontró la cuenta' };
-    const row = Array.isArray(r.data) ? r.data[0] : r.data;
-    if (!row) return { ok: false, msg: 'No se encontró la cuenta' };
-    restoreFromRow(row);
-    return { ok: true, player: row };
+    const value = String(email || '').trim();
+    const r = await rpcCheck('fn_hf_recover_request', { p_email: value });
+    if (r.ok) {
+      return {
+        ok: false,
+        pending: true,
+        playerId: r.player_id || '',
+        msg: 'Solicitud registrada. Necesitas el código de rescate enviado a tu correo.'
+      };
+    }
+    if (r.missing) {
+      return { ok: false, msg: 'Recuperación no disponible: falta aplicar sql/security_hardening.sql' };
+    }
+    return { ok: false, offline: !!r.offline, msg: r.offline ? 'Modo sin conexión' : (r.msg || 'No se encontró la cuenta') };
   }
 
   // ---------- desafío diario ----------
@@ -159,6 +275,18 @@
   }
   async function submitDailyScore(score) {
     score = Object.assign({}, score || {});
+    const id = playerId(), key = secretKey();
+    // El servidor decide si el intento es oficial (primero del día).
+    const rpc = await rpcCheck('fn_hf_submit_daily', {
+      p_player: id, p_secret: key,
+      p_date: score.date_key, p_turns: score.turns, p_surplus: score.surplus,
+      p_tribe: score.tribe_name, p_crest: score.crest, p_color: score.color_hex
+    });
+    if (rpc.rpc || rpc.ok || rpc.missing === false) {
+      if (rpc.ok) return { ok: true, official: !!rpc.official, data: rpc };
+      if (rpc.practice) return { ok: false, practice: true, msg: rpc.msg || 'Intento de práctica' };
+      if (!rpc.offline) return { ok: false, msg: rpc.msg || 'No se aceptó la marca' };
+    }
     const r = await request('/hf_daily_scores', { method: 'POST', body: score });
     if (r.ok) return r;
     return queueDaily(score);
@@ -169,10 +297,19 @@
     if (!q.length) return { ok: true, pending: 0 };
     const left = [];
     for (const score of q) {
-      const r = await request('/hf_daily_scores', { method: 'POST', body: score });
-      if (!r.ok) {
+      const rpc = await rpcCheck('fn_hf_submit_daily', {
+        p_player: playerId(), p_secret: secretKey(),
+        p_date: score.date_key, p_turns: score.turns, p_surplus: score.surplus,
+        p_tribe: score.tribe_name, p_crest: score.crest, p_color: score.color_hex
+      });
+      if (rpc.ok || rpc.practice) continue;          // aceptado o ya oficial
+      if (rpc.missing) {
+        const r = await request('/hf_daily_scores', { method: 'POST', body: score });
+        if (r.ok) continue;
         left.push(score);
-        if (r.offline) { for (const x of q.slice(q.indexOf(score) + 1)) left.push(x); break; }
+      } else {
+        left.push(score);
+        if (rpc.offline) { for (const x of q.slice(q.indexOf(score) + 1)) left.push(x); break; }
       }
     }
     set('daily_queue', left);
@@ -185,24 +322,43 @@
 
   // ---------- mapas comunitarios ----------
   async function publishMap(mapData) {
+    const d = mapData || {};
+    const r = await rpcCheck('fn_hf_publish_map', {
+      p_player: playerId(), p_secret: secretKey(),
+      p_name: d.name, p_code: d.code,
+      p_radius: +(d.radius || 7), p_factions: +(d.factions_count || 2)
+    });
+    if (r.ok) return { ok: true, data: { id: r.id } };
+    if (!r.missing) return { ok: false, offline: !!r.offline, msg: r.msg };
     return request('/hf_community_maps', { method: 'POST', body: mapData });
   }
   async function getCommunityMaps() {
     const r = await request('/hf_community_maps?order=upvotes.desc&limit=20');
     return r.ok && Array.isArray(r.data) ? r.data : [];
   }
+  // Una fila concreta: la usan los enlaces #map=<id> para abrir un mapa compartido.
+  async function getCommunityMap(mapId) {
+    const r = await request(`/hf_community_maps?id=eq.${enc(mapId)}&select=*`);
+    return r.ok && Array.isArray(r.data) ? (r.data[0] || null) : null;
+  }
   async function upvoteMap(mapId) {
     const voted = get('voted_maps', []);
     if (voted.indexOf(mapId) >= 0) return { ok: false, msg: 'Ya votaste este mapa' };
+    // Un voto por jugador y mapa lo garantiza el servidor (PK en hf_map_votes).
+    const r = await rpcCheck('fn_hf_upvote_map', { p_map_id: +mapId, p_player: playerId(), p_secret: secretKey() });
+    if (r.ok) { voted.push(mapId); set('voted_maps', voted); return { ok: true }; }
+    if (!r.missing) return { ok: false, msg: r.msg || 'No se pudo votar' };
+
+    // Compatibilidad pre-migración (lectura-modificación no atómica).
     const cur = await request(`/hf_community_maps?id=eq.${enc(mapId)}&select=upvotes`);
     if (!cur.ok) return cur;
     const row = Array.isArray(cur.data) ? cur.data[0] : cur.data;
     if (!row) return { ok: false, msg: 'Mapa no encontrado' };
-    const r = await request(`/hf_community_maps?id=eq.${enc(mapId)}`, {
+    const res = await request(`/hf_community_maps?id=eq.${enc(mapId)}`, {
       method: 'PATCH', body: { upvotes: (row.upvotes || 0) + 1 }
     });
-    if (r.ok) { voted.push(mapId); set('voted_maps', voted); }
-    return r;
+    if (res.ok) { voted.push(mapId); set('voted_maps', voted); }
+    return res;
   }
 
   async function ping() {
@@ -225,11 +381,30 @@
     return 'hex_' + Math.abs(h).toString(36);
   }
 
-  // Upsert del récord del jugador en ese mapa. Solo escribe si mejora la marca
-  // previa (más puntos o, a igualdad, menos turnos) para no borrar un récord
-  // bueno al repetir el mapa y perder.
+  // Envío de la marca. El cliente manda los HECHOS de la partida (turnos,
+  // bajas, deserciones, excedente, victoria) y el servidor recalcula el score
+  // con la misma fórmula: si el número no cuadra, se rechaza.
   async function submitMapScore(payload) {
     if (!payload || !payload.map_key || !payload.player_id) return { ok: false, msg: 'Puntuación incompleta' };
+    const r = await rpcCheck('fn_hf_submit_map_score', {
+      p_player: payload.player_id,
+      p_secret: secretKey(),
+      p_map_key: payload.map_key,
+      p_turns: +payload.turns || 0,
+      p_kills: +payload.kills || 0,
+      p_lost: +payload.lost || 0,
+      p_deserts: +payload.deserts || 0,
+      p_surplus: +payload.surplus || 0,
+      p_won: !!payload.won,
+      p_tribe: payload.tribe_name,
+      p_crest: payload.crest,
+      p_color: payload.color_hex,
+      p_score: payload.score == null ? null : (+payload.score | 0)
+    });
+    if (r.rpc) return r;                                   // servidor respondió
+    if (!r.missing) return r;                              // offline / bloqueado
+
+    // Compatibilidad pre-migración: se conserva la ruta anterior.
     const prev = await request(`/hf_map_scores?map_key=eq.${enc(payload.map_key)}&player_id=eq.${enc(payload.player_id)}&select=score,turns`);
     if (!prev.ok) return prev;
     const row = Array.isArray(prev.data) ? prev.data[0] : prev.data;
@@ -308,13 +483,18 @@
     return (row && row.replay_code) || '';
   }
 
-  // Guarda el código de repetición de la mejor partida (requiere la columna
-  // replay_code; si no existe, falla en silencio y el Top sigue funcionando).
+  // Guarda el código de repetición de la mejor partida (sólo la propia fila).
   async function submitReplayCode(mapKey, playerId, code) {
+    const r = await rpcCheck('fn_hf_submit_replay', {
+      p_player: playerId || playerId_(), p_secret: secretKey(), p_map_key: mapKey, p_code: String(code || '')
+    });
+    if (r.rpc) return r;
+    if (!r.missing) return r;
     return request(`/hf_map_scores?map_key=eq.${enc(mapKey)}&player_id=eq.${enc(playerId)}`, {
       method: 'PATCH', body: { replay_code: String(code || '') }
     });
   }
+  const playerId_ = () => playerId();
 
   function mapKeyLabel(key) {
     const s = String(key || '');
@@ -325,22 +505,35 @@
     return s || 'Mapa';
   }
 
+  // Licencia: la verdad está en la nube. Se consulta de vez en cuando y se
+  // cachea; el flag local sólo sirve para pintar la UI antes de responder.
+  let licenseChecked = 0;
+  async function verifyLicense(force) {
+    const now = Date.now();
+    if (!force && now - licenseChecked < 10 * 60 * 1000) return { ok: true, cached: true, is_premium: isPremium() };
+    const r = await rpcCheck('fn_hf_license', { p_player: playerId(), p_secret: secretKey() });
+    if (!r.ok) return { ok: false, offline: !!r.offline, missing: !!r.missing };
+    licenseChecked = now;
+    set('is_premium', !!r.is_premium);
+    return { ok: true, is_premium: !!r.is_premium };
+  }
+
   HF.cloud = {
     request, ping, initIdentity,
-    playerId, secretKey, isPremium, recoveryEmail,
-    profileData, saveProfileCloud, refreshProfile, linkDevice, restoreFromRow, setRecoveryEmail, recoverByEmail,
+    playerId, secretKey, isPremium, recoveryEmail, verifyLicense,
+    profileData, saveProfileCloud, saveProfileSoon, refreshProfile, linkDevice, restoreFromRow, setRecoveryEmail, recoverByEmail,
     submitDailyScore, flushQueue, getDailyLeaderboard,
     getMapKey, submitMapScore, getMapLeaderboard, getMapRank, getGlobalTop, getPlayerStanding, getMapReplay, submitReplayCode,
     mapKeyLabel,
-    publishMap, getCommunityMaps, upvoteMap,
+    publishMap, getCommunityMaps, getCommunityMap, upvoteMap,
     queuedScores: () => get('daily_queue', []),
     lastOffline: () => lastOffline,
     replayMissing: () => replayColumnMissing,
-    get online() { return typeof navigator === 'undefined' || navigator.onLine !== false; }
+    strictServerValidation: strict,
+    get online() { return onlineAllowed() && (typeof navigator === 'undefined' || navigator.onLine !== false); }
   };
   // RPC y consultas genéricas para el multijugador (sql/hf_multiplayer.sql).
-  // Las RPC llevan más margen: crear sala o publicar un estado puede tardar.
-  HF.cloud.rpc = (fn, args) => request('/rpc/' + fn, { method: 'POST', body: args || {}, timeout: 9000 });
+  HF.cloud.rpc = (fn, args) => rpcRaw(fn, args);
   HF.cloud.select = (table, query) => request('/' + table + '?' + query, { method: 'GET', timeout: 6000 });
   HF.cloud.patch = (table, query, body) => request('/' + table + '?' + query, { method: 'PATCH', body: body, timeout: 9000 });
-})(typeof window !== 'undefined' ? window : globalThis);
+})(window);

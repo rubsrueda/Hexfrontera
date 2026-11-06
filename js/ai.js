@@ -114,9 +114,9 @@
         if (!u || u.type !== 'BAR' || !HF.ready(u)) break;
         const wf = waterField(g, me, u.cargo ? u.cargo.type : 'CAB');
         const opts = HF.options(g, ci);
-        // combate, desembarco (con o sin ataque) o disparo
-        let best = null, bs = 0;
-        for (const [to, o] of opts) {
+        // combate, desembarco (con o sin ataque), saqueo del comercio o disparo
+        let best = null, bs = 0, bk = null;
+        const consider = (to, o) => {
           let s = 0;
           if (o.ship) {
             // desembarcos desde el barco: ataque, tala o playa segura
@@ -124,12 +124,14 @@
             else if (o.k === 'chop') s = 35;
             else if (o.k === 'move') s = 30;
           } else if (o.k === 'atk' && o.ok) s = scoreAtk(g, me, o, to, hard);
+          else if (o.k === 'raid') s = 26 + Math.min(90, o.loot || 0) * 1.2;
           else if (o.k === 'shoot') s = 14 + (g.cells[to].u ? g.cells[to].u.tier * 2 : 0);
-          if (s > bs) { bs = s; best = to; }
-        }
+          if (s > bs) { bs = s; best = to; bk = o.k; }
+        };
+        for (const [to, o] of opts) { consider(to, o); for (const a of (o.alt || [])) consider(to, a); }
         if (best != null) {
           const o = opts.get(best);
-          if (!HF.act(g, ci, best).ok) break;
+          if (!HF.act(g, ci, best, bk || undefined).ok) break;
           if (o.k === 'atk' && !o.ship) ci = best;
           continue;
         }
@@ -177,23 +179,27 @@
       for (const c of mine) {
         if (!c.u || c.u.owner !== me || !HF.ready(c.u)) continue;
         const opts = HF.options(g, c.i);
-        let best = null, bs = -1e9;
-        for (const [to, o] of opts) {
+        let best = null, bs = -1e9, bk = null;
+        // Se evalúan también las acciones alternativas de cada casilla (saqueo,
+        // soborno, trampa...): la mejor jugada puede no ser la acción primaria.
+        const consider = (to, o) => {
           let s;
-          if (o.k === 'atk') { if (!o.ok) continue; s = scoreAtk(g, me, o, to, hard) + (easy ? -5 : 0); }
+          if (o.k === 'atk') { if (!o.ok) return; s = scoreAtk(g, me, o, to, hard) + (easy ? -5 : 0); }
           else if (o.k === 'shoot') s = 14 + g.cells[to].u.tier * 2;
           else if (o.k === 'siege') s = 40 + (g.cells[to].b === B.CIUDAD ? 40 : 0);
           else if (o.k === 'chop') s = f.wood < 40 ? 12 + (f.wood < 15 ? 30 : 0) : -50;
           else if (o.k === 'fuse') s = (g.cells[to].u.tier + c.u.tier <= 3 && df[c.i] > 3) ? 4 : -100;
+          else if (o.k === 'raid') s = 24 + Math.min(90, o.loot || 0) * 1.2;
           else if (o.k === 'move') {
             if (c.u.type === 'ARC' || c.u.type === 'SIE') s = (df[c.i] - df[to]) * 2 - (df[to] <= 2 ? 6 : 0);
             else s = (df[c.i] - df[to]) * 2 + (to !== c.i ? 0 : -1);
             if (df[to] >= df[c.i]) s = -20;
           }
-          if (s > bs) { bs = s; best = to; }
-        }
+          if (s > bs) { bs = s; best = to; bk = o.k; }
+        };
+        for (const [to, o] of opts) { consider(to, o); for (const a of (o.alt || [])) consider(to, a); }
         if (best == null || bs < 1) continue;
-        const r = HF.act(g, c.i, best);
+        const r = HF.act(g, c.i, best, bk || undefined);
         if (r.ok) acted = true;
       }
       if (!acted) break;

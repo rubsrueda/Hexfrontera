@@ -1,0 +1,22 @@
+# Dependencias y artefactos de build
+node_modules/
+dist/
+dist-*/
+*.log
+
+# Material de trabajo: NUNCA se publica
+art/old/
+*.backup
+*.orig
+*.fixed
+
+# Credenciales y configuración local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Sistema
+.DS_Store
+Thumbs.db

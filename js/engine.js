@@ -387,19 +387,27 @@
     g.caravans = g.caravans.filter(c => !c.dead);
     for (const k in g.tradeBlocked) if (g.tradeBlocked[k] <= g.turn) delete g.tradeBlocked[k];
   };
-  // Asalto: la caballería con ataque disponible saquea la caravana enemiga y
-  // se lleva el oro acumulado. La ruta queda bloqueada unas rondas.
-  HF.raidCaravan = function (g, from, to) {
+  // Asalto: cualquier tropa con ataque disponible se lleva el oro (o la carga)
+  // de una unidad comercial enemiga que alcance. La ruta queda bloqueada unas
+  // rondas y la caravana desaparece. src: casilla desde la que golpea (la
+  // calcula HF.options al ofrecer el asalto; por defecto, la de la unidad).
+  HF.raidCaravan = function (g, from, to, src) {
     const c = g.cells[from], u = c && c.u;
     if (!u || u.owner !== g.cur) return { ok: false, msg: 'No es tu unidad' };
     if (u.at <= 0) return { ok: false, msg: 'Sin ataque disponible' };
+    const t = g.cells[to];
+    if (!t) return { ok: false, msg: 'Destino no válido' };
     const list = (g.caravans || []).filter(k => k.owner !== u.owner && k.path[k.pos] === to);
-    if (!list.length) return { ok: false, msg: 'No hay caravana en esa casilla' };
+    if (!list.length) return { ok: false, msg: 'No hay comercio en esa casilla' };
     const car = list[0], f = g.f[u.owner];
-    const naval = u.type === 'BAR';
-    if (!(u.type === 'CAB' || (naval && car.kind !== 'land'))) {
-      return { ok: false, msg: naval ? 'Un barco no puede asaltar una carreta' : 'Solo la caballería o un barco de guerra' };
-    }
+    const naval = u.type === 'BAR', seaTrade = car.kind !== 'land';
+    const origin = src != null && g.cells[src] ? g.cells[src] : c;
+    const range = tradeStrikeRange(g, u, origin);
+    if (naval && !seaTrade) return { ok: false, msg: 'Un barco no puede asaltar una carreta' };
+    if (!naval && seaTrade && range <= 1) return { ok: false, msg: 'La infantería no alcanza el mar: hostiga la urca desde la costa con arqueros o asedio' };
+    if (t.u && t.u.owner !== u.owner) return { ok: false, msg: 'Una unidad enemiga protege el comercio' };
+    if (HF.hexDist(origin, t) > range) return { ok: false, msg: 'El comercio queda fuera de alcance' };
+    if (origin !== c && origin.u) return { ok: false, msg: 'La posición de asalto está ocupada' };
     const comp = c.comp != null ? c.comp : mainComp(g, f);
     let loot = 0;
     if (car.kind === 'cargo') {
@@ -417,9 +425,12 @@
       ev(g, to, 'Caravana saqueada: +' + loot + ' oro', 'good');
     }
     g.caravans = g.caravans.filter(k => k !== car);
+    // Si el asalto se lanzó desde una casilla alcanzable, la tropa se planta
+    // allí: acercarse hasta el convoy forma parte de la misma acción.
+    if (origin !== c) { origin.u = u; c.u = null; u.mv = 0; }
     u.at = 0;
     g._trade = null;
-    return { ok: true, kind: 'raid', loot };
+    return { ok: true, kind: 'raid', loot, res: car.cargo ? car.cargo.res : 'gold', movedTo: origin.i };
   };
   HF.caravansAt = (g, cellId) => (g.caravans || []).filter(c => c.path[c.pos] === cellId);
 
@@ -918,13 +929,62 @@
     }
   }
 
+  // ---------- asalto de comercio ----------
+  // Saquear no mide defensa: se gasta el ataque del turno y, si hace falta,
+  // la marcha para plantarse junto al convoy (la casilla del convoy no se
+  // ocupa). Cada tropa llega a la distancia de su arma: la infantería y los
+  // ingenieros a 1, la caballería a 2 (3 con guerra móvil), los arqueros a su
+  // alcance de disparo y el asedio a 2. Las carretas son presa de tierra; las
+  // urcas, de mar: las aborda un barco de guerra o las hostigan desde la costa
+  // arqueros y asedio.
+  function tradeStrikeRange(g, u, src) {
+    const D = HF.UNITS[u.type] || {};
+    if (u.type === 'ARC') return Math.max(1, (src && src.t === T.COLINA ? D.shootHill : D.shoot) || 1);
+    if (u.type === 'SIE') return Math.max(1, D.shoot || 1);
+    if (u.type === 'BAR') return 1;               // abordar exige contacto
+    return Math.max(1, atkRange(g, u) || 1);
+  }
+  function tradeRaidOptions(g, c, u, out, srces) {
+    if (!c || !u || u.at <= 0 || !g.caravans || !g.caravans.length) return;
+    const naval = u.type === 'BAR';
+    // Arqueros y asedio hostigan desde donde están: no se mueven y disparan en
+    // la misma acción. Las demás tropas pueden acercarse hasta el convoy.
+    const fixed = u.type === 'ARC' || u.type === 'SIE';
+    const sources = (fixed ? [c.i] : (srces && srces.length ? srces : [c.i])).filter(i => g.cells[i]);
+    for (const car of g.caravans) {
+      if (car.owner === u.owner) continue;
+      const seaTrade = car.kind !== 'land';
+      const cid = car.path[car.pos];
+      const t = cid != null ? g.cells[cid] : null;
+      if (!t) continue;
+      // Una unidad enemiga sobre el comercio lo protege: primero hay que vencerla.
+      if (t.u && t.u.owner !== u.owner) continue;
+      let from = null, best = 0;
+      for (const s of sources) {
+        const sc = g.cells[s], r = tradeStrikeRange(g, u, sc);
+        if (seaTrade && !naval && r <= 1) continue;   // la infantería no alcanza el mar
+        if (naval && !seaTrade) continue;             // un barco no sube a una calzada
+        if (HF.hexDist(sc, t) > r) continue;
+        if (r > best) { best = r; from = s; }
+      }
+      if (from == null) continue;
+      const loot = car.kind === 'cargo' ? ((car.cargo && car.cargo.qty) || 0) : (car.gold || 0);
+      const opt = { k: 'raid', from, loot, res: car.cargo ? car.cargo.res : 'gold' };
+      const prev = out.get(cid);
+      if (!prev) out.set(cid, opt);
+      else if (prev.k === 'raid') { if (loot > (prev.loot || 0)) out.set(cid, opt); }
+      else if (!(prev.alt || []).some(a => a.k === 'raid')) (prev.alt = prev.alt || []).push(opt);
+    }
+  }
+
   function shipOptions(g, ci, u, out) {
     const gr = grid(g), c = g.cells[ci];
     unloadOptions(g, ci, u, out);
     const summer = seasonOf(g) === 1, winter = seasonOf(g) === 3;
     const barMove = HF.UNITS.BAR.move + (summer ? HF.CFG.seasons.summerShipMove : 0);
+    let reach = null;
     if (u.mv > 0) {
-      const dist = new Map([[ci, 0]]), q = [ci];
+      const dist = reach = new Map([[ci, 0]]), q = [ci];
       while (q.length) {
         const x = q.shift(), d = dist.get(x);
         if (d >= barMove) continue;
@@ -950,6 +1010,9 @@
         const t = g.cells[d.i];
         if (t.i !== ci && HF.hexDist(c, t) <= HF.UNITS.BAR.shoot && t.u && t.u.owner !== u.owner && t.u.type !== 'BAR') out.set(t.i, { k: 'shoot' });
       }
+      // Urca enemiga a tiro de abordaje: el barco de guerra puede saquearla.
+      const sources = [ci].concat(reach ? [...reach.keys()].filter(k => k !== ci && !g.cells[k].u) : []);
+      tradeRaidOptions(g, c, u, out, sources);
     }
   }
 
@@ -1074,21 +1137,10 @@
         else if (u.type === 'SIE' && !t.u && t.o !== u.owner && isSettle(t.b)) out.set(t.i, { k: 'siege' });
       }
     }
-    // Asalto de caravanas: la caballería corta las líneas de suministro
-    // enemigas; un barco de guerra puede asaltar caravanas navales.
-    if ((u.type === 'CAB' || u.type === 'BAR') && u.at > 0 && g.caravans && g.caravans.length) {
-      for (const car of g.caravans) {
-        if (car.owner === u.owner) continue;
-        if (u.type === 'BAR' && car.kind === 'land') continue;
-        const cid = car.path[car.pos];
-        if (cid == null || HF.hexDist(c, g.cells[cid]) > 1) continue;
-        const raid = { k: 'raid', loot: car.kind === 'cargo' ? (car.cargo.qty || 0) : (car.gold || 0), res: car.cargo ? car.cargo.res : 'gold' };
-        const prev = out.get(cid);
-        if (!prev) out.set(cid, raid);
-        else if (prev.k === 'raid') { if (raid.loot > (prev.loot || 0)) out.set(cid, raid); }
-        else (prev.alt = prev.alt || []).push(raid);
-      }
-    }
+    // Asalto de comercio: cualquier tropa con ataque disponible puede cortar
+    // las líneas de suministro enemigas; arqueros y asedio hostigan las urcas
+    // desde la costa y el barco de guerra aborda las que navegan a su lado.
+    tradeRaidOptions(g, c, u, out, launch);
     doctrineOptions(g, ci, c, u, f, out);
     return out;
   };
@@ -1205,7 +1257,7 @@
     if (opt.k === 'raid') {
       const human = !!(g.f[u.owner] && g.f[u.owner].human);
       if (human) snap(g);
-      const r = HF.raidCaravan(g, from, to);
+      const r = HF.raidCaravan(g, from, to, opt.from);
       if (r.ok) { HF.updateFog(g); HF.checkEnd(g); }
       return r;
     }

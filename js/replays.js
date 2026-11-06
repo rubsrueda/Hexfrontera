@@ -166,17 +166,21 @@
     } catch (e) { if (m) { const t = m.querySelector('textarea'); if (t) t.select(); } }
   }
   function shareModal(code, e) {
-    const base = location.href.split('#')[0], url = base + '#replay=' + code;
-    const host = location.hostname;
-    const local = location.protocol === 'file:' || !host || host === 'localhost' || host === '127.0.0.1' ||
-      /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+    // Enlace solo si el juego está publicado en una URL accesible; si no, el
+    // código de la repetición es lo único que funciona en otro dispositivo.
+    const url = HF.shareUrl ? HF.shareUrl('replay', code, true) : '';
     HF.modal(`<h3>🎬 Código de la partida</h3>
       <div class="dim small">${HF.esc(e ? e.label : 'Partida')} · ${e ? 'T' + e.turn : ''}</div>
-      ${local ? '<p class="neg small">Este enlace apunta a un archivo o servidor local: en otro dispositivo no abrirá. Comparte el código y usa 🎬 desde el Hub.</p>' : ''}
-      <div class="dim small">Enlace</div><textarea readonly id="repUrl" style="min-height:80px">${HF.esc(url)}</textarea>
+      ${url
+        ? `<div class="dim small">Enlace</div><textarea readonly id="repUrl" style="min-height:80px">${HF.esc(url)}</textarea>`
+        : `<p class="neg small">Esta copia del juego no tiene una dirección pública: el enlace solo abriría en tu equipo. No depende de tu conexión a internet, sino de la dirección desde la que se abre el juego.</p>
+           <button id="repSetup" style="width:100%;margin-bottom:6px">🔗 Configurar dirección pública</button>`}
       <div class="dim small">Código</div><textarea readonly id="repCode" style="min-height:64px">${HF.esc(code)}</textarea>
-      <div class="row"><button id="cpUrl">Copiar enlace</button><button id="cpCode" class="pri grow">Copiar código</button><button id="cx">Cerrar</button></div>`, m => {
-      m.querySelector('#cpUrl').onclick = () => copy(url, 'Enlace copiado', m);
+      <div class="row">${url ? '<button id="cpUrl">Copiar enlace</button>' : ''}<button id="cpCode" class="pri grow">Copiar código</button><button id="cx">Cerrar</button></div>`, m => {
+      const cu = m.querySelector('#cpUrl');
+      if (cu) cu.onclick = () => copy(url, 'Enlace copiado', m);
+      const setup = m.querySelector('#repSetup');
+      if (setup) setup.onclick = () => { HF.closeModal(); HF.askShareBase(() => shareModal(code, e)); };
       m.querySelector('#cpCode').onclick = () => copy(code, 'Código copiado', m);
       m.querySelector('#cx').onclick = HF.closeModal;
     });

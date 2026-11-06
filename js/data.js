@@ -292,24 +292,79 @@ C3.3.3|Protectorado Dorado|GOLDEN_PROTECTORATE`;
     return t;
   };
   HF.validPath = (p, letter) => Array.isArray(p) && p.length === 3 && p.every((id, i) => HF.DOCT[id] && HF.DOCT[id].level === i + 1 && id[0] === letter && (i === 0 || HF.DOCT[id].parent === p[i - 1]));
-  HF.validateProfile = t => {
-    if (t && HF.validPath(t.alma_path, 'A') && HF.validPath(t.arma_path, 'B') && HF.validPath(t.victoria_path, 'C') && /^#[0-9a-f]{6}$/i.test(t.color || '')) {
-      // Los perfiles antiguos guardaban un emoji: se migran al id del blasón equivalente.
-      return HF.compileTribe(Object.assign({}, t, { crest: HF.normalizeCrest(t.crest) }));
-    }
-    console.warn('[WARN] Perfil de tribu corrupto. Restaurando valores seguros de fábrica');
-    return HF.compileTribe(HF.defaultTribe());
+
+  // Perfil estable: repara SOLO lo que esté roto, conservando siempre lo que el
+  // usuario ya eligió (nombre, color, blasón) y cada rama válida por separado.
+  // Antes, un perfil ausente o inválido devolvía una tribu nueva al azar en cada
+  // llamada: el Hub y la pantalla de Tribu mostraban un usuario distinto cada vez.
+  // `info.changed` indica si hubo reparación/migración para persistirla una vez.
+  HF.normalizeProfile = (raw, info) => {
+    const out = info || {};
+    const src = (raw && typeof raw === 'object') ? raw : {};
+    const base = HF.defaultTribe();
+    let changed = false;
+
+    const name = String(src.name == null ? '' : src.name).trim().slice(0, 20);
+    const color = /^#[0-9a-f]{6}$/i.test(src.color || '') ? String(src.color).toLowerCase() : null;
+    const crest = HF.normalizeCrest(src.crest);
+    const branch = (key, letter) => (HF.validPath(src[key], letter) ? src[key].slice() : null);
+    const alma = branch('alma_path', 'A'), arma = branch('arma_path', 'B'), vic = branch('victoria_path', 'C');
+    // La tribu queda ligada a la identidad de la nube (historial, correo premium).
+    const uid = (HF.cloud && HF.cloud.playerId) ? HF.cloud.playerId() : null;
+    const tribeId = String(src.tribe_id && src.tribe_id !== 'local' ? src.tribe_id : (uid || 'local'));
+
+    if (!name) changed = true;
+    if (color !== String(src.color || '').toLowerCase()) changed = true;
+    if (crest !== src.crest) changed = true;
+    if (!alma || !arma || !vic) changed = true;
+    if (!(+src.createdAt > 0)) changed = true;
+    if (src.tribe_id !== tribeId) changed = true;
+
+    const t = {
+      tribe_id: tribeId,
+      name: name || base.name,
+      color: color || base.color,
+      crest: crest,
+      alma_path: alma || base.alma_path,
+      arma_path: arma || base.arma_path,
+      victoria_path: vic || base.victoria_path,
+      createdAt: +src.createdAt || Date.now(),
+      updatedAt: +src.updatedAt || 0
+    };
+    out.changed = changed;
+    return HF.compileTribe(t);
   };
+  // Compatibilidad: cualquier llamada antigua recibe un perfil válido y estable.
+  HF.validateProfile = t => HF.normalizeProfile(t);
+
+  // Guarda un perfil editado: normaliza, marca la fecha de cambio y persiste.
+  HF.saveTribe = t => {
+    if (!t || typeof t !== 'object') return null;
+    const now = Date.now();
+    const profile = HF.normalizeProfile(Object.assign({}, t, { createdAt: t.createdAt || now, updatedAt: now }));
+    profile.updatedAt = now;
+    HF.store.set('tribe_profile', profile);
+    return profile;
+  };
+
+  // Carga (o crea UNA vez) el perfil persistente de la tribu.
   HF.loadTribe = () => {
-    const p = HF.store.get('tribe_profile', null);
-    if (!p) return HF.compileTribe(HF.defaultTribe());
-    const t = HF.validateProfile(p);
-    // Los perfiles antiguos se llamaban "Mi Tribu": se les asigna un nombre
-    // generado una sola vez y se guarda el cambio.
-    if (!t.name || t.name === 'Mi Tribu') {
-      t.name = HF.genTribeName ? HF.genTribeName() : 'Mi Tribu';
-      HF.store.set('tribe_profile', HF.compileTribe(t));
+    const raw = HF.store.get('tribe_profile', null);
+    if (!raw || typeof raw !== 'object') {
+      // Primera vez: se genera y se guarda en el acto. A partir de aquí el
+      // perfil es siempre el mismo (nombre, color, blasón y credo incluidos).
+      const profile = HF.normalizeProfile(HF.defaultTribe());
+      HF.store.set('tribe_profile', profile);
+      return profile;
     }
+    const info = {};
+    const t = HF.normalizeProfile(raw, info);
+    // Perfiles antiguos se llamaban "Mi Tribu": se renombran una única vez.
+    if (t.name === 'Mi Tribu') {
+      t.name = HF.genTribeName ? HF.genTribeName() : 'Mi Tribu';
+      info.changed = true;
+    }
+    if (info.changed) HF.store.set('tribe_profile', t);
     return t;
   };
   HF.PRESETS = [

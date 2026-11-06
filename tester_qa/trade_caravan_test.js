@@ -11,6 +11,9 @@ sandbox.window = sandbox;
 vm.createContext(sandbox);
 for (const f of ['util.js', 'config.js', 'data.js', 'engine.js'])
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), sandbox);
+// El tablero no existe en la prueba: se neutralizan los ganchos de presentación.
+HF.updateFog = () => {};
+HF.checkEnd = () => {};
 
 let fail = 0;
 const ok = (cond, msg) => { if (cond) console.log('ok   ' + msg); else { console.error('FAIL: ' + msg); fail++; } };
@@ -19,7 +22,8 @@ const T = HF.T, B = HF.B;
 function makeGame() {
   const R = 6, gr = HF.makeGrid(R);
   const g = {
-    R, turn: 1, cur: 0, cells: [], f: [], _trade: null, caravans: [], tradeBlocked: {}, events: []
+    R, turn: 1, cur: 0, cells: [], f: [], _trade: null, caravans: [], tradeBlocked: {}, events: [],
+    undo: [], stat: { kills: 0, lost: 0 }, timeline: [], fogMap: new Int8Array(gr.list.length)
   };
   g.f = [
     { id: 0, alive: true, human: true, stock: { 0: { gold: 0, food: 0, wood: 0 } }, gold: 0, food: 0, wood: 0, tags: [] },
@@ -127,6 +131,128 @@ function roadLine(g, q0, r0, r1) {
   const rr = HF.raidCaravan(g, from2, c2cell);
   ok(rr.ok && rr.loot === 50, `captura la carga (${rr.loot})`);
   ok(g.f[1].stock[0].wood === 50, 'el botín va al atacante');
+
+  // ---------- asalto por cualquier tropa (8-14) ----------
+  const raidIn = (opts, cellId) => {
+    const o = opts.get(cellId);
+    return o && (o.k === 'raid' ? o : (o.alt || []).find(a => a.k === 'raid'));
+  };
+  function landRaider(type) {
+    const gg = makeGame();
+    roadLine(gg, 0, 0, 5);
+    HF.syncCaravans(gg);
+    const c = gg.caravans.find(k => k.owner === 0 && k.kind === 'land');
+    c.gold = 18;
+    const cellId = c.path[c.pos];
+    const from = gg._grid.nb[cellId].find(j => !gg.cells[j].u);
+    gg.cells[from].u = { type, tier: 1, owner: 1, mv: 1, at: 1 };
+    gg.cells[from].o = 1; gg.cells[from].comp = 0;
+    gg.cur = 1;
+    return { g: gg, car: c, cellId, from };
+  }
+  function seaGame() {
+    const gg = makeGame();
+    const a = at(gg, -3, 0), b = at(gg, 3, 0);
+    a.o = b.o = 0; a.sup = b.sup = 1; a.b = b.b = B.PUEBLO; a.comp = b.comp = 0;
+    for (let q = -2; q <= 2; q++) { const w = at(gg, q, 0); w.t = T.MAR; w.o = -1; }
+    HF.syncCaravans(gg);
+    return gg;
+  }
+
+  // --- 8. La infantería asalta carretas ---
+  let s = landRaider('INF');
+  let ro = raidIn(HF.options(s.g, s.from), s.cellId);
+  ok(!!ro && ro.loot === 18, 'la infantería ve el asalto y el botín');
+  let res = HF.act(s.g, s.from, s.cellId, 'raid');
+  ok(res.ok && res.loot === 18, `la infantería saquea la carreta (${res.loot})`);
+  ok(s.g.f[1].stock[0].gold === 18, 'el botín terrestre llega al atacante');
+  ok(!s.g.caravans.some(k => k === s.car), 'la carreta desaparece');
+
+  // --- 9. Los ingenieros y los arqueros también ---
+  s = landRaider('ENG');
+  ok(!!raidIn(HF.options(s.g, s.from), s.cellId), 'el ingeniero puede asaltar');
+  s = landRaider('ARC');
+  ok(!!raidIn(HF.options(s.g, s.from), s.cellId), 'el arquero puede asaltar');
+  s = landRaider('SIE');
+  ok(!!raidIn(HF.options(s.g, s.from), s.cellId), 'el asedio puede asaltar');
+
+  // --- 10. La caballería se acerca y corta la ruta ---
+  g = makeGame();
+  roadLine(g, 0, 0, 5);
+  HF.syncCaravans(g);
+  let cabCar = g.caravans.find(k => k.owner === 0 && k.kind === 'land');
+  cabCar.gold = 20;
+  const cabCell = cabCar.path[cabCar.pos];
+  for (let k = 0; k < cabCar.pos; k++) { const c = g.cells[cabCar.path[k]]; c.o = 1; c.comp = 0; }
+  const cabFrom = g.cells[cabCar.path[0]];
+  cabFrom.u = { type: 'CAB', tier: 1, owner: 1, mv: 6, at: 1 };
+  g.cur = 1;
+  const cabOpt = raidIn(HF.options(g, cabFrom.i), cabCell);
+  ok(!!cabOpt && cabOpt.from !== cabFrom.i, 'la caballería asalta desde una casilla de lanzamiento');
+  const cabRes = HF.act(g, cabFrom.i, cabCell, 'raid');
+  ok(cabRes.ok && cabRes.loot === 20, `la caballería saquea a la carrera (${cabRes.loot})`);
+  const cabNow = g.cells.find(c => c && c.u && c.u.type === 'CAB');
+  ok(cabNow && !cabFrom.u && cabNow.i === cabOpt.from, 'la caballería avanza hasta el convoy');
+  ok(cabNow && cabNow.u.mv === 0, 'la marcha consume el movimiento');
+
+  // --- 11. El barco de guerra aborda las urcas ---
+  g = seaGame();
+  const urca = g.caravans.find(c => c.kind === 'sea' && c.owner === 0);
+  urca.gold = 22;
+  const urcaCell = urca.path[urca.pos];
+  const wFrom = g._grid.nb[urcaCell].find(j => g.cells[j].t === T.MAR && !g.cells[j].u);
+  g.cells[wFrom].u = { type: 'BAR', tier: 1, owner: 1, mv: 1, at: 1 };
+  g.cells[wFrom].o = 1; g.cur = 1;
+  ok(!!raidIn(HF.options(g, wFrom), urcaCell), 'el barco de guerra ve el abordaje');
+  const shipRes = HF.act(g, wFrom, urcaCell, 'raid');
+  ok(shipRes.ok && shipRes.loot === 22, `el barco saquea la urca (${shipRes.loot})`);
+  ok(g.f[1].stock[0].gold === 22, 'el botín naval llega al atacante');
+
+  // --- 12. La infantería no alcanza el mar; el arquero sí desde la costa ---
+  g = seaGame();
+  const urca2 = g.caravans.find(c => c.kind === 'sea' && c.owner === 0);
+  urca2.gold = 9;
+  const u2Cell = urca2.path[urca2.pos];
+  const shore = g._grid.nb[u2Cell].find(j => g.cells[j].t !== T.MAR && g.cells[j].t !== T.RIO);
+  g.cells[shore].o = 1; g.cells[shore].comp = 0;
+  g.cells[shore].u = { type: 'INF', tier: 1, owner: 1, mv: 1, at: 1 };
+  g.cur = 1;
+  ok(!raidIn(HF.options(g, shore), u2Cell), 'la infantería no recibe la opción sobre una urca');
+  const badSea = HF.raidCaravan(g, shore, u2Cell);
+  ok(!badSea.ok && /mar/.test(badSea.msg), 'el motor explica que la infantería no alcanza el mar');
+  g.cells[shore].u = { type: 'ARC', tier: 1, owner: 1, mv: 1, at: 1 };
+  ok(!!raidIn(HF.options(g, shore), u2Cell), 'el arquero hostiga la urca desde la costa');
+  const arcRes = HF.act(g, shore, u2Cell, 'raid');
+  ok(arcRes.ok && arcRes.loot === 9, `el arquero saquea la urca (${arcRes.loot})`);
+
+  // --- 13. Una unidad enemiga protege el comercio ---
+  g = makeGame();
+  roadLine(g, 0, 0, 5);
+  HF.syncCaravans(g);
+  const guarded = g.caravans.find(c => c.owner === 0 && c.kind === 'land');
+  guarded.gold = 30;
+  const guardedCell = guarded.path[guarded.pos];
+  g.cells[guardedCell].u = { type: 'INF', tier: 1, owner: 0, mv: 0, at: 0 };
+  const gFrom = g._grid.nb[guardedCell].find(j => !g.cells[j].u);
+  g.cells[gFrom].u = { type: 'INF', tier: 1, owner: 1, mv: 1, at: 1 };
+  g.cells[gFrom].o = 1; g.cells[gFrom].comp = 0;
+  g.cur = 1;
+  ok(!raidIn(HF.options(g, gFrom), guardedCell), 'la guarnición protege la caravana');
+  const blocked = HF.raidCaravan(g, gFrom, guardedCell);
+  ok(!blocked.ok && /protege/.test(blocked.msg), 'el motor impide saquear bajo una unidad enemiga');
+
+  // --- 14. El comercio propio nunca es objetivo ---
+  g = makeGame();
+  roadLine(g, 0, 0, 5);
+  HF.syncCaravans(g);
+  const ownCar = g.caravans.find(c => c.owner === 0 && c.kind === 'land');
+  const ownCell = ownCar.path[ownCar.pos];
+  const ownFrom = g._grid.nb[ownCell].find(j => !g.cells[j].u);
+  g.cells[ownFrom].u = { type: 'INF', tier: 1, owner: 0, mv: 1, at: 1 };
+  g.cells[ownFrom].o = 0; g.cells[ownFrom].comp = 0;
+  g.cur = 0;
+  ok(!raidIn(HF.options(g, ownFrom), ownCell), 'no se ofrece saquear el comercio propio');
+  ok(!HF.raidCaravan(g, ownFrom, ownCell).ok, 'el motor rechaza saquear el comercio propio');
 
   console.log(fail ? 'CON FALLOS (' + fail + ')' : 'TODO OK');
   process.exit(fail ? 1 : 0);

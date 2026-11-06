@@ -16,10 +16,50 @@
   };
   HF.closeModal = () => { const m = $('#modal'); m.classList.add('hidden'); m.innerHTML = ''; };
 
+  // Dirección pública para los enlaces de compartir. No confundir con "tener
+  // internet": una copia abierta como archivo o dentro de la app no tiene una
+  // dirección que otros puedan abrir. Se guarda en 'share_base'.
+  HF.askShareBase = function (onSaved) {
+    const cur = HF.shareBase();
+    const loc = G.location || {};
+    const here = (loc.protocol === 'http:' || loc.protocol === 'https:')
+      ? String(loc.href || '').split('#')[0].split('?')[0] : '';
+    HF.modal(`<h3>🔗 Dirección pública del juego</h3>
+      <p class="dim small">Para que un enlace funcione en otro teléfono, debe apuntar a la página donde publicas el juego. Abrirlo desde un archivo <b>no</b> cambia por tener conexión: esa copia simplemente no tiene una dirección que otros puedan abrir.</p>
+      <label>Dirección pública</label>
+      <input id="sbUrl" placeholder="https://federati.org/" value="${HF.esc(cur || '')}">
+      <div class="neg small" id="sbErr"></div>
+      <p class="dim small">Los enlaces quedarán así: <code id="sbPreview">…</code></p>
+      <div class="row">${here ? '<button id="sbHere">Usar esta página</button>' : ''}<button id="sbNo">Cancelar</button><button id="sbGo" class="pri grow">Guardar</button></div>`, m => {
+      const inp = m.querySelector('#sbUrl'), err = m.querySelector('#sbErr'), prev = m.querySelector('#sbPreview');
+      const preview = () => {
+        const v = HF.normalizeShareBase(inp.value);
+        prev.textContent = v ? v + '#map=…' : '…';
+        err.textContent = !inp.value.trim() ? ''
+          : !v ? 'Escribe una dirección http(s) completa.'
+            : HF.isLocalAddress(v) ? 'Aviso: esta dirección solo se abrirá en tu red local.'
+              : '';
+      };
+      if (inp) { inp.oninput = preview; preview(); inp.focus(); }
+      m.querySelector('#sbNo').onclick = HF.closeModal;
+      const hb = m.querySelector('#sbHere');
+      if (hb) hb.onclick = () => { inp.value = here; preview(); };
+      m.querySelector('#sbGo').onclick = () => {
+        const v = HF.normalizeShareBase(inp.value);
+        if (!v) { HF.sfx('error'); err.textContent = 'Escribe una dirección http(s) completa.'; return; }
+        HF.setShareBase(v);
+        HF.closeModal();
+        HF.toast(HF.isLocalAddress(v) ? 'Dirección guardada (solo red local)' : 'Dirección pública guardada');
+        if (onSaved) onSaved(v);
+      };
+    });
+  };
+
   const screens = {};
   HF.screen = (name, fn) => { screens[name] = fn; };
   HF.go = (name, arg) => {
     HF.closeModal();
+    HF.currentScreen = name;
     if (G.document && document.body && document.body.classList) document.body.classList.toggle('hub-bg', name === 'hub');
     if (HF.onLeave) { const leave = HF.onLeave; HF.onLeave = null; try { leave(); } catch (e) { console.error('onLeave', e); } }
     app().innerHTML = '';
@@ -122,6 +162,15 @@
     const tribe = HF.loadTribe(), save = HF.store.get('savegame_active', null);
     const d = HF.dailyState(), doneToday = d.date === HF.dailyKey() && d.attempts > 0;
     const localStats = HF.getStats();
+    // Copia de emergencia escrita por js/telemetry.js tras un fallo crítico.
+    const crash = HF.crash ? HF.crash.read() : null;
+    const recoverable = !!(crash && crash.state);
+    const crashWhen = recoverable && crash.at ? new Date(crash.at).toLocaleString() : '';
+    const crashBanner = recoverable ? `<div class="card" id="crashCard" style="width:100%;max-width:560px;margin:6px auto 0;border-color:var(--acc)">
+        <div class="row"><b class="grow">🛟 Partida recuperable</b><span class="chip">T${crash.turn != null ? crash.turn : '?'}</span></div>
+        <div class="dim small" style="margin-top:2px">El juego se cerró por un error${crashWhen ? ' · ' + HF.esc(crashWhen) : ''}. Se guardó una copia automática antes de caer.</div>
+        <div class="row" style="margin-top:6px"><button id="crashGo" class="pri grow">Restaurar</button><button id="crashNo">Descartar</button></div>
+      </div>` : '';
     // Los textos de Campaña/Nueva partida traen un emoji delante; con la imagen
     // de arte ya no hace falta, así que se quita el símbolo inicial.
     const plain = s => String(s).replace(/^[^\p{L}\p{N}]+/u, '');
@@ -134,6 +183,7 @@
         <button id="news" class="art-btn" title="${HF.lang() === 'en' ? 'News' : 'Noticias'}" aria-label="${HF.lang() === 'en' ? 'News' : 'Noticias'}"><img src="art/boton-noticias.png" alt="Noticias"></button>
       </div>
       <div id="cta" style="width:100%;max-width:560px;margin:6px auto 0"></div>
+      ${crashBanner}
       <div class="hub-mid">
         <h1>${HF.t('HUB_TITLE')}</h1>
         <div class="dim" style="text-align:center">${HF.t('HUB_SUBTITLE')}</div>
@@ -152,16 +202,24 @@
         <button id="stats"><img class="dock-art" src="art/boton-estadisticas.png" alt="">${HF.t('DOCK_STATS')}</button>
         <button id="set" data-nav="settings"><img class="dock-art" src="art/boton-historial.png" alt="">${HF.t('DOCK_SETTINGS')}</button>
         <button id="wiki"><img class="dock-art" src="art/boton-codice.png" alt="">${HF.t('DOCK_WIKI')}</button>
-      </div></div>`;
+      </div>
+      <button id="fbFab" class="fb-fab" title="${HF.esc(HF.t('FB_CTA'))}" aria-label="${HF.esc(HF.t('FB_CTA'))}">💬</button>
+    </div>`;
     const on = (id, fn) => { const b = el.querySelector('#' + id); if (b) b.onclick = fn; };
+    on('crashGo', () => {
+      const r = HF.crash.restore();
+      if (!r.ok) { HF.sfx('error'); HF.toast(r.msg); }
+    });
+    on('crashNo', () => { HF.crash.clear(); HF.sfx('click'); HF.go('hub'); });
     on('daily', () => HF.go('daily')); on('camp', () => HF.go('campaign')); on('new', () => HF.go('newgame'));
-    on('tribe', () => HF.go('tribe')); on('editor', () => HF.go('editor')); on('stats', () => HF.go('stats'));
+    on('tribe', () => HF.go('tribe')); on('editor', () => HF.go('maps')); on('stats', () => HF.go('stats'));
     // delegación: garantiza que Ajustes responda aunque otro handler reemplace el onclick
     el.addEventListener('click', e => {
       const b = e.target && e.target.closest ? e.target.closest('[data-nav]') : null;
       if (b && b.dataset.nav) { e.preventDefault(); HF.go(b.dataset.nav); }
     });
     on('wiki', () => HF.codex());
+    on('fbFab', () => { if (HF.feedback) HF.feedback.open(); });
     on('hist', () => HF.replays.openHistory());
     on('rep', () => HF.replayCodePrompt());
     on('cont', () => { try { HF.startGame(HF.deserialize(save)); } catch (e) { console.error(e); HF.store.del('savegame_active'); HF.toast(HF.lang() === 'en' ? 'Corrupted save' : 'Guardado dañado'); HF.go('hub'); } });
@@ -238,7 +296,13 @@
   // ---------- TRIBU ----------
   HF.screen('tribe', el => {
     const t = HF.loadTribe();
-    const persist = () => HF.store.set('tribe_profile', HF.compileTribe(t));
+    // Guarda siempre el mismo perfil (con fecha de cambio) y lo replica en la
+    // nube con antirrebote: la tribu no puede "regenerarse" al volver a entrar.
+    const persist = () => {
+      const saved = HF.saveTribe(t);
+      if (saved) Object.assign(t, saved);
+      if (HF.cloud && HF.cloud.saveProfileSoon) HF.cloud.saveProfileSoon();
+    };
     const draw = () => {
       el.innerHTML = `<div class="screen">${header('Tribu')}
       <div class="scroll">
@@ -305,57 +369,68 @@
     draw();
   });
 
-  // ---------- MAPAS DE LA COMUNIDAD ----------
-  HF.manualMapModal = () => HF.modal(`<h3>🗺️ Mapa por código</h3><div class="dim small">Pega un código de mapa de Federati.</div>
-    <textarea id="manualMap" style="min-height:100px" placeholder="v1:7:123:..."></textarea><br>
-    <div class="row"><button id="mmNo">Cancelar</button><button id="mmGo" class="pri grow">Jugar</button></div>`, m => {
-    m.querySelector('#mmNo').onclick = HF.closeModal;
-    m.querySelector('#mmGo').onclick = () => {
-      const r = HF.importMap(m.querySelector('#manualMap').value);
-      if (r.error) { HF.sfx('error'); return HF.toast(r.error); }
+  // ---------- MAPAS POR CÓDIGO ----------
+  // Acepta un código (v1:…), un enlace con #map=… o un id de la comunidad.
+  // Devuelve una promesa {ok, msg}; el modal muestra el error sin cerrarse.
+  function useMapCode(code, action, row) {
+    const r = HF.importMap(code || '');
+    if (r.error) return { ok: false, msg: r.error };
+    const meta = row ? { mapId: row.id, name: row.name } : null;
+    if (action === 'edit') {
+      // El editor reimporta el código y su botón «volver» regresa a Mapas.
       HF.closeModal();
-      HF.playMap(r.R, r.cells, r.seed);
-    };
-  });
-
-  HF.communityMapsModal = function () {
-    let maps = [], loading = true, offline = false;
-    const draw = () => {
-      const body = loading
-        ? '<div class="dim small" style="padding:8px 0">Cargando mapas de la comunidad…</div>'
-        : maps.length
-          ? maps.map(m => `<div class="card"><div class="row"><b class="grow">${HF.esc(m.name || 'Mapa')}</b><span class="dim small">👍 ${+m.upvotes || 0}</span></div>
-            <div class="dim small">${HF.esc(m.author || 'Anónimo')} · R${+m.radius || 7} · ${+m.factions_count || 2} facciones</div>
-            <div class="row" style="margin-top:6px"><button data-vote="${m.id}">👍 Votar</button><button data-play="${m.id}" class="pri grow">▶ Jugar</button></div></div>`).join('')
-          : `<div class="dim small">${offline ? 'Modo sin conexión' : 'Todavía no hay mapas publicados'} · puedes introducir un código manual.</div>`;
-      HF.modal(`<h3>🌍 Mapas de la Comunidad · Top por votos</h3>${offline ? '<div class="dim small">Modo sin conexión · se muestran datos locales</div>' : ''}
-        ${body}<br><button id="cmManual" style="width:100%">⌨️ Introducir código manual</button>
-        <button id="cmClose" style="width:100%;margin-top:6px">Cerrar</button>`, m => {
-        m.querySelector('#cmClose').onclick = HF.closeModal;
-        m.querySelector('#cmManual').onclick = () => { HF.closeModal(); HF.manualMapModal(); };
-        m.querySelectorAll('[data-play]').forEach(b => b.onclick = () => {
-          const row = maps.find(x => String(x.id) === b.dataset.play);
-          if (!row) return;
-          const r = HF.importMap(row.code || '');
-          if (r.error) { HF.sfx('error'); return HF.toast(r.error); }
-          HF.closeModal(); HF.playMap(r.R, r.cells, r.seed, { mapId: row.id, name: row.name });
-        });
-        m.querySelectorAll('[data-vote]').forEach(b => b.onclick = () => {
-          if (!HF.cloud) return HF.toast('Modo sin conexión');
-          b.disabled = true;
-          HF.cloud.upvoteMap(b.dataset.vote).then(r => {
-            if (r && r.ok) { const row = maps.find(x => String(x.id) === b.dataset.vote); if (row) row.upvotes = (+row.upvotes || 0) + 1; HF.toast('Voto registrado'); draw(); }
-            else HF.toast((r && r.msg) || 'Modo sin conexión');
-          }).catch(() => { b.disabled = false; });
-        });
+      HF.go('editor', { code: code, name: row ? (row.name || '') : '', from: 'maps' });
+      return { ok: true };
+    }
+    HF.closeModal();
+    HF.playMap(r.R, r.cells, r.seed, meta || undefined);
+    return { ok: true };
+  }
+  HF.manualMapUse = (value, action) => {
+    let ref = null;
+    if (HF.parseMapRef) ref = HF.parseMapRef(value);
+    else {
+      const raw = String(value || '').trim();
+      ref = raw ? { kind: 'code', code: raw } : null;
+    }
+    if (!ref) return Promise.resolve({ ok: false, msg: 'Pega un código o un enlace de mapa' });
+    if (ref.kind === 'invalid') return Promise.resolve({ ok: false, msg: 'Código o enlace no válido' });
+    if (ref.kind === 'replay') return Promise.resolve({ ok: false, msg: 'Es un enlace de repetición: ábrelo con 🎬 Ver repetición' });
+    if (ref.kind === 'code') return Promise.resolve(useMapCode(ref.code, action, null));
+    // Enlace o id de la comunidad: se resuelve contra la nube.
+    if (!HF.cloud || !HF.cloud.getCommunityMap) return Promise.resolve({ ok: false, msg: 'Modo sin conexión' });
+    return HF.cloud.getCommunityMap(ref.id).then(row => {
+      if (!row) return { ok: false, msg: 'Mapa no encontrado en la comunidad' };
+      return useMapCode(row.code || '', action, row);
+    }).catch(() => ({ ok: false, msg: 'No se pudo cargar el mapa' }));
+  };
+  HF.manualMapModal = () => HF.modal(`<h3>🗺️ Mapa por código</h3><div class="dim small">Pega un código (<code>v1:…</code>) o el enlace de un mapa publicado; puedes jugarlo o abrirlo en el editor.</div>
+    <textarea id="manualMap" style="min-height:100px" placeholder="v1:7:123:… o https://…#map=12"></textarea>
+    <div id="mmErr" class="neg small"></div><br>
+    <div class="row"><button id="mmNo">Cancelar</button><button id="mmEdit">✎ Editar</button><button id="mmGo" class="pri grow">▶ Jugar</button></div>`, m => {
+    const run = action => {
+      const box = m.querySelector('#manualMap');
+      const err = m.querySelector('#mmErr');
+      if (!box) return;
+      if (err) err.textContent = '';
+      Promise.resolve(HF.manualMapUse(box.value, action)).then(r => {
+        if (r && r.ok) return;
+        HF.sfx('error');
+        if (err) err.textContent = (r && r.msg) || 'No se pudo abrir el mapa';
+        if (box.focus) box.focus();
+      }).catch(() => {
+        HF.sfx('error');
+        if (err) err.textContent = 'No se pudo abrir el mapa';
       });
     };
-    draw();
-    if (HF.cloud) HF.cloud.getCommunityMaps().then(list => {
-      maps = list || []; loading = false; offline = !HF.cloud.online || (HF.cloud.lastOffline && HF.cloud.lastOffline()); draw();
-    }).catch(() => { loading = false; offline = true; draw(); });
-    else { loading = false; offline = true; draw(); }
-  };
+    m.querySelector('#mmNo').onclick = HF.closeModal;
+    m.querySelector('#mmEdit').onclick = () => run('edit');
+    m.querySelector('#mmGo').onclick = () => run('play');
+  });
+
+  // Compatibilidad: la comunidad vive ahora en su propia pantalla (js/maps.js),
+  // con listado, acciones por mapa y enlaces para compartir.
+  HF.communityMapsModal = function () { HF.go('maps', { tab: 'community' }); };
 
   // ---------- RANKINGS Y REPETICIONES DEL TOP ----------
   // Descarga la repetición solo al pulsar ▶ (la lista no arrastra los códigos).
@@ -475,8 +550,8 @@
         const seed = sv ? (/^\d+$/.test(sv) ? parseInt(sv, 10) >>> 0 : [...sv].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7)) : Math.floor(Math.random() * 1e9);
         HF.startGame(HF.makeGame({ mode: 'skirmish', seed, size: o.size, n: o.n, biome: o.biome, fog: o.fog, difficulty: o.difficulty, goal: { type: 'conquer' } }, HF.loadTribe()));
       };
-      el.querySelector('#mine').onclick = () => HF.mapsModal(null);
-      el.querySelector('#code').onclick = () => HF.communityMapsModal();
+      el.querySelector('#mine').onclick = () => HF.go('maps', { tab: 'mine' });
+      el.querySelector('#code').onclick = () => HF.go('maps', { tab: 'community' });
       // Multijugador: la sala se crea con la configuración elegida arriba.
       const seedNow = () => {
         const sv = el.querySelector('#seed').value.trim(); o.seed = sv;
@@ -631,10 +706,22 @@
     const ckey = HF.cloud ? HF.cloud.secretKey() : '';
     const prem = HF.cloud ? HF.cloud.isPremium() : false;
     const remail = HF.cloud ? HF.cloud.recoveryEmail() : '';
+    const fbHas = HF.feedback ? HF.feedback.hasKey() : false;
+    const fbSrc = HF.feedback ? HF.feedback.keySource() : 'none';
+    const fbPending = HF.feedback ? HF.feedback.pending() : 0;
+    const sbase = HF.shareBase();
+    const loc = G.location || {};
+    const canHere = (loc.protocol === 'http:' || loc.protocol === 'https:');
+    const hereUrl = canHere ? String(loc.href || '').split('#')[0].split('?')[0] : '';
     el.innerHTML = `<div class="screen">${header(HF.t('SETTINGS'))}<div class="scroll">
-      ${row('sound', HF.t('SOUND'))}${row('vibrate', HF.t('VIBRATE'))}${row('grid', HF.t('GRID'))}${row('showIntroCrawl', '📜 ' + HF.t('CRAWL_SETTING'))}
+      ${row('sound', HF.t('SOUND'))}${row('vibrate', HF.t('VIBRATE'))}${row('grid', HF.t('GRID'))}${row('nato', '🎖️ ' + HF.t('VIEW_NATO'))}${row('showIntroCrawl', '📜 ' + HF.t('CRAWL_SETTING'))}
       <div class="card"><div class="row"><span class="grow">${HF.t('LANGUAGE')}</span></div>
         <div class="langs">${HF.LANGS.map(l => `<button data-lang="${l.code}" class="${HF.lang() === l.code ? 'sel' : ''}">${l.flag} ${l.name}</button>`).join('')}</div></div>
+      <div class="card" id="loreCard">
+        <div class="row"><b class="grow">📖 Introducción</b><button data-k="showLoreIntro" class="${s.showLoreIntro ? 'sel' : ''}">${s.showLoreIntro ? HF.t('YES') : HF.t('NO')}</button></div>
+        <div class="dim small" style="margin-top:2px">Páginas de lore que explican el juego. Se muestran al abrir el juego, antes del menú, mientras no las desactives.</div>
+        <button id="lorePreview" style="width:100%;margin-top:6px">▶ Ver la introducción ahora</button>
+      </div>
       <div class="card" id="cloudCard">
         <b>🛡️ Identidad y respaldo en la nube</b>
         <div class="row" style="margin-top:6px"><span class="grow">ID público</span><b>${HF.esc(cid)}</b></div>
@@ -645,11 +732,59 @@
           : `<div class="dim small" style="margin-top:6px">La copia en la nube y el correo de rescate forman parte de la Licencia Completa ($2.99).</div>`}
         <div class="row" style="margin-top:6px"><button id="syncCloud">🔄 Sincronizar</button><button id="linkDevice">🔄 Transferir a otro dispositivo</button><button id="recoverAccount">❓ Recuperar Cuenta</button></div>
       </div>
+      <div class="card" id="shareCard">
+        <b>🔗 Enlaces para compartir</b>
+        <div class="dim small" style="margin-top:4px">Los enlaces de mapas y repeticiones apuntan a esta dirección. Debe ser la página pública donde publicas el juego; tener internet no basta si abres el juego desde un archivo o desde la app instalada.</div>
+        <div class="row" style="margin-top:6px"><span class="grow">Dirección pública</span><b id="shareBaseVal" style="max-width:58%;overflow-wrap:anywhere;text-align:right">${sbase ? HF.esc(sbase) : 'sin configurar'}</b></div>
+        ${sbase && HF.isLocalAddress(sbase) ? '<div class="small" style="color:var(--acc);margin-top:2px">Solo se abrirá en tu red local.</div>' : ''}
+        <div class="row" style="margin-top:6px">
+          <button id="shareBaseEdit">${sbase ? 'Cambiar dirección' : 'Configurar dirección'}</button>
+          ${hereUrl ? '<button id="shareBaseHere">Usar esta página</button>' : ''}
+        </div>
+        ${sbase ? `<div class="dim small" style="margin-top:4px">Ejemplo de enlace: ${HF.esc(sbase)}#map=…</div>` : ''}
+      </div>
+      <div class="card" id="fbCard">
+        <b>💬 Comentarios</b>
+        <div class="dim small" style="margin-top:4px">Los comentarios de los jugadores se envían al buzón de Web3Forms. Sin clave quedan guardados en este dispositivo y se envían al configurarla.</div>
+        <div class="row" style="margin-top:6px"><span class="grow">Buzón</span><b id="fbKeyState">${fbHas ? (fbSrc === 'config' ? '✅ configurado en el juego' : '✅ configurado en este dispositivo') : 'sin configurar'}</b></div>
+        <input id="fbKey" type="text" autocomplete="off" spellcheck="false" placeholder="${fbHas ? 'Pega otra clave para sustituirla' : 'Clave de Web3Forms'}">
+        <div class="row" style="margin-top:6px">
+          <button id="fbKeySave" class="pri">Guardar clave</button>
+          ${fbSrc === 'device' ? '<button id="fbKeyClear">Quitar</button>' : ''}
+        </div>
+        <div class="dim small" style="margin-top:4px">${fbPending ? 'Comentarios pendientes de envío: <b>' + fbPending + '</b>' : 'Sin comentarios pendientes.'}</div>
+      </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
       <div class="dim small">Federati v1.2 · build 133 · 🌐 Multijugador en línea</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
     el.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { HF.setLang(b.dataset.lang); HF.go('settings'); });
+    // Vista previa de la pantalla de introducción (especificacion_pantalla_lore.md).
+    const lorePreview = el.querySelector('#lorePreview');
+    if (lorePreview) lorePreview.onclick = () => {
+      if (!HF.LoreScreen) { HF.toast('Introducción no disponible'); return; }
+      HF.LoreScreen.show('imperio');
+    };
+    const sbEdit = el.querySelector('#shareBaseEdit');
+    if (sbEdit) sbEdit.onclick = () => HF.askShareBase(() => HF.go('settings'));
+    const sbHere = el.querySelector('#shareBaseHere');
+    if (sbHere) sbHere.onclick = () => {
+      HF.setShareBase(hereUrl);
+      HF.toast(HF.isLocalAddress(hereUrl) ? 'Dirección guardada (solo red local)' : 'Dirección pública guardada');
+      HF.go('settings');
+    };
+    const fbSave = el.querySelector('#fbKeySave');
+    if (fbSave) fbSave.onclick = () => {
+      const inp = el.querySelector('#fbKey');
+      const v = inp ? String(inp.value || '').trim() : '';
+      if (!v) { HF.toast('Pega la clave del buzón primero'); return; }
+      HF.feedback.setKey(v);
+      HF.toast('Clave guardada · enviando comentarios pendientes…', 2200);
+      HF.feedback.flush().then(n => { if (n) HF.toast(n + ' comentario(s) enviado(s)', 2600); }).catch(() => { });
+      HF.go('settings');
+    };
+    const fbClear = el.querySelector('#fbKeyClear');
+    if (fbClear) fbClear.onclick = () => { HF.feedback.setKey(''); HF.toast('Clave quitada'); HF.go('settings'); };
     el.querySelector('#reset').onclick = () => { if (confirm(HF.t('RESET_CONFIRM'))) { ['tribe_profile', 'campaign_progress', 'daily_challenge', 'player_statistics', 'savegame_active', 'maps', 'newgame_opts'].forEach(k => HF.store.del(k)); HF.go('hub'); } };
     if (HF.cloud) {
       let shown = false;

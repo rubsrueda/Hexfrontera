@@ -1,0 +1,3 @@
+# js/artdata.js lo regenera tools/sync-art.js con saltos LF. Forzarlos evita
+# que un checkout de Windows (core.autocrlf) haga saltar el `git diff` del CI.
+js/artdata.js text eol=lf

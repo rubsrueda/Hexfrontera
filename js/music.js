@@ -203,6 +203,26 @@
     curEl = null; curKey = null;
   }
 
+  // Suspensión reversible para el ciclo de vida (app en segundo plano, blur).
+  // Conserva la pista actual: al volver se reanuda la misma, no otra aleatoria.
+  let suspended = false;
+  function suspend() {
+    if (!on || suspended) return;
+    suspended = true;
+    hiddenPaused = true;
+    if (usingLegacy) { if (legacy) try { legacy.stop(); } catch (e) { } return; }
+    stopEls();
+  }
+  function resume() {
+    if (!suspended) return;
+    suspended = false;
+    hiddenPaused = false;
+    if (!on || usingLegacy || !ENABLED || !soundOn() || !curEl) return;
+    const rp = curEl.play();
+    if (rp && rp.catch) rp.catch(() => { });
+    fade(curEl, VOL, .6);
+  }
+
   function refresh() {
     if (!on) return;
     if (!soundOn()) { stopEls(); if (usingLegacy && legacy) legacy.stop(); return; }
@@ -234,6 +254,8 @@
     checkState,
     stop,
     refresh,
+    suspend,
+    resume,
     playing: () => !!on && !usingLegacy,
     tension: () => warOn,
     track: () => curKey,
@@ -246,6 +268,8 @@
     update: g => checkState(g),
     stop,
     refresh,
+    suspend,
+    resume,
     tension: () => warOn,
     playing: () => !!on
   };

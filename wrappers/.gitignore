@@ -1,0 +1,12 @@
+# Generado por scripts/stage-web.js (nunca editar a mano)
+www/
+# Salidas de empaquetado
+dist/
+node_modules/
+# Proyectos nativos generados por Capacitor
+android/
+ios/
+# Credenciales y keystores
+*.keystore
+*.jks
+build/secret*

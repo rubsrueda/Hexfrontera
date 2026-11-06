@@ -87,8 +87,77 @@
     }
   };
 
-  HF.settings = () => Object.assign({ sound: true, vibrate: true, grid: true, speed: 1, lang: 'es', showIntroCrawl: true }, HF.store.get('settings', {}));
+  HF.settings = () => Object.assign({ sound: true, vibrate: true, grid: true, speed: 1, lang: 'es', showIntroCrawl: true, showLoreIntro: true, nato: false }, HF.store.get('settings', {}));
   HF.vibrate = ms => { if (HF.settings().vibrate && G.navigator && navigator.vibrate) try { navigator.vibrate(ms); } catch (e) { } };
+
+  // ---------- enlaces para compartir ----------
+  // Un enlace solo sirve si apunta a una DIRECCIÓN PÚBLICA del juego. Esto no
+  // tiene nada que ver con tener internet: si abres el juego desde un archivo
+  // (file://) o dentro de la app instalada, esa copia no tiene dirección que
+  // otros puedan abrir. Prioridad:
+  //   1. Ajustes → "Dirección pública" (HF.store 'share_base')
+  //   2. HF.CFG.share.base (config.js)
+  //   3. La página actual, solo si es http(s) y no es localhost/IP privada
+  //   4. '' → se comparte el CÓDIGO en su lugar
+  HF.normalizeShareBase = url => {
+    const s = String(url || '').trim();
+    if (!/^https?:\/\/[^\s]+$/i.test(s)) return '';
+    return s.replace(/[?#].*$/, '');
+  };
+  HF.isLocalAddress = url => {
+    const s = String(url || '');
+    const m = /^https?:\/\/([^/:]+)/i.exec(s);
+    const host = (m ? m[1] : '').toLowerCase();
+    if (!host) return true;
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' ||
+      /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      /\.local$/.test(host);
+  };
+  HF.autoShareBase = () => {
+    const loc = G.location || {};
+    if (loc.protocol !== 'http:' && loc.protocol !== 'https:') return '';
+    const href = String(loc.href || '').split('#')[0].split('?')[0];
+    return HF.isLocalAddress(href) ? '' : href;
+  };
+  // Migra una dirección pública antigua guardada en este dispositivo.
+  // Si el jugador compartió antes con un dominio de HF.CFG.share.legacy, los
+  // enlaces seguirían apuntando a un sitio que ya no publica el juego.
+  HF.migrateShareBase = () => {
+    const saved = HF.normalizeShareBase(HF.store.get('share_base', ''));
+    if (!saved) return false;
+    const cfg = (HF.CFG && HF.CFG.share) || {};
+    const cur = HF.normalizeShareBase(cfg.base);
+    if (!cur) return false;
+    const legacy = cfg.legacy || [];
+    for (let i = 0; i < legacy.length; i++) {
+      if (HF.normalizeShareBase(legacy[i]) === saved) {
+        HF.store.set('share_base', cur);
+        return true;
+      }
+    }
+    return false;
+  };
+  HF.shareBase = () => {
+    HF.migrateShareBase();
+    const saved = HF.normalizeShareBase(HF.store.get('share_base', ''));
+    if (saved) return saved;
+    const cfg = HF.normalizeShareBase(HF.CFG && HF.CFG.share && HF.CFG.share.base);
+    if (cfg) return cfg;
+    return HF.autoShareBase();
+  };
+  // Guarda (o borra, con '') la dirección pública elegida por el jugador.
+  HF.setShareBase = url => {
+    const v = HF.normalizeShareBase(url);
+    if (!v) { HF.store.del('share_base'); return ''; }
+    HF.store.set('share_base', v);
+    return v;
+  };
+  // kind: 'map' | 'replay'. raw = true para códigos de repetición ya seguros.
+  HF.shareUrl = (kind, value, raw) => {
+    const base = HF.shareBase();
+    if (!base || value == null || value === '') return '';
+    return base + '#' + kind + '=' + (raw ? String(value) : encodeURIComponent(String(value)));
+  };
   let ac = null;
   // Crea o reanuda el AudioContext. Las políticas de autoplay lo dejan en
   // 'suspended' hasta que se invoca dentro de un gesto del usuario.

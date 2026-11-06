@@ -60,6 +60,7 @@ ok(html.includes('art/boton-reclutar.png'), 'Campaña usa boton-reclutar');
 ok(html.includes('art/boton-construir.png'), 'Nueva partida usa boton-construir');
 ok(!html.includes('id="set2"'), 'el Ajustes superior ya no existe');
 ok(html.includes('id="set"'), 'el Ajustes inferior se mantiene');
+ok(html.includes('id="fbFab"') && html.includes('fb-fab'), 'el Hub tiene el botón flotante de comentarios');
 ok(ctaNode.innerHTML.includes('RETO DIARIO'), 'el banner del reto diario aparece');
 ok(ctaNode.innerHTML.includes('cta-go'), 'el banner tiene botón de iniciar');
 ok(!html.includes('⚔️ Campaña') && !html.includes('🎲 Nueva partida'), 'sin iconos delante de Campaña/Nueva partida');

@@ -1,18 +1,18 @@
 /* Script de validación estática QA para js/artdata.js
    Uso: node tester_qa/validar_artdata.js
-   Verifica: sintaxis, conteo de claves (12), formato Data URI, y que las claves
-   coinciden con el mapeo esperado de art.js FILES. */
+   Verifica: sintaxis, claves incrustadas, formato Data URI y decodificación.
+
+   La tabla canónica vive en tools/sync-art.js (ASSETS): así el validador y el
+   generador no pueden desincronizarse. Solo se esperan en artdata.js las
+   entradas con embed:true; el resto se sirve desde art/*.png. */
 const fs = require('fs');
 const path = require('path');
+const { ASSETS } = require('../tools/sync-art.js');
 
 const ARTDATA_PATH = path.join(__dirname, '..', 'js', 'artdata.js');
 
-// --- Claves esperadas (deben coincidir con art.js FILES: kind+key) ---
-const EXPECTED_KEYS = [
-  'unitINF', 'unitENG', 'unitARC', 'unitCAB', 'unitSIE', 'unitBAR',
-  'build2', 'build3', 'build4', 'build5', 'build6',
-  'miscfog'
-];
+// --- Claves esperadas (las que sync-art.js incrusta) ---
+const EXPECTED_KEYS = ASSETS.filter(a => a.embed).map(a => a.key);
 
 const EXPECTED_KEY_SET = new Set(EXPECTED_KEYS);
 
@@ -75,10 +75,10 @@ while ((m = keyRegex.exec(content)) !== null) {
   keys.push(m[1]);
 }
 
-if (keys.length === 12) {
-  logPass('Contador de claves: 12 (correcto)');
+if (keys.length === EXPECTED_KEYS.length) {
+  logPass('Contador de claves: ' + keys.length + ' (correcto)');
 } else {
-  logFail('Contador de claves: ' + keys.length + ' (esperadas 12)');
+  logFail('Contador de claves: ' + keys.length + ' (esperadas ' + EXPECTED_KEYS.length + ')');
 }
 
 // ── 6. Verificar que todas las claves esperadas están presentes ──
@@ -86,7 +86,7 @@ const missing = EXPECTED_KEYS.filter(k => !keys.includes(k));
 const extra = keys.filter(k => !EXPECTED_KEY_SET.has(k));
 
 if (missing.length === 0) {
-  logPass('Todas las 12 claves esperadas están presentes');
+  logPass('Todas las ' + EXPECTED_KEYS.length + ' claves esperadas están presentes');
 } else {
   logFail('Claves FALTANTES: ' + missing.join(', '));
 }

@@ -111,7 +111,7 @@
     board.colors = g.f.map(f => f.color); board.game = g; board.mode = 'play'; board.viewMode = 'normal';
     board.bubbles = []; board.cells = g.cells; board.R = g.R; board.fogMap = null;
     board.fit(); board.startAnim();
-    HF.onLeave = () => { board.stopAnim(); if (HF.bgm) HF.bgm.stop(); };
+    HF.onLeave = () => { board.dispose(); if (HF.bgm) HF.bgm.stop(); };
     const repTurn = q('#repTurn'), repCounter = q('#repCounter'), playBtn = q('#repPlayPause'), speedBtn = q('#repSpeed');
     const log = payload.log || [];
     const SPEEDS = [['1x', 300], ['2x', 150], ['4x', 60]];
@@ -165,7 +165,7 @@
       render();
       if (cursor >= log.length) finish();
     };
-    const pulse = () => { if (!playing || done) return; stepOnce(); };
+    const pulse = () => { if (!playing || done || HF.runtimePaused) return; stepOnce(); };
     const schedule = () => {
       stopTimer(); if (!playing || done) return;
       timer = setInterval(pulse, SPEEDS[speed][1]);

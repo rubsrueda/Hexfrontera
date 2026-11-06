@@ -10,6 +10,42 @@
     // spriteStretch compensa el aplastado del suelo: las imágenes se estiran
     // en vertical desde su base para ganar volumen.
     view: { tilt: 0.62, spriteStretch: 1.15, startZoom: 1.8 },
+    // Enlaces para compartir mapas y repeticiones.
+    // `base` = URL pública donde está publicado el juego. Si se deja vacía se
+    // usa el origen actual solo cuando es accesible desde otros dispositivos;
+    // en file://, app:// o localhost no hay enlace y se comparte el CÓDIGO del
+    // mapa/repetición (que sí funciona en cualquier equipo).
+    // `legacy` = dominios antiguos: si un dispositivo los tiene guardados como
+    // "dirección pública", se migran solos a `base` para no compartir enlaces
+    // muertos (ver HF.migrateShareBase en js/util.js).
+    share: {
+      base: 'https://federati.org/',
+      legacy: ['https://rubsrueda.github.io/Hexfrontera/']
+    },
+    // Endurecimiento del cliente (js/security.js) y de la nube
+    // (sql/security_hardening.sql).
+    //   allowedHosts: dominios donde el juego puede usar los servicios en línea.
+    //     En cualquier otro host el juego sigue jugable en local, pero se corta
+    //     la nube (clon/hotlink). file://, app:// y localhost siempre se permiten.
+    //   hardBlock: true = además muestra una pantalla de bloqueo en dominios ajenos.
+    //   strictServerValidation: true = las puntuaciones, votos y licencia se
+    //     piden a las RPC validadas; si aún no están desplegadas, se degrada a la
+    //     ruta antigua para no romper el juego.
+    security: {
+      allowedHosts: ['federati.org', 'www.federati.org', 'rubsrueda.github.io'],
+      hardBlock: false,
+      strictServerValidation: true
+    },
+    // Comentarios de los jugadores (js/feedback.js). Rellena `accessKey` con la
+    // clave de Web3Forms (https://web3forms.com) para recibirlos por correo.
+    // Si se deja vacía, el formulario sigue funcionando y los comentarios se
+    // guardan en el dispositivo hasta configurar el buzón. `endpoint` permite
+    // usar un servicio propio compatible.
+    feedback: {
+      accessKey: '32df175e-b0c6-4395-8811-672297a41896',
+      endpoint: 'https://api.web3forms.com/submit',
+      subject: 'Hexfrontier · comentario de jugador'
+    },
     // Música clásica dinámica (js/music.js). enabled:false deja el sintetizador
     // procedural de util.js, útil para builds 100% offline.
     music: { enabled: true, volume: 0.3, fade: 1.8, warRadius: 2 },

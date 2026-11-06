@@ -6,6 +6,20 @@
   const resIco = k => `<img class="res-ico" src="${RES_ICO[k]}" alt="" draggable="false">`;
   const costIcon = k => `<img class="cost-ico" src="${RES_ICO[k]}" alt="" draggable="false">`;
 
+  // Vistas del tablero. La simbología militar (Ajustes) sustituye la vista de
+  // combate por la táctica OTAN; el resto de vistas no cambian.
+  HF.gameViews = () => {
+    const nato = !!HF.settings().nato;
+    return [
+      { key: 'normal', icon: 'assets/ui/map.webp', name: HF.t('VIEW_NORMAL') },
+      nato
+        ? { key: 'nato', icon: '🎖️', name: HF.t('VIEW_NATO') }
+        : { key: 'combat', icon: 'assets/ui/recruit.webp', name: HF.t('VIEW_COMBAT') },
+      { key: 'politic', icon: 'assets/ui/campaign.webp', name: HF.t('VIEW_POLITIC') },
+      { key: 'resource', icon: 'assets/ui/history.webp', name: HF.t('VIEW_RESOURCE') }
+    ];
+  };
+
   const goalText = g => {
     const gl = g.goal || {};
     return { conquer: 'Conquista: elimina todas las ciudades rivales', survive: `Sobrevive hasta el turno ${gl.n}`, gold: `Reúne ${gl.n} de oro`, territory: `Controla ${gl.n} casillas`, city: `Ten ${gl.n} ciudades`, maxTurns: `Gana antes del turno ${gl.n}` }[gl.type] || 'Conquista';
@@ -61,6 +75,13 @@
     const q = s => el.querySelector(s);
     const st = { sel: -1, opts: new Map(), pending: null, drawer: null, busy: false, focus: -1, evPtr: g.events.length, bubbles: [] };
     cur = { g, st };
+    // Contrato para la telemetría (js/telemetry.js): si el runtime revienta,
+    // el interceptor llama a serialize() para volcar una copia de emergencia.
+    G.gameEngine = {
+      get state() { return g; },
+      get turn() { return g.turn; },
+      serialize: () => HF.serialize(g)
+    };
     const board = new HF.Board(q('#cv'), {});
     board.colors = g.f.map(f => f.color);
     board.bubbles = st.bubbles;
@@ -139,7 +160,7 @@
           else if (o.k === 'raid') { const ic = o.res === 'food' ? '🌾' : o.res === 'wood' ? '🪵' : '💰'; board.over.set(i, { fill: 'rgba(234,179,8,.5)', stroke: '#fde047', label: `${ic}${o.loot || 0}` }); }
           else if (o.k === 'wonder') board.over.set(i, { fill: 'rgba(234,179,8,.5)', stroke: '#fde047', label: '🏛' });
           if (o.alt && o.alt.length) {
-            const icon = { trap: '🪤', fire: '🔥', takeover: '💰' };
+            const icon = { trap: '🪤', fire: '🔥', takeover: '💰', raid: '💰' };
             const cur = board.over.get(i);
             if (cur) cur.label = (cur.label || '') + o.alt.map(a => icon[a.k] || '+').join('');
           }
@@ -166,6 +187,8 @@
       st.anim = true; let last = performance.now();
       const loop = t => {
         const dt = (t - last) / 1000; last = t;
+        // En segundo plano las burbujas se congelan en vez de caducar sin verse.
+        if (HF.runtimePaused) { requestAnimationFrame(loop); return; }
         for (const b of st.bubbles) b.life -= dt;
         for (let k = st.bubbles.length - 1; k >= 0; k--) if (st.bubbles[k].life <= 0) st.bubbles.splice(k, 1);
         board.draw();
@@ -299,15 +322,18 @@
 
     // acciones alternativas sobre la misma casilla (mover/atacar vs. trampa/incendiar/sobornar)
     function chooseAction(from, to, o) {
-      const D = HF.CFG.doctrine;
+      const D = HF.CFG.doctrine, RES = { gold: 'oro', food: 'comida', wood: 'madera' };
       const lbl = {
         atk: '⚔ Atacar', move: '➡ Mover', chop: '🪓 Talar', fuse: '🔷 Fusionar', shoot: '🏹 Disparar', siege: '💣 Asediar', board: '⚓ Embarcar',
-        raid: '💰 Asaltar caravana',
+        raid: '💰 Asaltar comercio',
         trap: `🪤 Colocar trampa (${costIcon('gold')}${D.caltropCost.gold})`, fire: '🔥 Incendiar bosque',
         takeover: `Sobornar (${costIcon('gold')}${D.takeoverCost.gold})`, pack_camp: '⛺ Empacar campamento', wonder: `🏛 Erigir pirámide (${costIcon('gold')}${D.wonderCost.gold})`
       };
+      const label = x => x.k === 'raid' && x.loot
+        ? `${lbl.raid} (+${x.loot} ${RES[x.res] || 'oro'})`
+        : (lbl[x.k] || x.k);
       const all = [o].concat(o.alt || []);
-      HF.modal(`<h3>Elige acción</h3><div class="grid3" style="grid-template-columns:1fr">${all.map((x, k) => `<button data-k="${k}" class="pri" style="width:100%">${lbl[x.k] || x.k}</button>`).join('')}</div><br><button id="x" style="width:100%">Cancelar</button>`, m => {
+      HF.modal(`<h3>Elige acción</h3><div class="grid3" style="grid-template-columns:1fr">${all.map((x, k) => `<button data-k="${k}" class="pri" style="width:100%">${label(x)}</button>`).join('')}</div><br><button id="x" style="width:100%">Cancelar</button>`, m => {
         m.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { const x = all[+b.dataset.k]; HF.closeModal(); act(from, to, x.k); });
         m.querySelector('#x').onclick = HF.closeModal;
       });
@@ -337,10 +363,16 @@
         HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); return;
       }
       if (g.online) HF.online.dirty(g);
-      HF.sfx(r.kind === 'atk' ? 'good' : 'click');
+      HF.sfx(r.kind === 'atk' ? 'good' : r.kind === 'raid' ? 'star' : 'click');
       // salto parabólico del soldado al moverse, talar o conquistar
       if (uBefore && !r.shot && (r.kind === 'move' || r.kind === 'chop' || (r.kind === 'atk' && g.cells[to].u))) board.hopTo(from, to, uBefore);
+      if (r.kind === 'raid' && r.movedTo != null && r.movedTo !== from) board.hopTo(from, r.movedTo, uBefore);
       if (r.kind === 'chop') board.burst('wood', to, 4);
+      if (r.kind === 'raid') {
+        board.burst('ember', to, 7); board.shake(60, 1);
+        const RES = { gold: 'oro', food: 'comida', wood: 'madera' };
+        HF.toast(`💰 ${HF.lang() === 'en' ? 'Loot' : 'Botín'}: +${r.loot} ${RES[r.res] || 'oro'}`);
+      }
       if (wasBastion && (r.kind === 'atk' || r.kind === 'siege')) board.burst('stone', to, 7);
       if (r.kind === 'siege') { board.shake(80, 2); board.burst('stone', to, 8); }
       if (r.kind === 'atk' && (wasCap || wasBastion)) board.shake(80, 2);
@@ -555,15 +587,13 @@
     }
     q('#bBuild').onclick = () => toggleDrawer('build');
     q('#bRec').onclick = () => toggleDrawer('unit');
-    // Modos de vista del mapa: normal -> combate -> político -> recursos.
-    // Las cuatro imágenes salen de art2/boton mapa, reclutar, campaña e Historial.
-    const VIEWS = [
-      { key: 'normal', icon: 'assets/ui/map.webp', name: HF.t('VIEW_NORMAL') },
-      { key: 'combat', icon: 'assets/ui/recruit.webp', name: HF.t('VIEW_COMBAT') },
-      { key: 'politic', icon: 'assets/ui/campaign.webp', name: HF.t('VIEW_POLITIC') },
-      { key: 'resource', icon: 'assets/ui/history.webp', name: HF.t('VIEW_RESOURCE') }
-    ];
-    const viewHTML = v => `<img class="view-ico" src="${v.icon}" alt="" draggable="false">`;
+    // Modos de vista del mapa: normal -> combate/táctico -> político -> recursos.
+    // Con "Simbología militar" activada (Ajustes), la vista de combate se
+    // sustituye por la táctica OTAN (fichas procedurales en board.js).
+    const VIEWS = HF.gameViews();
+    const viewHTML = v => /^assets\//.test(v.icon)
+      ? `<img class="view-ico" src="${v.icon}" alt="" draggable="false">`
+      : `<span class="view-emoji" style="font-size:17px;line-height:1">${v.icon}</span>`;
     let viewIdx = 0;
     q('#bView').onclick = () => {
       viewIdx = (viewIdx + 1) % VIEWS.length;
@@ -571,10 +601,18 @@
       board.viewMode = v.key;
       q('#bView').innerHTML = `${viewHTML(v)}<small>${v.name}</small>`;
       HF.sfx('click');
-      HF.toast(v.key === 'combat' ? (HF.lang() === 'en' ? 'Combat view · tap a unit to see its defense' : 'Vista: Combate · toca una unidad para ver su defensa') : (HF.lang() === 'en' ? 'View: ' : 'Vista: ') + v.name, v.key === 'combat' ? 2600 : 1500);
-      if (v.key === 'combat') {
+      const tactical = v.key === 'combat' || v.key === 'nato';
+      const tip = v.key === 'nato'
+        ? (HF.lang() === 'en' ? 'NATO view · symbol, tier and terrain defense' : 'Vista táctica OTAN · símbolo, escalón y defensa del terreno')
+        : v.key === 'combat'
+          ? (HF.lang() === 'en' ? 'Combat view · tap a unit to see its defense' : 'Vista: Combate · toca una unidad para ver su defensa')
+          : (HF.lang() === 'en' ? 'View: ' : 'Vista: ') + v.name;
+      HF.toast(tip, tactical ? 2600 : 1500);
+      if (tactical) {
         if (st.sel >= 0) renderInfo(st.sel);
-        else info(HF.lang() === 'en' ? '⚔️ Combat · tap a unit to see tier and defense breakdown' : '⚔️ Combate · toca una unidad para ver nivel y desglose de defensa');
+        else info(v.key === 'nato'
+          ? (HF.lang() === 'en' ? '🎖️ NATO · symbol, tier (I/II/III) and defense by terrain' : '🎖️ OTAN · símbolo, escalón (I/II/III) y defensa por terreno')
+          : (HF.lang() === 'en' ? '⚔️ Combat · tap a unit to see tier and defense breakdown' : '⚔️ Combate · toca una unidad para ver nivel y desglose de defensa'));
       } else if (st.sel < 0) info(goalText(g));
       board.draw();
     };
@@ -587,6 +625,9 @@
       if (HF.replays) HF.replays.flush(g);
       HF.store.atomicSave('savegame_active', HF.serialize(g));
     }
+    // El puente de plataforma (js/platform.js) guarda por aquí antes de que el
+    // sistema suspenda o cierre el proceso.
+    HF.requestSave = save;
     q('#bEnd').onclick = () => {
       if (st.busy || g.over) return;
       if (g.online) {
@@ -621,7 +662,9 @@
       if (g._clockStop) { try { g._clockStop(); } catch (e) { } g._clockStop = null; }
       if (HF.banter) HF.banter.stop();
       HF.bubbleAt = null;
-      board.stopAnim(); if (HF.bgm) HF.bgm.stop(); document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null;
+      HF.requestSave = null;
+      G.gameEngine = null;
+      board.dispose(); if (HF.bgm) HF.bgm.stop(); document.removeEventListener('visibilitychange', onHide); G.removeEventListener('pagehide', save); cur = null;
     };
     // Partida en red: sincronización con la sala (anfitrión autoritativo).
     if (g.online && HF.online && HF.online.bind) {
@@ -723,7 +766,12 @@
           turns: g.turn,
           score: score,
           surplus: surplus,
-          won: !!won
+          won: !!won,
+          // Hechos de la partida: el servidor recalcula la puntuación con ellos
+          // (js/cloud.js → fn_hf_submit_map_score). Si no cuadran, se rechaza.
+          kills: s.kills || 0,
+          lost: s.lost || 0,
+          deserts: s.deserts || 0
         }).then(r => {
           // Guardar la repetición de la mejor marca para que el Top se pueda ver.
           if (won && r && r.ok && !r.skipped && HF.replays && HF.replays.saveCode && HF.cloud.submitReplayCode) {
@@ -755,6 +803,8 @@
         </div>
         <div class="dim small" style="text-align:center">Conquistadas ${s.captured} · Edificios ${s.built} · Deserciones ${s.deserts}</div><br>
         <button id="btnShareReplay" class="pri" style="width:100%;margin-bottom:6px">🎬 Compartir Repetición</button>
+        <div class="dim small" style="text-align:center;margin:2px 0 6px">${HF.t('FB_PROMPT')}</div>
+        <button id="btnFeedback" style="width:100%;margin-bottom:6px">💬 ${HF.t('FB_CTA')}</button>
         <div class="row"><button id="menu2" class="grow">Menú</button>${g.mode === 'campaign' && won && m.idx < 29 ? '<button id="nx" class="pri grow">Siguiente ▶</button>' : '<button id="again" class="pri grow">Repetir</button>'}</div>`, mm => {
         chart(mm.querySelector('#ch'));
         // Top del mapa: se carga después del envío para que incluya la marca
@@ -817,6 +867,8 @@
         const nx = mm.querySelector('#nx'), ag = mm.querySelector('#again');
         if (nx) nx.onclick = () => HF.startGame(HF.makeGame(HF.campaign[m.idx + 1], HF.loadTribe()));
         if (ag) ag.onclick = () => HF.go(g.mode === 'campaign' ? 'campaign' : g.mode === 'daily' ? 'daily' : 'newgame');
+        const fbk = mm.querySelector('#btnFeedback');
+        if (fbk) fbk.onclick = () => { if (HF.feedback) HF.feedback.open({ stack: true }); };
         const sh = mm.querySelector('#btnShareReplay');
         if (sh) sh.onclick = async () => {
           sh.disabled = true;
@@ -824,32 +876,36 @@
           let code;
           try { code = await HF.encodeReplay(HF.replayPayload(g)); }
           catch (e) { console.error(e); sh.disabled = false; return HF.toast('No se pudo generar la repetición'); }
-          const url = location.href.split('#')[0] + '#replay=' + code;
-          const host = location.hostname;
-          const local = location.protocol === 'file:' || !host || host === 'localhost' || host === '127.0.0.1' ||
-            /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+          // El enlace apunta a la dirección pública del juego (Ajustes → Enlaces),
+          // nunca a la ruta desde la que se está abriendo esta copia.
+          const url = HF.shareUrl('replay', code, true);
           const show = why => HF.modal(`<h3>🎬 Repetición de la partida</h3>
             ${why ? `<p class="neg small">${why}</p>` : ''}
-            <div class="dim small">Enlace</div><textarea readonly id="repUrl" style="min-height:80px">${HF.esc(url)}</textarea>
+            ${url ? `<div class="dim small">Enlace</div><textarea readonly id="repUrl" style="min-height:80px">${HF.esc(url)}</textarea>` : ''}
             <div class="dim small">Código (pégalo en 🎬 desde el Hub)</div><textarea readonly id="repCode" style="min-height:64px">${HF.esc(code)}</textarea>
-            <div class="row"><button id="cpUrl">Copiar enlace</button><button id="cpCode" class="pri grow">Copiar código</button><button id="x">Cerrar</button></div>`, m2 => {
+            <div class="row">${url ? '<button id="cpUrl">Copiar enlace</button>' : ''}<button id="cpCode" class="pri grow">Copiar código</button>${url ? '' : '<button id="cfgUrl">🔗 Dirección pública</button>'}<button id="x">Cerrar</button></div>`, m2 => {
             const copy = (txt, msg) => {
               const done = () => HF.toast(msg, 2600);
               try { navigator.clipboard.writeText(txt).then(done).catch(() => { m2.querySelector('#repCode').select(); }); }
               catch (e) { m2.querySelector('#repCode').select(); }
             };
-            m2.querySelector('#cpUrl').onclick = () => copy(url, 'Enlace copiado');
+            const cu = m2.querySelector('#cpUrl');
+            if (cu) cu.onclick = () => copy(url, 'Enlace copiado');
+            const cf = m2.querySelector('#cfgUrl');
+            if (cf) cf.onclick = () => { HF.closeModal(); HF.askShareBase(() => { sh.disabled = false; sh.click(); }); };
             m2.querySelector('#cpCode').onclick = () => copy(code, 'Código copiado');
             m2.querySelector('#x').onclick = HF.closeModal;
           });
-          if (local) { sh.disabled = false; return show('Este enlace apunta a un archivo o servidor local: en otro teléfono no abrirá. Comparte el código y usa el botón 🎬 del Hub, o publica el juego en una URL accesible.'); }
-          if (url.length > 1800) { sh.disabled = false; return show('El enlace es largo; algunos navegadores móviles lo truncan. Comparte el código si el enlace falla.'); }
-          const ok = () => HF.toast('¡Enlace de repetición copiado al portapapeles!', 2800);
-          try {
-            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok).catch(() => show('No se pudo copiar automáticamente. Copia el enlace o el código.'));
-            else show('Copia el enlace o el código para compartir.');
-          } catch (e) { show('Copia el enlace o el código para compartir.'); }
           sh.disabled = false;
+          if (!url) return show('Esta copia del juego no tiene una dirección pública: el enlace solo abriría en tu equipo. No depende de tu conexión a internet. Configura la dirección (Ajustes → Enlaces para compartir) y vuelve a intentarlo.');
+          if (url.length > 6000) return show('El enlace es muy largo y algunos chats lo truncan. También puedes compartir el código.');
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(url)
+                .then(() => HF.toast('¡Enlace de repetición copiado al portapapeles!', 2800))
+                .catch(() => show('No se pudo copiar automáticamente. Copia el enlace o el código.'));
+            } else show('Copia el enlace o el código para compartir.');
+          } catch (e) { show('Copia el enlace o el código para compartir.'); }
         };
       });
     }

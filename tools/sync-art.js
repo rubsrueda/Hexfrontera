@@ -2,14 +2,19 @@
 /**
  * tools/sync-art.js
  *
- * Lee los archivos .jfif de la carpeta art/ y genera js/artdata.js con
- * Data URIs incrustados, permitiendo la ejecucion offline bajo file://
- * sin bloqueos de CORS en el canvas.
+ * Genera js/artdata.js incrustando como data URI el arte que debe viajar en el
+ * HTML (unidades, edificios, tumba y recursos). El resto (árbol, niebla,
+ * carreta y urca) se carga desde art/*.png: son texturas grandes o de capas y
+ * así artdata.js no engorda 3,5 MB. Están listadas aquí igualmente para que el
+ * pipeline verifique que los archivos existen.
  *
- * Uso:  node tools/sync-art.js
+ * Uso:
+ *   node tools/sync-art.js           regenera artdata.js (falla si falta arte)
+ *   node tools/sync-art.js --check   no escribe: compara y devuelve 2 si difiere
+ *   node tools/sync-art.js --all     incrusta también las de archivo (9,2 MB)
  *
- * CRITICAL: Nunca procesar ni emitir cadenas Base64 en stdout.
- * Todo se escribe directamente al archivo js/artdata.js en disco.
+ * CRITICAL: nunca emitir Base64 por stdout; todo se escribe en disco.
+ * Este script no usa dependencias: Node puro, compatible con Node 18.
  */
 'use strict';
 
@@ -20,51 +25,32 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const ARTE_DIR = path.join(PROJECT_ROOT, 'art');
 const OUTPUT_FILE = path.join(PROJECT_ROOT, 'js', 'artdata.js');
 
-// Mapeo de claves canonicas -> archivos en art/
-// Proporcionado por el Arquitecto
-// Mapeo actualizado con 17 claves (6 unidades + 5 edificios + 1 niebla + 4 recursos UI + 1 tumba)
-const ASSET_MAP = [
-  ["INF", "infanteria.png"],
-  ["ENG", "ingeniero.png"],
-  ["ARC", "arquero.png"],
-  ["CAB", "caballeria.png"],
-  ["SIE", "asedio.png"],
-  ["BAR", "barco.png"],
-  ["build1", "arbol.png"],
-  ["build2", "camino.png"],
-  ["build3", "campamento.png"],
-  ["build4", "pueblo.png"],
-  ["build5", "ciudad.png"],
-  ["build6", "bastion.png"],
-  ["miscfog", "nube.png"],
-  ["misctomb", "tumba.png"],
-  ["resMADERA", "madera.png"],
-  ["resTRIGO", "trigo.png"],
-  ["resORO_MONEDA", "oro_moneda.png"],
-  ["resORO_ROCA", "oro_roca.png"],
-  ["tradecart", "carreta.png"],
-  ["tradeship", "urca.png"]
+// embed:true  → data URI dentro de artdata.js
+// embed:false → se sirve como art/<archivo> (art.js ya lo resuelve y sw.js lo cachea)
+const ASSETS = [
+  { key: 'INF', file: 'infanteria.png', embed: true },
+  { key: 'ENG', file: 'ingeniero.png', embed: true },
+  { key: 'ARC', file: 'arquero.png', embed: true },
+  { key: 'CAB', file: 'caballeria.png', embed: true },
+  { key: 'SIE', file: 'asedio.png', embed: true },
+  { key: 'BAR', file: 'barco.png', embed: true },
+  { key: 'build1', file: 'arbol.png', embed: false },
+  { key: 'build2', file: 'camino.png', embed: true },
+  { key: 'build3', file: 'campamento.png', embed: true },
+  { key: 'build4', file: 'pueblo.png', embed: true },
+  { key: 'build5', file: 'ciudad.png', embed: true },
+  { key: 'build6', file: 'bastion.png', embed: true },
+  { key: 'miscfog', file: 'nube.png', embed: false },
+  { key: 'misctomb', file: 'tumba.png', embed: true },
+  { key: 'resMADERA', file: 'madera.png', embed: true },
+  { key: 'resTRIGO', file: 'trigo.png', embed: true },
+  { key: 'resORO_MONEDA', file: 'oro_moneda.png', embed: true },
+  { key: 'resORO_ROCA', file: 'oro_roca.png', embed: true },
+  { key: 'tradecart', file: 'carreta.png', embed: false },
+  { key: 'tradeship', file: 'urca.png', embed: false }
 ];
 
-function main() {
-  const entries = [];
-  for (const [key, filename] of ASSET_MAP) {
-    const fullPath = path.join(ARTE_DIR, filename);
-    if (!fs.existsSync(fullPath)) {
-      console.error("FALTA: " + filename + " (clave: " + key + ")");
-      continue;
-    }
-    const buf = fs.readFileSync(fullPath);
-    const b64 = buf.toString("base64");
-    entries.push('  "' + key + '": "data:image/jpeg;base64,' + b64 + '"');
-    console.log("OK: " + filename + " -> " + key);
-  }
-  const content = '/* Imagenes incrustadas para funcionamiento offline file:// */\nHF.ARTDATA = {\n' + entries.join(",\n") + '\n};\n';
-  fs.writeFileSync(OUTPUT_FILE, content, "utf8");
-  console.log("Generado: " + OUTPUT_FILE + " (" + entries.length + " claves)");
-}
-
-main();
+const HEADER = '/* Imagenes de arte/ ya recortadas, incrustadas para que funcionen tambien desde file:// (sin leer pixeles del canvas). Regenerar si cambian las imagenes. */';
 
 function mimeTypeFor(ext) {
   const e = ext.toLowerCase();
@@ -76,68 +62,72 @@ function mimeTypeFor(ext) {
   return null;
 }
 
-console.log('=== sync-art.js - Ingestion de assets HEXFRONTIER ===');
-console.log('Fuente: ' + ARTE_DIR);
-console.log('Destino: ' + OUTPUT_FILE);
-console.log('----------------------------------------');
+function main() {
+  const args = process.argv.slice(2);  const check = args.includes('--check');
+  const all = args.includes('--all');
 
-const entries = [];
-const missing = [];
+  console.log('=== sync-art.js - Ingestion de assets HEXFRONTIER ===');
+  console.log('Fuente:  ' + ARTE_DIR);
+  console.log('Destino: ' + OUTPUT_FILE + (check ? ' (solo comprobación)' : ''));
 
-for (const [key, filename] of ASSET_MAP) {
-  const fullPath = path.join(ARTE_DIR, filename);
+  const missing = [];
+  const entries = [];
 
-  if (!fs.existsSync(fullPath)) {
-    console.error('  ! FALTA: ' + filename + ' (clave: ' + key + ')');
-    missing.push({ key: key, filename: filename });
-    continue;
+  for (const asset of ASSETS) {
+    const fullPath = path.join(ARTE_DIR, asset.file);
+    if (!fs.existsSync(fullPath)) {
+      console.error('  ! FALTA: ' + asset.file + ' (clave: ' + asset.key + ')');
+      missing.push(asset.file);
+      continue;
+    }
+    if (!asset.embed && !all) {
+      console.log('  · archivo: ' + asset.file + ' -> ' + asset.key + ' (se sirve desde art/)');
+      continue;
+    }
+    const ext = path.extname(asset.file);
+    const mime = mimeTypeFor(ext);
+    if (!mime) {
+      console.error('  ? Extensión no soportada: ' + asset.file);
+      missing.push(asset.file);
+      continue;
+    }
+    const buffer = fs.readFileSync(fullPath);
+    entries.push({ key: asset.key, dataUri: 'data:' + mime + ';base64,' + buffer.toString('base64') });
+    console.log('  OK: ' + asset.file + ' -> ' + asset.key + ' (' + mime + ', ' + buffer.length + ' bytes)');
   }
 
-  const ext = path.extname(filename);
-  const mime = mimeTypeFor(ext);
-
-  if (!mime) {
-    console.error('  ? Ext. no soportada: ' + filename + ' (clave: ' + key + ')');
-    missing.push({ key: key, filename: filename, reason: 'extension no soportada' });
-    continue;
+  if (missing.length) {
+    console.error('--- Faltan ' + missing.length + ' archivo(s) ---');
+    for (const m of missing) console.error('  - ' + m);
+    process.exit(1);
   }
 
-  const buffer = fs.readFileSync(fullPath);
-  const base64 = buffer.toString('base64');
-  const dataUri = 'data:' + mime + ';base64,' + base64;
+  const lines = [HEADER, 'HF.ARTDATA = {'];
+  entries.forEach((entry, idx) => {
+    const comma = idx < entries.length - 1 ? ',' : '';
+    lines.push('  "' + entry.key + '": "' + entry.dataUri + '"' + comma);
+  });
+  lines.push('};', '');
+  const content = lines.join('\n');
 
-  entries.push({ key: key, dataUri: dataUri });
-  console.log('  OK: ' + filename + ' -> ' + key + ' (' + mime + ', ' + buffer.length + ' bytes)');
+  if (check) {
+    let current = null;
+    try { current = fs.readFileSync(OUTPUT_FILE, 'utf8'); } catch (e) { current = null; }
+    if (current === content) {
+      console.log('En sincronía: ' + entries.length + ' claves incrustadas.');
+      process.exit(0);
+    }
+    console.error('DESINCRONIZADO: artdata.js no coincide con art/. Ejecuta `node tools/sync-art.js`.');
+    process.exit(2);
+  }
+
+  fs.writeFileSync(OUTPUT_FILE, content, 'utf8');
+  console.log('Archivo generado con ' + entries.length + ' claves incrustadas (' +
+    (Buffer.byteLength(content) / 1048576).toFixed(2) + ' MB).');
 }
 
-console.log('----------------------------------------');
+// Se ejecuta solo si se invoca directamente: al requerirlo (por ejemplo desde
+// tester_qa/validar_artdata.js) únicamente se exporta la tabla canónica.
+if (require.main === module) main();
 
-// Generar el archivo artdata.js
-const lines = [];
-lines.push('/* Imagenes de arte/ ya recortadas, incrustadas para que funcionen tambien desde file:// (sin leer pixeles del canvas). Regenerar si cambian las imagenes. */');
-lines.push('HF.ARTDATA = {');
-
-entries.forEach(function(entry, idx) {
-  const comma = idx < entries.length - 1 ? ',' : '';
-  lines.push('  "' + entry.key + '": "' + entry.dataUri + '"' + comma);
-});
-
-lines.push('};');
-lines.push('');
-
-const content = lines.join('\n');
-fs.writeFileSync(OUTPUT_FILE, content, 'utf8');
-
-console.log('Archivo generado: ' + OUTPUT_FILE);
-console.log('Entradas escritas: ' + entries.length);
-if (missing.length > 0) {
-  console.log('Entradas faltantes: ' + missing.length);
-  console.log('--- Archivos faltantes ---');
-  for (const m of missing) {
-    const reason = m.reason ? ' (' + m.reason + ')' : '';
-    console.log('  - ' + m.filename + ' [clave: ' + m.key + ']' + reason);
-  }
-  process.exit(2);
-}
-
-console.log('Sincronizacion completada exitosamente.');
+module.exports = { ASSETS, mimeTypeFor };

@@ -109,6 +109,10 @@
   const EDGE_OF = [0, 5, 4, 3, 2, 1];
 
   // Tablero hexagonal sobre canvas con zoom, pan y arrastre
+  // Tableros vivos: el puente de plataforma los pausa y reanuda en bloque
+  // cuando la app pasa a segundo plano (ver js/platform.js).
+  const LIVE = new Set();
+  HF.boards = LIVE;
   function Board(canvas, h) {
     this.cv = canvas; this.h = h; this.ctx = canvas.getContext('2d');
     this.cam = { x: 0, y: 0, z: 1 }; this.size = 24;
@@ -116,6 +120,8 @@
     this.mode = 'play'; this.viewMode = 'normal';
     this.parts = null; this._raf = 0; this._animLast = 0; this._drawT = 0;
     this.fx = []; this.pulses = []; this._fxRaf = 0; this._shakeUntil = 0; this._shakeAmp = 0; this.hop = null;
+    this._paused = false; this._dead = false; this._wasAnim = false;
+    LIVE.add(this);
     this.ptrs = new Map(); this._bind();
     this._zoomUI();
     this.dpr = Math.min(2, G.devicePixelRatio || 1);
@@ -177,7 +183,7 @@
     }
   };
   P.startAnim = function () {
-    if (this._raf || !G.requestAnimationFrame) return;
+    if (this._raf || this._paused || this._dead || !G.requestAnimationFrame) return;
     if (!this.parts) this._initParts();
     const me = this;
     const tick = t => {
@@ -200,6 +206,32 @@
     if (this._fxRaf && G.cancelAnimationFrame) G.cancelAnimationFrame(this._fxRaf);
     this._raf = 0; this._fxRaf = 0;
   };
+  // Pausa real del bucle: cancela los RAF y recuerda si estaban activos para
+  // reanudarlos tal cual cuando la app vuelva al frente.
+  P.pause = function () {
+    if (this._paused || this._dead) return;
+    this._paused = true;
+    this._wasAnim = !!this._raf;
+    this._wasFx = !!this._fxRaf;
+    this.stopAnim();
+  };
+  P.resume = function () {
+    if (!this._paused || this._dead) return;
+    this._paused = false;
+    if (G.document && G.document.hidden) return;
+    if (this._wasAnim) this.startAnim();
+    this._wasAnim = this._wasFx = false;
+    if (this.fx.length || this.pulses.length || this.hop) this._startFx();
+    try { this.draw(); } catch (e) { }
+  };
+  // Al cerrar la pantalla de juego el tablero deja de interesar al puente.
+  P.dispose = function () {
+    this._dead = true;
+    this.stopAnim();
+    LIVE.delete(this);
+  };
+  HF.pauseBoards = function () { for (const b of LIVE) b.pause(); };
+  HF.resumeBoards = function () { for (const b of LIVE) b.resume(); };
   P.setMap = function (R, cells) { this.R = R; this.cells = cells; this.cam.z = 1; this.parts = null; this.fit(); };
   P.fit = function () {
     const rw = (2 * this.R + 1) * this.size * S3, rh = (2 * this.R + 1) * this.size * 1.5 * TILT;
@@ -415,7 +447,7 @@
     return this.fx.length > 0 || this.pulses.length > 0 || now < this._shakeUntil || !!this.hop;
   };
   P._startFx = function () {
-    if (this._fxRaf || !G.requestAnimationFrame) return;
+    if (this._fxRaf || this._paused || this._dead || !G.requestAnimationFrame) return;
     const me = this;
     const tick = t => {
       if (!me._fxRaf) return;
@@ -463,6 +495,9 @@
   };
   P.hopTo = function (from, to, u) {
     if (!u) return;
+    // En modo OTAN el movimiento es instantáneo: la ficha no tiene animación
+    // de salto (evitaría dibujar un sprite suelto sobre el mapa táctico).
+    if (this.viewMode === 'nato') { this.hop = null; return; }
     const now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
     this.hop = { from, to, type: u.type, tier: u.tier, owner: u.owner, t0: now, dur: 340 };
     this._startFx();
@@ -515,7 +550,8 @@
       const y = y0 - this._lift(c);
       const s = fs * 1.2;
       const art = car.kind === 'land' ? 'cart' : 'ship';
-      if (!HF.art.draw(ctx, 'trade', art, x, y - fs * .14, s, s)) continue;
+      if (this.viewMode === 'nato') this.drawTradeCounter(ctx, car, x, y - fs * .14, fs);
+      else if (!HF.art.draw(ctx, 'trade', art, x, y - fs * .14, s, s)) continue;
       const badge = car.kind === 'cargo'
         ? (({ gold: '💰', food: '🌾', wood: '🪵' }[car.cargo.res] || '📦') + car.cargo.qty)
         : (car.gold > 0 ? '💰' + car.gold : '');
@@ -527,6 +563,134 @@
         ctx.fillStyle = '#ffd34d'; ctx.fillText(badge, x, y - fs * .59);
       }
     }
+  };
+  // ---------- Simbología militar (APP-6 / MIL-STD-2525) ----------
+  // Fichas 100% procedurales: sin imágenes externas. El fondo es el color de la
+  // facción y los trazos usan el color de mayor contraste. El escalón va en la
+  // franja superior y el ataque/defensa efectivos en la inferior.
+  const natoLum = hex => {
+    const h = String(hex || '').replace('#', '');
+    if (h.length < 6) return .5;
+    const r = parseInt(h.slice(0, 2), 16) / 255;
+    const g2 = parseInt(h.slice(2, 4), 16) / 255;
+    const b = parseInt(h.slice(4, 6), 16) / 255;
+    return .2126 * r + .7152 * g2 + .0722 * b;
+  };
+  const NATO_TIER = t => (t >= 4 ? 'X' : t === 3 ? 'III' : t === 2 ? 'II' : 'I');
+  P._natoAura = function (g, c) {
+    if (!g || c.o < 0) return false;
+    for (const j of HF.nbs(g, c.i)) {
+      const n = g.cells[j];
+      if (n && n.b === B.BASTION && n.o === c.o) return true;
+    }
+    return false;
+  };
+  P._natoTerrain = function (c, u) {
+    return (u.type === 'INF' || u.type === 'ENG') && (c.t === T.COLINA || c.t === T.MONTANA);
+  };
+  P.drawNatoCounter = function (ctx, c, u, x, y, fs) {
+    const g = this.game;
+    const W = fs * 1.1, H = fs * 0.72;
+    const left = x - W / 2, top = y - H / 2, right = left + W, bottom = top + H;
+    const fill = (this.colors && this.colors[u.owner]) || '#3b82f6';
+    const ink = natoLum(fill) > .58 ? '#0b1220' : '#ffffff';
+    const ready = HF.ready ? HF.ready(u) : (u.mv > 0 || u.at > 0);
+
+    ctx.fillStyle = fill; ctx.fillRect(left, top, W, H);
+    ctx.fillStyle = 'rgba(8,14,28,.35)'; ctx.fillRect(left, top, W, H * .22);
+
+    const x0 = left + W * .17, x1 = right - W * .17;
+    const y0 = top + H * .30, y1 = bottom - H * .22;
+    const cx = x, cy = (y0 + y1) / 2;
+    ctx.strokeStyle = ink; ctx.fillStyle = ink;
+    ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+
+    if (u.type === 'INF') {
+      // Aspa de infantería.
+      ctx.beginPath();
+      ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+      ctx.moveTo(x1, y0); ctx.lineTo(x0, y1);
+      ctx.stroke();
+    } else if (u.type === 'CAB') {
+      // Diagonal de caballería.
+      ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x1, y0); ctx.stroke();
+    } else if (u.type === 'SIE') {
+      // Punto de artillería.
+      ctx.beginPath(); ctx.arc(cx, cy, fs * .16, 0, Math.PI * 2); ctx.fill();
+    } else if (u.type === 'ENG') {
+      // Puente de zapadores |--|.
+      ctx.beginPath();
+      ctx.moveTo(x0, cy); ctx.lineTo(x1, cy);
+      ctx.moveTo(x0, cy); ctx.lineTo(x0, y1);
+      ctx.moveTo(x1, cy); ctx.lineTo(x1, y1);
+      ctx.stroke();
+    } else if (u.type === 'ARC') {
+      // Flecha de proyectil.
+      ctx.beginPath();
+      ctx.moveTo(cx, y1); ctx.lineTo(cx, y0);
+      ctx.moveTo(cx, y0); ctx.lineTo(cx - W * .12, y0 + H * .12);
+      ctx.moveTo(cx, y0); ctx.lineTo(cx + W * .12, y0 + H * .12);
+      ctx.stroke();
+    } else if (u.type === 'BAR') {
+      // Ondulación de superficie naval.
+      const ym = cy + H * .05, amp = H * .12;
+      ctx.beginPath();
+      ctx.moveTo(x0, ym);
+      ctx.quadraticCurveTo(cx - W * .17, ym - amp, cx, ym);
+      ctx.quadraticCurveTo(cx + W * .17, ym + amp, x1, ym);
+      ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(x0, cy); ctx.lineTo(x1, cy); ctx.stroke();
+    }
+
+    // Escalón de veteranía.
+    ctx.font = '700 ' + Math.max(7, fs * .30) + 'px ui-monospace, monospace';
+    ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(NATO_TIER(u.tier || 1), x, top + H * .12);
+
+    // Ataque (izq.) y defensa dinámica (der.).
+    const atk = g ? HF.attackOf(g, u, false, c) : (u.tier || 1);
+    const def = g ? HF.defenseAt(g, c.i) : 0;
+    let defColor = '#ffffff', mark = '';
+    if (c.deg > 0) { defColor = '#f87171'; mark = '▼'; }
+    else if (this._natoAura(g, c)) defColor = '#38bdf8';
+    else if (this._natoTerrain(c, u)) { defColor = '#4ade80'; mark = '▲'; }
+    ctx.font = '700 ' + Math.max(7, fs * .30) + 'px ui-monospace, monospace';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = ink;
+    ctx.fillText('⚔' + atk, left + W * .07, bottom - H * .06);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = defColor;
+    ctx.fillText('🛡' + def + mark, right - W * .07, bottom - H * .06);
+
+    // Carga transportada (barco): punto del color de la unidad embarcada.
+    if (u.cargo) {
+      ctx.beginPath();
+      ctx.fillStyle = (this.colors && this.colors[u.cargo.owner]) || ink;
+      ctx.arc(right - W * .12, top + H * .11, Math.max(2, fs * .09), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    // Marco: blanco si la unidad aún puede actuar; negro si está agotada.
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = ready ? '#ffffff' : '#000000';
+    ctx.strokeRect(left, top, W, H);
+
+    // Restituir el estilo de texto que usa el resto del tablero.
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  };
+  // Unidades comerciales (carretas/urcas): chit simplificado 'T' / '≈' / '▣'.
+  P.drawTradeCounter = function (ctx, car, x, y, fs) {
+    const W = fs * 1.0, H = fs * .62, left = x - W / 2, top = y - H / 2;
+    const fill = (this.colors && this.colors[car.owner]) || '#eab308';
+    const ink = natoLum(fill) > .58 ? '#0b1220' : '#ffffff';
+    ctx.fillStyle = fill; ctx.fillRect(left, top, W, H);
+    ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.strokeRect(left, top, W, H);
+    ctx.fillStyle = ink;
+    ctx.font = '700 ' + Math.max(8, fs * .36) + 'px ui-monospace, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(car.kind === 'cargo' ? '▣' : car.kind === 'sea' ? '≈' : 'T', x, y);
   };
   P._drawFx = function (ctx, now) {
     if (!this.fx.length && !this.pulses.length) return;
@@ -577,7 +741,9 @@
     const season = g && HF.season ? HF.season(g) : 0;
     const winter = season === 3;
     const view = this.viewMode || 'normal';
-    const politic = view === 'politic', resource = view === 'resource', combat = view === 'combat';
+    const politic = view === 'politic', resource = view === 'resource', combat = view === 'combat', nato = view === 'nato';
+    // El modo OTAN comparte el fondo limpio de la vista de combate.
+    const tactical = combat || nato;
     const editor = this.mode === 'paint' || !!this.mapEditor;
     const fogPat = fog ? HF.art.fogPattern(ctx, this.cam, this.W, this.H, .6, TILT) : null;
     const items = [], walls = [];
@@ -614,7 +780,7 @@
         if (fogPat) { ctx.globalAlpha = .55; ctx.fillStyle = fogPat; ctx.fill(); ctx.globalAlpha = 1; }
         continue;
       }
-      ctx.globalAlpha = politic ? .2 : combat ? .4 : 1;
+      ctx.globalAlpha = politic ? .2 : tactical ? .4 : 1;
       
       // Color base con jitter determinista (excepto editor)
       let baseHex = editor ? ECOL[c.t] : (this._shore(c) ? '#35647F' : TCOL[c.t]);
@@ -699,13 +865,13 @@
       }
       
       // brillo de agua procedural (se omite en las vistas analíticas)
-      if (!politic && !combat && (c.t === T.MAR || c.t === T.RIO)) {
+      if (!politic && !tactical && (c.t === T.MAR || c.t === T.RIO)) {
         const wave = (Math.sin(now * .002 + c.q * .9 + c.r * .5) + 1) * .5;
         ctx.globalAlpha = (winter ? .08 : .03) + wave * (winter ? .12 : .09);
         ctx.fillStyle = winter ? '#D8E4E8' : '#B9D2DD';
         hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
       }
-      if (winter && !politic && !combat) {
+      if (winter && !politic && !tactical) {
         ctx.globalAlpha = .12; ctx.fillStyle = '#A9C6D3'; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
         if (c.t === T.RIO) {
           ctx.globalAlpha = .34; ctx.fillStyle = '#E8F1F2'; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
@@ -715,7 +881,7 @@
       }
       if (c.t === T.COLINA || c.t === T.MONTANA) {
         ctx.fillStyle = (editor ? ECOL2 : TCOL2)[c.t]; ctx.beginPath(); ctx.moveTo(x - fs * .5, y + fs * .35); ctx.lineTo(x, y - fs * (c.t === T.MONTANA ? .6 : .35)); ctx.lineTo(x + fs * .5, y + fs * .35); ctx.closePath(); ctx.fill();
-        if (c.t === T.MONTANA && winter && !politic && !combat) {
+        if (c.t === T.MONTANA && winter && !politic && !tactical) {
           ctx.fillStyle = 'rgba(244,239,234,.52)';
           ctx.beginPath(); ctx.moveTo(x - fs * .18, y - fs * .2); ctx.lineTo(x, y - fs * .6); ctx.lineTo(x + fs * .18, y - fs * .2); ctx.closePath(); ctx.fill();
         }
@@ -725,9 +891,9 @@
       if (c.o >= 0) {
         const col = this.colors[c.o];
         // político: soberanía a máxima saturación; recursos: facción atenuada
-        ctx.globalAlpha = resource ? .15 : politic ? .8 : combat ? .3 : (c.sup ? .38 : .2);
+        ctx.globalAlpha = resource ? .15 : politic ? .8 : tactical ? .3 : (c.sup ? .38 : .2);
         ctx.fillStyle = col; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
-        ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, fs * (politic ? .2 : combat ? .14 : .12)); hexPath(ctx, x, y, fs * .92); ctx.stroke();
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, fs * (politic ? .2 : tactical ? .14 : .12)); hexPath(ctx, x, y, fs * .92); ctx.stroke();
         if (!c.sup) { ctx.strokeStyle = 'rgba(10,15,29,.55)'; ctx.lineWidth = 1; for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(x - fs * .5 + k * fs * .3, y - fs * .6); ctx.lineTo(x - fs * .9 + k * fs * .3, y + fs * .5); ctx.stroke(); } }
       }
       // AISLADO: pulso rojo para que el corte de suministro sea inequívoco.
@@ -808,12 +974,12 @@
       }
       // Recurso como pieza de diorama: ocupa la casilla y conserva el volumen
       // del arte. Se dibuja antes que el edificio y la unidad de esa casilla.
-      if (!editor && c.res && !politic && !combat) {
+      if (!editor && c.res && !politic && !tactical) {
         const rk = RES_ART_KEY[c.res];
         if (rk) HF.art.drawStretched(ctx, 'resource', rk, x, y - fs * .08, fs * RES_BOX, fs * RES_BOX, SPRITE_STRETCH);
       }
       if (c.b) {
-        const treeDim = (politic || combat) && c.b === B.ARBOL;
+        const treeDim = (politic || tactical) && c.b === B.ARBOL;
         if (treeDim) ctx.globalAlpha = politic ? .2 : .4;
         const bw = fs * BUILD_BOX;
         // Los caminos van tumbados en el suelo: no se estiran. Edificios y
@@ -836,50 +1002,54 @@
         const u = c.u, hide = this.drag && this.drag.from === c.i;
         const hopping = this.hop && this.hop.to === c.i;
         if (!hide && !hopping) {
-          if (resource) ctx.globalAlpha = .15;
-          if (!HF.art.drawStretched(ctx, 'unit', u.type, x, y - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.fillStyle = INK; ctx.font = fs * .75 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.type].icon, x, y + fs * .05); }
-          if (combat) {
-            // anillo de combate + nivel + defensa efectiva (incluye terreno, edificios, auras y deg.)
-            ctx.strokeStyle = 'rgba(244,239,234,.65)'; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.arc(x, y + fs * .05, fs * .63, 0, 7); ctx.stroke();
-            const def = g ? HF.defenseAt(g, c.i) : 0;
-            ctx.font = '700 ' + Math.max(8, fs * .4) + 'px "Plus Jakarta Sans", sans-serif';
-            // Nivel justo encima de la unidad (centrado), no en el lateral.
-            const tl = 'N' + u.tier, tw = ctx.measureText(tl).width;
-            const lw = tw + 8, lh = fs * .44, ly = y - fs * 1.45 - lh / 2;
-            ctx.fillStyle = 'rgba(8,14,28,.86)';
-            ctx.fillRect(x - lw / 2, ly, lw, lh);
-            ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x, ly + lh / 2);
-            const dl = '🛡' + def, dw = ctx.measureText(dl).width;
-            ctx.fillStyle = 'rgba(8,14,28,.86)';
-            ctx.fillRect(x + fs * .3, y + fs * .58, dw + 5, fs * .44);
-            ctx.fillStyle = '#bae6fd'; ctx.fillText(dl, x + fs * .3 + (dw + 5) / 2, y + fs * .8);
-            ctx.font = em + 'px sans-serif';
-          } else if (this.mode === 'paint') {
-            const tl = 'N' + u.tier;
-            ctx.font = '700 ' + Math.max(8, fs * .42) + 'px "Plus Jakarta Sans", sans-serif';
-            const tw2 = ctx.measureText(tl).width;
-            ctx.fillStyle = 'rgba(8,14,28,.85)';
-            ctx.fillRect(x - fs * .95, y + fs * .56, tw2 + 5, fs * .44);
-            ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x - fs * .95 + (tw2 + 5) / 2, y + fs * .78);
-            ctx.font = em + 'px sans-serif';
-          } else if (u.tier > 1) {
-            ctx.font = '700 ' + fs * .5 + 'px "Plus Jakarta Sans", sans-serif'; ctx.fillStyle = VOID; ctx.fillText(u.tier, x + fs * .55, y + fs * .55); ctx.fillStyle = '#ffd34d'; ctx.fillText(u.tier, x + fs * .53, y + fs * .53);
-            ctx.font = em + 'px sans-serif';
+          if (nato) {
+            this.drawNatoCounter(ctx, c, u, x, y, fs);
+          } else {
+            if (resource) ctx.globalAlpha = .15;
+            if (!HF.art.drawStretched(ctx, 'unit', u.type, x, y - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.fillStyle = INK; ctx.font = fs * .75 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.type].icon, x, y + fs * .05); }
+            if (combat) {
+              // anillo de combate + nivel + defensa efectiva (incluye terreno, edificios, auras y deg.)
+              ctx.strokeStyle = 'rgba(244,239,234,.65)'; ctx.lineWidth = 2;
+              ctx.beginPath(); ctx.arc(x, y + fs * .05, fs * .63, 0, 7); ctx.stroke();
+              const def = g ? HF.defenseAt(g, c.i) : 0;
+              ctx.font = '700 ' + Math.max(8, fs * .4) + 'px "Plus Jakarta Sans", sans-serif';
+              // Nivel justo encima de la unidad (centrado), no en el lateral.
+              const tl = 'N' + u.tier, tw = ctx.measureText(tl).width;
+              const lw = tw + 8, lh = fs * .44, ly = y - fs * 1.45 - lh / 2;
+              ctx.fillStyle = 'rgba(8,14,28,.86)';
+              ctx.fillRect(x - lw / 2, ly, lw, lh);
+              ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x, ly + lh / 2);
+              const dl = '🛡' + def, dw = ctx.measureText(dl).width;
+              ctx.fillStyle = 'rgba(8,14,28,.86)';
+              ctx.fillRect(x + fs * .3, y + fs * .58, dw + 5, fs * .44);
+              ctx.fillStyle = '#bae6fd'; ctx.fillText(dl, x + fs * .3 + (dw + 5) / 2, y + fs * .8);
+              ctx.font = em + 'px sans-serif';
+            } else if (this.mode === 'paint') {
+              const tl = 'N' + u.tier;
+              ctx.font = '700 ' + Math.max(8, fs * .42) + 'px "Plus Jakarta Sans", sans-serif';
+              const tw2 = ctx.measureText(tl).width;
+              ctx.fillStyle = 'rgba(8,14,28,.85)';
+              ctx.fillRect(x - fs * .95, y + fs * .56, tw2 + 5, fs * .44);
+              ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x - fs * .95 + (tw2 + 5) / 2, y + fs * .78);
+              ctx.font = em + 'px sans-serif';
+            } else if (u.tier > 1) {
+              ctx.font = '700 ' + fs * .5 + 'px "Plus Jakarta Sans", sans-serif'; ctx.fillStyle = VOID; ctx.fillText(u.tier, x + fs * .55, y + fs * .55); ctx.fillStyle = '#ffd34d'; ctx.fillText(u.tier, x + fs * .53, y + fs * .53);
+              ctx.font = em + 'px sans-serif';
+            }
+            if (u.cargo) {
+              const kx = x + fs * .5, ky = y - fs * .5;
+              ctx.fillStyle = this.colors[u.cargo.owner]; ctx.beginPath(); ctx.arc(kx, ky, fs * .3, 0, 7); ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.stroke();
+              if (!HF.art.draw(ctx, 'unit', u.cargo.type, kx, ky, fs * .6, fs * .6)) { ctx.fillStyle = INK; ctx.font = fs * .4 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.cargo.type].icon, kx, ky); }
+            }
+            if (u.owner === me) {
+              if (u.mv > 0 || (u.cargo && u.cargo.mv > 0)) { ctx.fillStyle = '#4ade80'; ctx.beginPath(); ctx.arc(x - fs * .6, y - fs * .5, fs * .13, 0, 7); ctx.fill(); }
+              if (u.at > 0) { ctx.fillStyle = '#f87171'; ctx.beginPath(); ctx.arc(x - fs * .35, y - fs * .62, fs * .13, 0, 7); ctx.fill(); }
+            }
+            if (resource) ctx.globalAlpha = 1;
           }
-          if (u.cargo) {
-            const kx = x + fs * .5, ky = y - fs * .5;
-            ctx.fillStyle = this.colors[u.cargo.owner]; ctx.beginPath(); ctx.arc(kx, ky, fs * .3, 0, 7); ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.stroke();
-            if (!HF.art.draw(ctx, 'unit', u.cargo.type, kx, ky, fs * .6, fs * .6)) { ctx.fillStyle = INK; ctx.font = fs * .4 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.cargo.type].icon, kx, ky); }
-          }
-          if (u.owner === me) {
-            if (u.mv > 0 || (u.cargo && u.cargo.mv > 0)) { ctx.fillStyle = '#4ade80'; ctx.beginPath(); ctx.arc(x - fs * .6, y - fs * .5, fs * .13, 0, 7); ctx.fill(); }
-            if (u.at > 0) { ctx.fillStyle = '#f87171'; ctx.beginPath(); ctx.arc(x - fs * .35, y - fs * .62, fs * .13, 0, 7); ctx.fill(); }
-          }
-          if (resource) ctx.globalAlpha = 1;
         }
       }
-      if (c.deg) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('💔', x - fs * .5, y - fs * .5); }
+      if (c.deg && !nato) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('💔', x - fs * .5, y - fs * .5); }
       // estados de doctrina visibles en el tablero
       ctx.fillStyle = INK; ctx.font = fs * .45 + 'px sans-serif';
       if (c.wonder) { ctx.globalAlpha = .95; ctx.fillText('🏛', x, y - fs * .55); ctx.globalAlpha = 1; }

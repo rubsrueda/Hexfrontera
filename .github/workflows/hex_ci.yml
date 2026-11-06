@@ -1,0 +1,82 @@
+# CI de Hexfrontier · shell de scripts globales, pipeline de arte y QA.
+#
+# Este archivo asume que la RAÍZ DEL REPOSITORIO es la carpeta del juego
+# (donde viven index.html, js/, art/, tools/ y tester_qa/). Si el repo tiene
+# el juego en un subdirectorio, mueve .github/ a la raíz y añade
+# `working-directory: PROYECTOS/hexfrontier` a cada paso `run`.
+name: Hexfrontier CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hexfrontier-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    name: Integridad, arte y pruebas
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+
+      - name: Versión de Node
+        run: node --version
+
+      # Guardián de la arquitectura: todo js/*.js debe estar en index.html,
+      # cacheado por sw.js y compilar. Falla rápido si alguien rompe el shell.
+      - name: Integridad del shell (scripts globales)
+        run: node tools/check-syntax.js
+
+      # Regenera artdata.js desde art/*.png. Falla si falta algún recurso.
+      - name: Pipeline de assets
+        run: node tools/sync-art.js
+
+      # El paso anterior reescribe artdata.js: si el resultado difiere del
+      # commiteado, el repositorio estaba desincronizado.
+      - name: artdata.js sincronizado con art/
+        run: |
+          if ! git diff --quiet -- js/artdata.js; then
+            echo "::error file=js/artdata.js::artdata.js no coincide con art/. Ejecuta 'node tools/sync-art.js' y commitea el resultado."
+            git --no-pager diff --stat -- js/artdata.js
+            exit 1
+          fi
+
+      # Valida claves, data URIs y decodificación contra la tabla canónica de
+      # tools/sync-art.js (una sola fuente de verdad).
+      - name: Validación de artdata
+        run: node tester_qa/validar_artdata.js
+
+      # El mismo paquete que publica Pages: detecta un contrato roto (falta un
+      # script en index.html) antes de desplegar.
+      - name: Paquete web (Pages)
+        run: node wrappers/scripts/stage-web.js --web --out=site
+
+      # Ejecuta todas las suites tester_qa/*_test.js en procesos aislados.
+      - name: Batería de pruebas
+        run: node tester_qa/run_all.js
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo "### Hexfrontier CI"
+            echo ""
+            echo "- Node: \`$(node --version)\`"
+            echo "- Scripts del shell: \`$(grep -c '<script src=' index.html)\`"
+            echo "- Suites de prueba: \`$(find tester_qa -maxdepth 1 -name '*_test.js' | wc -l)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

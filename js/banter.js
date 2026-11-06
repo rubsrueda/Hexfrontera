@@ -38,6 +38,7 @@
     init(g) {
       this.clearTimers();
       this.activeConvo = null;
+      this.paused = false;
       this._g = g || null;
       this._lastPair = null;
       this.lastBanterTurn = -1;
@@ -60,6 +61,26 @@
       this.activeConvo = null;
       this._ambientReady = 0;
       this._g = null;
+      this.paused = false;
+    },
+
+    // Segundo plano: los temporizadores no deben disparar charlas que el
+    // jugador no verá (ni reaparecer al volver con burbujas caducadas).
+    pause() {
+      if (this.paused) return;
+      this.paused = true;
+      if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
+      if (this.ambientTimer) { clearTimeout(this.ambientTimer); this.ambientTimer = null; }
+      if (this._openTimer) { clearTimeout(this._openTimer); this._openTimer = null; }
+      this.clearTimers();
+      this.activeConvo = null;
+    },
+    resume() {
+      if (!this.paused) return;
+      this.paused = false;
+      if (!this._g) return;
+      this.resetIdle(this._g);
+      this.startAmbient(this._g);
     },
 
     clearTimers() {

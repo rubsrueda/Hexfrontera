@@ -126,11 +126,16 @@
       ['u', 'BAR:1', '⛵', 'Barco N1'], ['u', 'BAR:2', '⛵', 'Barco N2'], ['u', 'BAR:3', '⛵', 'Barco N3'],
       ['e', 0, '🧽', 'Borrar todo']
     ];
+    if (arg && arg.code) {
+      // Abierto desde "Mis mapas" / la comunidad: carga ese mapa directamente.
+      const r = HF.importMap(arg.code);
+      if (!r.error) { R = r.R; cells = r.cells; seed = r.seed; curName = arg.name || ''; }
+    }
     el.innerHTML = `<div class="screen" style="padding-bottom:0">${HF.header(HF.t('EDITOR_TITLE', 'Editor de mapas'))}
       <div class="tools" id="tools">${TOOLS.map((t, i) => `<button data-i="${i}" title="${t[3]}" class="${i === 0 ? 'sel' : ''}">${HF.edIcon(t)}</button>`).join('')}</div>
       <div class="boardwrap"><canvas id="cv"></canvas><div class="info" id="info">${HF.lang() === 'en' ? 'Tap or drag to paint' : 'Toca o arrastra para pintar'}</div></div>
       <div class="drawer edbar" style="padding-bottom:calc(var(--sab) + 6px)"><button id="size">R${R}</button><button id="gen">${HF.t('EDITOR_RANDOM', '🎲 Aleatorio')}</button><button id="clr">${HF.t('EDITOR_CLEAR', '🧹 Vaciar')}</button><button id="exp">${HF.t('EDITOR_EXPORT', '📤 Exportar')}</button><button id="imp">${HF.t('EDITOR_IMPORT', '📥 Importar')}</button><button id="sav">${HF.t('EDITOR_SAVE', '💾 Guardar')}</button><button id="lst">${HF.t('EDITOR_LOAD', '📂 Abrir')}</button><button id="play" class="pri">${HF.t('EDITOR_PLAY', '▶ Probar')}</button><button id="pub">🌐 Publicar</button></div></div>`;
-    HF.wireBack(el);
+    HF.wireBack(el, (arg && arg.from) || 'hub');
     const q = s => el.querySelector(s);
     const board = new HF.Board(q('#cv'), {});
     board.mode = 'paint';
@@ -211,8 +216,19 @@
         m.querySelector('#ok').onclick = () => {
           const name = inp.value.trim() || 'Mapa';
           const ms = maps(), code = HF.exportMap(R, cells, seed), k = ms.findIndex(x => x.name === name);
-          if (k >= 0) ms[k].code = code; else ms.push({ name, code });
+          const factions = new Set(cells.filter(c => c && c.cap && c.o >= 0).map(c => c.o)).size;
+          const entry = { name, code, R, seed, factions, updatedAt: Date.now() };
+          if (k >= 0) {
+            const prev = ms[k];
+            ms[k] = entry;
+            // La publicación anterior sigue siendo válida solo si el mapa no cambió.
+            if (prev && prev.code === code && prev.publishedId) {
+              ms[k].publishedId = prev.publishedId;
+              ms[k].publishedAt = prev.publishedAt;
+            }
+          } else ms.push(entry);
           HF.store.set('maps', ms); curName = name; HF.closeModal(); HF.toast((k >= 0 ? 'Actualizado: ' : 'Guardado: ') + name, 2500);
+        if (HF.feedback) HF.feedback.prompt('map');
         };
       });
     };
@@ -222,27 +238,16 @@
       const err = HF.validateMap(R, cells);
       if (err) { HF.sfx('error'); return HF.mapError(err); }
       const owners = new Set(cells.filter(c => c && c.cap && c.o >= 0).map(c => c.o)).size;
-      HF.modal(`<h3>🌐 Publicar en la comunidad</h3>
-        <label>Nombre del mapa</label><input id="pubName" maxlength="40" value="${HF.esc(curName || 'Mapa ' + (maps().length + 1))}">
-        <label>Autor</label><input id="pubAuthor" maxlength="24" value="${HF.esc(HF.loadTribe().name)}"><br><br>
-        <div class="row"><button id="pubNo">Cancelar</button><button id="pubGo" class="pri grow">Publicar</button></div>`, m => {
-        m.querySelector('#pubNo').onclick = HF.closeModal;
-        m.querySelector('#pubGo').onclick = () => {
-          const name = m.querySelector('#pubName').value.trim() || 'Mapa';
-          const author = m.querySelector('#pubAuthor').value.trim() || 'Anónimo';
-          if (!HF.cloud) return HF.toast('Modo sin conexión');
-          m.querySelector('#pubGo').disabled = true;
-          HF.cloud.publishMap({
-            name, author, author_id: HF.cloud.playerId(),
-            code: HF.exportMap(R, cells, seed), radius: R, factions_count: owners
-          }).then(r => {
-            if (r && r.ok) {
-              HF.closeModal(); HF.toast('¡Mapa publicado en la comunidad!', 2800);
-              G.setTimeout(() => HF.communityMapsModal(), 350);
-            }
-            else { m.querySelector('#pubGo').disabled = false; HF.toast(r && r.offline ? 'Modo sin conexión' : 'No se pudo publicar'); }
-          }).catch(() => { m.querySelector('#pubGo').disabled = false; HF.toast('No se pudo publicar'); });
-        };
+      if (!HF.publishMapDialog) { HF.sfx('error'); return HF.toast('Publicación no disponible'); }
+      const code = HF.exportMap(R, cells, seed);
+      HF.publishMapDialog({
+        code, name: curName, radius: R, factions: owners,
+        onDone: info => {
+          // El mapa queda guardado en "Mis mapas" con su id publicado: así el
+          // enlace de compartir y la ficha de la comunidad apuntan a la misma fila.
+          if (info && HF.rememberPublished) HF.rememberPublished(code, info);
+          HF.go('maps', { tab: 'community' });
+        }
       });
     };
     fit();

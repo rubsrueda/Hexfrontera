@@ -1,0 +1,77 @@
+# Publica el juego como sitio web (GitHub Pages) para tener una DIRECCIÓN
+# PÚBLICA que compartir por WhatsApp. Los enlaces (#map=…, #replay=…) apuntan
+# a esta URL; desde la página se puede jugar e instalar la PWA/APK.
+#
+# Requisitos (una vez): Settings → Pages → Source: "GitHub Actions".
+# Si el repositorio tiene el juego en un subdirectorio, el paso de preparación
+# lo detecta solo (PROYECTOS/hexfrontier).
+name: Publicar web (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Preparar sitio
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+
+      # stage-web.js copia solo el runtime (sin tests, arte de origen ni
+      # wrappers). Con --web incluye sw.js para que funcione como PWA.
+      - name: Empaquetar el juego
+        run: |
+          if [ -f PROYECTOS/hexfrontier/index.html ]; then GAME=PROYECTOS/hexfrontier; else GAME=.; fi
+          node "$GAME/wrappers/scripts/stage-web.js" --web --out=site
+          echo "Archivos publicados: $(find site -type f | wc -l)"
+          test -f site/index.html
+          test -f site/sw.js
+
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Subir artefacto
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Desplegar
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Desplegar en Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Resumen
+        run: |
+          {
+            echo "### Juego publicado"
+            echo ""
+            echo "URL: ${{ steps.deployment.outputs.page_url }}"
+            echo ""
+            echo "Esa es la dirección que deben llevar los enlaces que compartas."
+            echo "En el juego: **Ajustes → Enlaces para compartir → Usar esta página**"
+            echo "(o pega la URL a mano) para que también funcione desde la app de escritorio/móvil."
+          } >> "$GITHUB_STEP_SUMMARY"

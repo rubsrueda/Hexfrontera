@@ -273,3 +273,13 @@ canvas.chart{width:100%;height:210px;background:rgba(14,24,48,.72);border-radius
 .cta-sub{font-size:11px;color:var(--dim);margin-top:2px}
 .cta-go{min-height:42px;white-space:nowrap}
 @media (max-width:420px){.cta-banner{flex-wrap:wrap}.cta-banner .cta-go{width:100%}}
+
+/* ---------- comentarios de los jugadores ---------- */
+.fb-fab{position:fixed;right:14px;bottom:calc(var(--sab, 0px) + 86px);z-index:9;width:52px;height:52px;border-radius:50%;border:1px solid rgba(245,185,66,.45);background:linear-gradient(135deg,rgba(245,185,66,.18),rgba(16,28,54,.94));color:var(--ink);font-size:22px;line-height:1;box-shadow:0 8px 24px rgba(10,15,29,.5);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.fb-fab:active{transform:scale(.95)}
+.fb-prompt{position:fixed;left:10px;right:10px;bottom:calc(var(--sab, 0px) + 10px);z-index:30;display:flex;gap:8px;align-items:center;background:rgba(16,28,54,.97);border:1px solid rgba(245,185,66,.55);border-radius:14px;padding:9px 10px;box-shadow:0 12px 30px rgba(0,0,0,.5);animation:fbIn .22s ease-out}
+.fb-prompt .grow{flex:1;font-size:13px;line-height:1.25}
+.fb-prompt button{min-height:38px;padding:4px 10px}
+@keyframes fbIn{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
+.fb-overlay{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(10,15,29,.72);padding:14px;overflow:auto;backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+.fb-sheet{width:100%;max-width:460px;max-height:88vh;overflow-y:auto;background:rgba(16,28,54,.95);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 24px 60px rgba(10,15,29,.45)}
