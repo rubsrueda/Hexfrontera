@@ -161,7 +161,6 @@
   HF.screen('hub', el => {
     const tribe = HF.loadTribe(), save = HF.store.get('savegame_active', null);
     const d = HF.dailyState(), doneToday = d.date === HF.dailyKey() && d.attempts > 0;
-    const localStats = HF.getStats();
     // Copia de emergencia escrita por js/telemetry.js tras un fallo crítico.
     const crash = HF.crash ? HF.crash.read() : null;
     const recoverable = !!(crash && crash.state);
@@ -178,7 +177,6 @@
       <div class="bar">
         <button id="daily" class="art-btn" title="Diario"><img src="art/boton-reto-diario.png" alt="Diario">${doneToday ? '' : '<b class="art-dot">!</b>'}</button>
         <div class="grow"></div>
-        <button id="hist" class="art-btn" title="Historial de partidas"><img src="art/boton-mapa.png" alt="Historial"></button>
         <button id="rep" class="art-btn" title="Ver repetición"><img src="art/boton-reproducir.png" alt="Repetición"></button>
         <button id="news" class="art-btn" title="${HF.lang() === 'en' ? 'News' : 'Noticias'}" aria-label="${HF.lang() === 'en' ? 'News' : 'Noticias'}"><img src="art/boton-noticias.png" alt="Noticias"></button>
       </div>
@@ -190,11 +188,6 @@
         ${save ? `<button class="pri big" id="cont">${HF.t('BTN_CONTINUE')} <span class="dim">· T${save.turn} · ${HF.esc(save.mode)}</span></button>` : ''}
         <button class="big art-big" id="camp"><img src="art/boton-reclutar.png" alt=""><span>${plain(HF.t('BTN_CAMPAIGN'))} <span class="dim">★ ${HF.totalStars()}/90</span></span></button>
         <button class="big art-big" id="new"><img src="art/boton-construir.png" alt=""><span>${plain(HF.t('BTN_NEW_GAME'))}</span></button>
-        <div class="card" id="standing" style="padding:8px 10px">
-          <div class="row"><b class="grow">🏅 Tu posición</b><span class="dim small" id="stNote"></span></div>
-          <div id="stBody" class="small" style="margin-top:3px">Consultando clasificación…</div>
-          <div class="row" style="margin-top:5px"><span class="dim small grow">${localStats.wins}V · ${localStats.losses}D · ${localStats.games} partidas</span><button id="stOpen" style="min-height:34px;padding:4px 10px;font-size:12px">🌍 Ranking</button></div>
-        </div>
       </div>
       <div class="dock">
         <button id="tribe" title="${HF.esc(tribe.name)}" aria-label="${HF.esc(tribe.name)}"><span class="dock-crest" style="border-color:${tribe.color}">${HF.crestHTML(tribe.crest, 30)}</span><span class="dock-name">${HF.esc(tribe.name)}</span></button>
@@ -220,7 +213,6 @@
     });
     on('wiki', () => HF.codex());
     on('fbFab', () => { if (HF.feedback) HF.feedback.open(); });
-    on('hist', () => HF.replays.openHistory());
     on('rep', () => HF.replayCodePrompt());
     on('cont', () => { try { HF.startGame(HF.deserialize(save)); } catch (e) { console.error(e); HF.store.del('savegame_active'); HF.toast(HF.lang() === 'en' ? 'Corrupted save' : 'Guardado dañado'); HF.go('hub'); } });
     on('news', () => HF.modal(`<h3><img class="modal-ico" src="assets/ui/news.webp" alt="" draggable="false"> ${HF.lang() === 'en' ? 'News' : 'Noticias'}</h3><p class="dim">${HF.lang() === 'en' ? 'Version 1.0 · local offline mode.<br>Multiplayer and online games are coming in future versions.' : 'Versión 1.0 · modo local sin conexión.<br>Multijugador y partidas en línea llegarán en próximas versiones.'}</p>
@@ -262,45 +254,18 @@
         }
       }
     }
-    // Posición global: se pinta con la última copia y se refresca en segundo plano.
-    const stBody = el.querySelector('#stBody'), stNote = el.querySelector('#stNote');
-    const paintStanding = st => {
-      if (!stBody) return;
-      if (!st || !st.ok) {
-        stBody.innerHTML = '<span class="dim">Sin conexión · tus estadísticas locales siguen disponibles.</span>';
-        if (stNote) stNote.textContent = '';
-        return;
-      }
-      if (!st.rank) {
-        stBody.innerHTML = st.best
-          ? `Mejor marca: <b style="color:var(--acc)">${(+st.best.score || 0).toLocaleString()} pts</b>${st.capped ? ' · fuera del Top ' + st.total : ' · aún sin posición'}`
-          : 'Todavía no has registrado ninguna marca. Juega una partida para entrar en el ranking.';
-      } else {
-        stBody.innerHTML = `Puesto <b style="color:var(--acc)">#${st.rank}</b> de ${st.total} jugadores · Mejor marca: <b>${(+st.best.score || 0).toLocaleString()} pts</b> · ${st.maps} mapa(s)`;
-      }
-      if (stNote) stNote.textContent = st.rank ? '🌍' : '';
-    };
-    const cachedStanding = HF.store.get('cloud_standing', null);
-    if (cachedStanding) paintStanding(cachedStanding);
-    if (HF.cloud && HF.cloud.getPlayerStanding) {
-      if (!HF.cloud.online) { if (!cachedStanding) paintStanding(null); }
-      else HF.cloud.getPlayerStanding(HF.cloud.playerId()).then(st => {
-        if (!el.isConnected) return;
-        paintStanding(st);
-        if (st && st.ok) HF.store.set('cloud_standing', st);
-      }).catch(() => { if (!cachedStanding) paintStanding(null); });
-    } else paintStanding(null);
-    on('stOpen', () => HF.rankingModal());
   });
 
   // ---------- TRIBU ----------
   HF.screen('tribe', el => {
     const t = HF.loadTribe();
+    let tribeChanged = false;
     // Guarda siempre el mismo perfil (con fecha de cambio) y lo replica en la
     // nube con antirrebote: la tribu no puede "regenerarse" al volver a entrar.
     const persist = () => {
       const saved = HF.saveTribe(t);
       if (saved) Object.assign(t, saved);
+      tribeChanged = true;
       if (HF.cloud && HF.cloud.saveProfileSoon) HF.cloud.saveProfileSoon();
     };
     const draw = () => {
@@ -366,6 +331,18 @@
       };
       step();
     };
+    // TRIBE_MODIFIED: se dispara al salir de la pantalla, no en cada tecla.
+    // Solo si el jugador vuelve al Hub; si entra directo a jugar, se omite.
+    HF.onLeave = () => {
+      if (!tribeChanged) return;
+      tribeChanged = false;
+      if (HF.EventFeedbackModal) {
+        HF.EventFeedbackModal.checkAndRender('TRIBE_MODIFIED', {
+          delay: 500,
+          guard: () => HF.currentScreen === 'hub'
+        });
+      }
+    };
     draw();
   });
 
@@ -395,7 +372,24 @@
     }
     if (!ref) return Promise.resolve({ ok: false, msg: 'Pega un código o un enlace de mapa' });
     if (ref.kind === 'invalid') return Promise.resolve({ ok: false, msg: 'Código o enlace no válido' });
+    if (ref.kind === 'shortReplay') return Promise.resolve({ ok: false, msg: 'Es un enlace corto de repetición: ábrelo con 🎬 Ver repetición' });
     if (ref.kind === 'replay') return Promise.resolve({ ok: false, msg: 'Es un enlace de repetición: ábrelo con 🎬 Ver repetición' });
+    if (ref.kind === 'short') {
+      if (!HF.cloud || !HF.cloud.resolveShortMap) return Promise.resolve({ ok: false, msg: 'Enlaces cortos no disponibles' });
+      return HF.cloud.resolveShortMap(ref.code).then(r => {
+        if (!r || !r.ok || !r.code) return { ok: false, msg: (r && r.msg) || 'Enlace corto no encontrado' };
+        return useMapCode(r.code, action, null);
+      }).catch(() => ({ ok: false, msg: 'No se pudo abrir el enlace corto' }));
+    }
+    if (ref.kind === 'seed') {
+      if (action === 'edit') return Promise.resolve({ ok: false, msg: 'Un enlace de semilla no se puede editar' });
+      const spec = HF.links && HF.links.decode ? HF.links.decode(ref.token) : null;
+      if (!spec) return Promise.resolve({ ok: false, msg: 'Enlace de mapa no válido' });
+      if (!HF.startGame || !HF.makeGame) return Promise.resolve({ ok: false, msg: 'Inicio de partida no disponible' });
+      HF.closeModal();
+      HF.startGame(HF.makeGame(Object.assign({ mode: 'skirmish', goal: { type: 'conquer' } }, spec), HF.loadTribe()));
+      return Promise.resolve({ ok: true });
+    }
     if (ref.kind === 'code') return Promise.resolve(useMapCode(ref.code, action, null));
     // Enlace o id de la comunidad: se resuelve contra la nube.
     if (!HF.cloud || !HF.cloud.getCommunityMap) return Promise.resolve({ ok: false, msg: 'Modo sin conexión' });
@@ -404,8 +398,8 @@
       return useMapCode(row.code || '', action, row);
     }).catch(() => ({ ok: false, msg: 'No se pudo cargar el mapa' }));
   };
-  HF.manualMapModal = () => HF.modal(`<h3>🗺️ Mapa por código</h3><div class="dim small">Pega un código (<code>v1:…</code>) o el enlace de un mapa publicado; puedes jugarlo o abrirlo en el editor.</div>
-    <textarea id="manualMap" style="min-height:100px" placeholder="v1:7:123:… o https://…#map=12"></textarea>
+  HF.manualMapModal = () => HF.modal(`<h3>🗺️ Mapa por código</h3><div class="dim small">Pega un código (<code>v1:…</code>) o el enlace de un mapa, incluido el enlace corto (<code>?m=…</code>); puedes jugarlo o abrirlo en el editor.</div>
+    <textarea id="manualMap" style="min-height:100px" placeholder="v1:7:123:…, https://…#map=12 o https://…?m=X9K2A"></textarea>
     <div id="mmErr" class="neg small"></div><br>
     <div class="row"><button id="mmNo">Cancelar</button><button id="mmEdit">✎ Editar</button><button id="mmGo" class="pri grow">▶ Jugar</button></div>`, m => {
     const run = action => {
@@ -461,31 +455,125 @@
     }).join('')}
   </table>`;
 
-  // Top mundial: mejor marca de cada jugador.
-  HF.rankingModal = function () {
-    HF.modal(`<h3>🌍 Ranking mundial</h3><div id="rkBody" class="dim small">Consultando clasificación…</div><div id="rkMe" class="small" style="margin-top:8px"></div><br><button id="rkClose" class="pri" style="width:100%">Cerrar</button>`, m => {
-      m.querySelector('#rkClose').onclick = HF.closeModal;
-      const box = m.querySelector('#rkBody');
-      if (!HF.cloud || !HF.cloud.getGlobalTop || !HF.cloud.online) {
-        box.innerHTML = 'Modo sin conexión · no se puede consultar el ranking.';
-        return;
+  // Reintenta la última marca guardada (fallo de red, registro tardío, etc.).
+  HF.retryMapScore = function () {
+    const stored = HF.store.get('last_score_payload', null);
+    if (!stored) return Promise.resolve({ ok: false, msg: 'sin marca pendiente' });
+    if (!HF.cloud || !HF.cloud.submitMapScore) return Promise.resolve({ ok: false, msg: 'ranking no disponible' });
+    // Usar a identidade actual (o secreto cambia co dispositivo, non coa marca).
+    const p = Object.assign({}, stored, { player_id: HF.cloud.playerId() });
+    return HF.cloud.submitMapScore(p).then(r => {
+      if (r && r.ok) {
+        HF.store.del('last_score_payload');
+        HF.store.del('last_score_error');
+      } else {
+        HF.store.set('last_score_error', {
+          at: Date.now(), msg: (r && r.msg) || '', status: (r && r.status) || 0,
+          offline: !!(r && r.offline), timeout: !!(r && r.timeout)
+        });
       }
-      HF.cloud.getGlobalTop(100).then(rows => {
-        if (!m.isConnected) return;
-        if (!rows || !rows.length) { box.innerHTML = 'Aún no hay marcas registradas.'; return; }
-        const myId = HF.cloud.playerId(), top = rows.slice(0, 10);
+      return r;
+    }).catch(e => {
+      HF.store.set('last_score_error', {
+        at: Date.now(), msg: (e && e.message) || 'error de red', status: 0, offline: true
+      });
+      return { ok: false, msg: (e && e.message) || 'error de red' };
+    });
+  };
+
+  // Top mundial: mejor marca de cada jugador. Reutilízase no modal antigo e na
+  // pantalla de Stats, que agora é a única entrada visible.
+  HF.renderRanking = function (box, meBox, opts) {
+    opts = opts || {};
+    if (!box) return;
+    const gone = () => opts.isConnected && !opts.isConnected();
+    const noMarkMessage = () => {
+      const games = (HF.getStats && HF.getStats().games) || 0;
+      const err = HF.store && HF.store.get ? HF.store.get('last_score_error', null) : null;
+      if (games > 0 && err && err.at && (Date.now() - err.at) < 86400000) {
+        if (err.status === 401 || err.status === 403) return 'El servidor rechazó tu marca por permisos (HTTP ' + err.status + ').';
+        if (err.offline || err.timeout) return 'No se pudo contactar con el servidor de ranking. Si la conexión funciona, puede ser un bloqueo del navegador o de la URL del servidor.';
+        if (err.status) return 'El servidor rechazó tu marca (HTTP ' + err.status + ')' + (err.msg ? ': ' + HF.esc(err.msg) : '.');
+        if (err.msg) return 'Tu última marca no se pudo enviar: ' + HF.esc(err.msg) + '.';
+        return 'Tu marca no aparece en el ranking. No se pudo completar el envío.';
+      }
+      return games > 0
+        ? 'Tu marca no aparece en el ranking. Puede que el envío no se haya completado.'
+        : 'Todavía no has registrado ninguna marca. Juega una partida para entrar en el ranking.';
+    };
+    if (!HF.cloud || !HF.cloud.getGlobalTop || !HF.cloud.online) {
+      box.innerHTML = 'Modo sin conexión · no se puede consultar el ranking.';
+      if (meBox) meBox.innerHTML = 'Sin conexión · no se pudo cargar tu posición.';
+      return;
+    }
+    box.innerHTML = 'Consultando clasificación…';
+    const myId = HF.cloud.playerId();
+    // Tabla top + posición real del jugador (aínda que quede fóra do Top 100).
+    const topP = HF.cloud.getGlobalTop(opts.limit || 100);
+    const standingP = HF.cloud.getPlayerStanding
+      ? Promise.resolve().then(() => HF.cloud.getPlayerStanding(myId)).catch(() => null)
+      : Promise.resolve(null);
+    Promise.all([topP, standingP]).then(([rows, st]) => {
+      if (gone()) return;
+      if (!rows || !rows.length) {
+        box.innerHTML = 'Aún no hay marcas registradas.';
+      } else {
+        const top = rows.slice(0, opts.top || 10);
         box.innerHTML = lbTable(top, myId, true);
         box.querySelectorAll('[data-rep]').forEach(b => b.onclick = () => {
           const r = top[+b.dataset.rep];
           if (r) HF.playCloudReplay(r.map_key, r.player_id);
         });
+      }
+      if (!meBox) return;
+      if (st && st.ok) {
+        const best = st.best ? (+st.best.score || 0) : 0;
+        const maps = +st.maps || 0;
+        if (st.rank) {
+          meBox.innerHTML = `Puesto <b style="color:var(--acc)">#${st.rank}</b> de ${st.total} jugadores · Mejor marca: <b>${best.toLocaleString()}</b> pts · ${maps} mapa(s)`;
+        } else if (st.best) {
+          meBox.innerHTML = `Mejor marca: <b style="color:var(--acc)">${best.toLocaleString()}</b> pts${st.capped ? ' · fuera del Top ' + st.total : ' · aún sin posición'}`;
+        } else {
+          meBox.innerHTML = noMarkMessage();
+        }
+      } else if (st && st.offline) {
+        meBox.innerHTML = 'Sin conexión · no se pudo cargar tu posición.';
+      } else if (rows && rows.length) {
+        // Compatibilidade se o servidor non expón getPlayerStanding.
         const idx = rows.findIndex(r => r.player_id === myId);
-        const meBox = m.querySelector('#rkMe');
         const myName = HF.esc(HF.loadTribe().name);
-        if (meBox) meBox.innerHTML = idx >= 0
-          ? `Tu posición: <b style="color:var(--acc)">#${idx + 1}</b> de ${rows.length} jugadores · <b>${myName}</b>`
-          : `Todavía no apareces en el ranking como <b>${myName}</b>. Juega una partida para entrar.`;
-      }).catch(() => { if (m.isConnected) box.innerHTML = 'Sin conexión para cargar el ranking.'; });
+        meBox.innerHTML = idx >= 0
+          ? `Puesto <b style="color:var(--acc)">#${idx + 1}</b> de ${rows.length} jugadores · <b>${myName}</b>`
+          : noMarkMessage();
+      }
+    }).catch(() => {
+      if (gone()) return;
+      box.innerHTML = 'Sin conexión para cargar el ranking.';
+      if (meBox) meBox.innerHTML = 'Sin conexión · no se pudo cargar tu posición.';
+    });
+  };
+
+  // Modal antigo (compatibilidade). A entrada principal é Stats.
+  HF.rankingModal = function () {
+    HF.modal(`<h3>🌍 ${HF.t('RANKING')}</h3>
+      <div id="rkBody" class="dim small">Consultando clasificación…</div>
+      <div class="card" style="margin:10px 0 0">
+        <div class="row"><b class="grow">🏅 Tu posición</b></div>
+        <div id="rkMe" class="small" style="margin-top:3px">Consultando…</div>
+        <button id="rkHistory" class="big art-big" style="width:100%;margin-top:8px">
+          <img src="art/boton-mapa.png" alt="">
+          <span>${HF.t('MATCH_HISTORY')}</span>
+        </button>
+      </div>
+      <br><button id="rkClose" class="pri" style="width:100%">${HF.t('CLOSE')}</button>`, m => {
+      const meBox = m.querySelector('#rkMe');
+      m.querySelector('#rkClose').onclick = HF.closeModal;
+      const hist = m.querySelector('#rkHistory');
+      if (hist) hist.onclick = () => {
+        HF.closeModal();
+        if (HF.replays && HF.replays.openHistory) HF.replays.openHistory();
+      };
+      HF.renderRanking(m.querySelector('#rkBody'), meBox, { isConnected: () => m.isConnected });
     });
   };
 
@@ -653,6 +741,17 @@
         <canvas class="donut" id="passport"></canvas>
         <div class="medallero">🥇 ${medals.gold} · 🥈 ${medals.silver} · 🥉 ${medals.bronze}</div>
       </div>
+      <div class="card" id="statsRanking">
+        <div class="row"><b class="grow">🌍 ${HF.t('RANKING')}</b></div>
+        <div id="statsRankBody" class="dim small" style="margin-top:6px">Consultando clasificación…</div>
+        <div class="row" style="margin-top:10px"><b class="grow">🏅 Tu posición</b></div>
+        <div id="statsRankMe" class="small" style="margin-top:3px">Consultando…</div>
+        <button id="statsRetry" class="pri" style="width:100%;margin-top:8px;display:none">Reintentar envío</button>
+        <button id="statsHistory" class="big art-big" style="width:100%;margin-top:8px">
+          <img src="art/boton-mapa.png" alt="">
+          <span>${HF.t('MATCH_HISTORY')}</span>
+        </button>
+      </div>
       <div class="kpis">
         <div class="kpi"><span>🏆</span><b>${s.wins}</b><small>Victorias</small></div>
         <div class="kpi"><span>💀</span><b>${s.losses}</b><small>Derrotas</small></div>
@@ -670,6 +769,21 @@
     </div></div>`;
     wireBack(el);
     drawPassport(el.querySelector('#passport'), s);
+    const statsRetry = el.querySelector('#statsRetry');
+    if (statsRetry) {
+      const pending = HF.store.get('last_score_payload', null);
+      statsRetry.style.display = pending ? '' : 'none';
+      statsRetry.onclick = () => {
+        statsRetry.disabled = true;
+        HF.retryMapScore().then(r => {
+          HF.toast(r && r.ok ? 'Marca enviada al ranking' : 'No se pudo enviar: ' + ((r && r.msg) || 'error'), 3200);
+          HF.go('stats');
+        });
+      };
+    }
+    const statsHistory = el.querySelector('#statsHistory');
+    if (statsHistory) statsHistory.onclick = () => { if (HF.replays && HF.replays.openHistory) HF.replays.openHistory(); };
+    HF.renderRanking(el.querySelector('#statsRankBody'), el.querySelector('#statsRankMe'), { isConnected: () => el.isConnected });
   });
   function drawPassport(cv, s) {
     if (!cv) return;
@@ -702,144 +816,181 @@
   HF.screen('settings', el => {
     const s = HF.settings();
     const row = (k, n) => `<div class="card row"><span class="grow">${n}</span><button data-k="${k}" class="${s[k] ? 'sel' : ''}">${s[k] ? HF.t('YES') : HF.t('NO')}</button></div>`;
-    const cid = HF.cloud ? HF.cloud.playerId() : '—';
-    const ckey = HF.cloud ? HF.cloud.secretKey() : '';
-    const prem = HF.cloud ? HF.cloud.isPremium() : false;
-    const remail = HF.cloud ? HF.cloud.recoveryEmail() : '';
-    const fbHas = HF.feedback ? HF.feedback.hasKey() : false;
-    const fbSrc = HF.feedback ? HF.feedback.keySource() : 'none';
-    const fbPending = HF.feedback ? HF.feedback.pending() : 0;
-    const sbase = HF.shareBase();
-    const loc = G.location || {};
-    const canHere = (loc.protocol === 'http:' || loc.protocol === 'https:');
-    const hereUrl = canHere ? String(loc.href || '').split('#')[0].split('?')[0] : '';
+    const hasCloud = !!HF.cloud;
+    const cid = hasCloud ? HF.cloud.playerId() : '—';
+    const ckey = hasCloud ? HF.cloud.secretKey() : '';
+    const prem = hasCloud ? HF.cloud.isPremium() : false;
+    const remail = hasCloud ? HF.cloud.recoveryEmail() : '';
+    const pay = HF.payment;
+    const price = pay ? pay.getPrices().amount : '$5.99 USD';
+    const pending = pay && pay.pendingRequest ? pay.pendingRequest() : null;
+
+    // «Cuenta y licencia»: el pago manual y el registro van aquí, junto a la
+    // recuperación. Para una cuenta Free no se ofrece «Recuperar cuenta»
+    // (esa es la cara inversa de Premium): se le lleva al pago.
+    const license = prem
+      ? `<div class="card" id="licenseCard">
+          <div class="row"><b class="grow">${HF.t('LICENSE_TITLE')}</b><span class="chip ok">${HF.t('LICENSE_PREMIUM_BADGE')}</span></div>
+          <div class="dim small" style="margin-top:4px">${HF.t('LICENSE_PREMIUM_DESC')}</div>
+          <div class="row" style="margin-top:6px"><span class="grow">${HF.t('LICENSE_EMAIL')}</span><b>${remail ? HF.esc(remail) : HF.t('LICENSE_EMAIL_NONE')}</b></div>
+          <button id="licenseEmail" style="width:100%;margin-top:6px">✉️ ${remail ? HF.t('LICENSE_EMAIL_CHANGE') : HF.t('LICENSE_EMAIL_REGISTER')}</button>
+          <div class="row" style="margin-top:6px">
+            <button id="licenseSync">🔄 ${HF.t('LICENSE_SYNC')}</button>
+            <button id="licenseLink">🔄 ${HF.t('LICENSE_LINK')}</button>
+            <button id="licenseRecover">🔑 ${HF.t('LICENSE_RECOVER')}</button>
+          </div>
+          <div class="row" style="margin-top:6px"><span class="grow small dim">${HF.t('LICENSE_ID')}</span><code>${HF.esc(cid)}</code></div>
+          <div class="row" style="margin-top:4px"><span class="grow small dim">${HF.t('LICENSE_KEY')}</span><code id="licenseSecret">••••••</code><button id="licenseKey">${HF.t('LICENSE_SHOW_KEY')}</button></div>
+          <button id="licenseCheck" style="width:100%;margin-top:6px">${HF.t('LICENSE_CHECK')}</button>
+        </div>`
+      : `<div class="card" id="licenseCard">
+          <div class="row"><b class="grow">${HF.t('LICENSE_TITLE')}</b><span class="chip">${HF.t('LICENSE_FREE_BADGE')}</span></div>
+          <div class="dim small" style="margin-top:4px">${HF.t('LICENSE_FREE_DESC')}</div>
+          ${pending ? `<div class="small" style="margin-top:4px;color:var(--acc)">⏳ ${HF.t(pending.kind === 'buy' ? 'LICENSE_PENDING_BUY' : 'LICENSE_PENDING')}</div>` : ''}
+          <div class="row" style="margin-top:6px"><span class="grow">${HF.t('LICENSE_PRODUCT')}</span><b>${HF.esc(price)}</b></div>
+          <button id="licenseBuy" class="pri" style="width:100%;margin-top:6px">👑 ${HF.t('LICENSE_UNLOCK')}</button>
+          <div class="row" style="margin-top:6px">
+            <button id="licenseRegister">${HF.t('LICENSE_REGISTER')}</button>
+            <button id="licenseCheck">${HF.t('LICENSE_CHECK')}</button>
+          </div>
+          <button id="licenseRestore" style="width:100%;margin-top:6px">🔄 ${HF.t('LICENSE_RESTORE_PURCHASE')}</button>
+        </div>`;
+
     el.innerHTML = `<div class="screen">${header(HF.t('SETTINGS'))}<div class="scroll">
       ${row('sound', HF.t('SOUND'))}${row('vibrate', HF.t('VIBRATE'))}${row('grid', HF.t('GRID'))}${row('nato', '🎖️ ' + HF.t('VIEW_NATO'))}${row('showIntroCrawl', '📜 ' + HF.t('CRAWL_SETTING'))}
       <div class="card"><div class="row"><span class="grow">${HF.t('LANGUAGE')}</span></div>
-        <div class="langs">${HF.LANGS.map(l => `<button data-lang="${l.code}" class="${HF.lang() === l.code ? 'sel' : ''}">${l.flag} ${l.name}</button>`).join('')}</div></div>
+        <select id="langSel" class="lang-select" aria-label="${HF.t('LANGUAGE')}">
+          ${HF.LANGS.map(l => `<option value="${l.code}"${HF.lang() === l.code ? ' selected' : ''}>${l.flag} ${l.name}</option>`).join('')}
+        </select></div>
       <div class="card" id="loreCard">
         <div class="row"><b class="grow">📖 Introducción</b><button data-k="showLoreIntro" class="${s.showLoreIntro ? 'sel' : ''}">${s.showLoreIntro ? HF.t('YES') : HF.t('NO')}</button></div>
         <div class="dim small" style="margin-top:2px">Páginas de lore que explican el juego. Se muestran al abrir el juego, antes del menú, mientras no las desactives.</div>
         <button id="lorePreview" style="width:100%;margin-top:6px">▶ Ver la introducción ahora</button>
       </div>
-      <div class="card" id="cloudCard">
-        <b>🛡️ Identidad y respaldo en la nube</b>
-        <div class="row" style="margin-top:6px"><span class="grow">ID público</span><b>${HF.esc(cid)}</b></div>
-        <div class="row" style="margin-top:4px"><span class="grow">Llave secreta</span><code id="secretKey">••••••</code><button id="showKey">👁️ Ver/Copiar</button></div>
-        <div class="row" style="margin-top:4px"><span class="grow">Correo de rescate</span><b>${remail ? HF.esc(remail) : 'sin registrar'}</b></div>
-        ${prem
-          ? `<button id="mailRecovery" style="width:100%;margin-top:6px">✉️ Registrar Correo de Rescate</button>`
-          : `<div class="dim small" style="margin-top:6px">La copia en la nube y el correo de rescate forman parte de la Licencia Completa ($2.99).</div>`}
-        <div class="row" style="margin-top:6px"><button id="syncCloud">🔄 Sincronizar</button><button id="linkDevice">🔄 Transferir a otro dispositivo</button><button id="recoverAccount">❓ Recuperar Cuenta</button></div>
-      </div>
-      <div class="card" id="shareCard">
-        <b>🔗 Enlaces para compartir</b>
-        <div class="dim small" style="margin-top:4px">Los enlaces de mapas y repeticiones apuntan a esta dirección. Debe ser la página pública donde publicas el juego; tener internet no basta si abres el juego desde un archivo o desde la app instalada.</div>
-        <div class="row" style="margin-top:6px"><span class="grow">Dirección pública</span><b id="shareBaseVal" style="max-width:58%;overflow-wrap:anywhere;text-align:right">${sbase ? HF.esc(sbase) : 'sin configurar'}</b></div>
-        ${sbase && HF.isLocalAddress(sbase) ? '<div class="small" style="color:var(--acc);margin-top:2px">Solo se abrirá en tu red local.</div>' : ''}
-        <div class="row" style="margin-top:6px">
-          <button id="shareBaseEdit">${sbase ? 'Cambiar dirección' : 'Configurar dirección'}</button>
-          ${hereUrl ? '<button id="shareBaseHere">Usar esta página</button>' : ''}
-        </div>
-        ${sbase ? `<div class="dim small" style="margin-top:4px">Ejemplo de enlace: ${HF.esc(sbase)}#map=…</div>` : ''}
-      </div>
-      <div class="card" id="fbCard">
-        <b>💬 Comentarios</b>
-        <div class="dim small" style="margin-top:4px">Los comentarios de los jugadores se envían al buzón de Web3Forms. Sin clave quedan guardados en este dispositivo y se envían al configurarla.</div>
-        <div class="row" style="margin-top:6px"><span class="grow">Buzón</span><b id="fbKeyState">${fbHas ? (fbSrc === 'config' ? '✅ configurado en el juego' : '✅ configurado en este dispositivo') : 'sin configurar'}</b></div>
-        <input id="fbKey" type="text" autocomplete="off" spellcheck="false" placeholder="${fbHas ? 'Pega otra clave para sustituirla' : 'Clave de Web3Forms'}">
-        <div class="row" style="margin-top:6px">
-          <button id="fbKeySave" class="pri">Guardar clave</button>
-          ${fbSrc === 'device' ? '<button id="fbKeyClear">Quitar</button>' : ''}
-        </div>
-        <div class="dim small" style="margin-top:4px">${fbPending ? 'Comentarios pendientes de envío: <b>' + fbPending + '</b>' : 'Sin comentarios pendientes.'}</div>
+      ${license}
+      <div class="card" id="efDiagCard">
+        <div class="row"><b class="grow">🔎 Diagnóstico de encuesta</b></div>
+        <div class="dim small">Comprueba si hay campaña activa, preguntas y bloqueos locales sin abrir DevTools.</div>
+        <button id="efDiag" style="width:100%;margin-top:6px">Abrir diagnóstico</button>
       </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
-      <div class="dim small">Federati v1.2 · build 133 · 🌐 Multijugador en línea</div></div></div>`;
+      <div class="dim small">Federati v1.2 · build 183 · 🌐 Multijugador en línea</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
-    el.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { HF.setLang(b.dataset.lang); HF.go('settings'); });
+    const langSel = el.querySelector('#langSel');
+    if (langSel) langSel.onchange = () => { HF.setLang(langSel.value); HF.go('settings'); };
     // Vista previa de la pantalla de introducción (especificacion_pantalla_lore.md).
     const lorePreview = el.querySelector('#lorePreview');
     if (lorePreview) lorePreview.onclick = () => {
       if (!HF.LoreScreen) { HF.toast('Introducción no disponible'); return; }
       HF.LoreScreen.show('imperio');
     };
-    const sbEdit = el.querySelector('#shareBaseEdit');
-    if (sbEdit) sbEdit.onclick = () => HF.askShareBase(() => HF.go('settings'));
-    const sbHere = el.querySelector('#shareBaseHere');
-    if (sbHere) sbHere.onclick = () => {
-      HF.setShareBase(hereUrl);
-      HF.toast(HF.isLocalAddress(hereUrl) ? 'Dirección guardada (solo red local)' : 'Dirección pública guardada');
-      HF.go('settings');
+    const efDiag = el.querySelector('#efDiag');
+    if (efDiag) efDiag.onclick = () => {
+      if (HF.EventFeedbackModal && HF.EventFeedbackModal.openDebug) HF.EventFeedbackModal.openDebug();
+      else HF.toast('Módulo de encuestas no disponible');
     };
-    const fbSave = el.querySelector('#fbKeySave');
-    if (fbSave) fbSave.onclick = () => {
-      const inp = el.querySelector('#fbKey');
-      const v = inp ? String(inp.value || '').trim() : '';
-      if (!v) { HF.toast('Pega la clave del buzón primero'); return; }
-      HF.feedback.setKey(v);
-      HF.toast('Clave guardada · enviando comentarios pendientes…', 2200);
-      HF.feedback.flush().then(n => { if (n) HF.toast(n + ' comentario(s) enviado(s)', 2600); }).catch(() => { });
-      HF.go('settings');
+
+    // ----- Cuenta y licencia ------------------------------------------------
+    const toast = (msg, ms) => HF.toast(msg, ms);
+    const copy = (txt, msg) => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(txt).then(() => toast(msg)).catch(() => toast(HF.t('LICENSE_COPY_FAIL')));
+        } else toast(HF.t('LICENSE_COPY_FAIL'));
+      } catch (e) { toast(HF.t('LICENSE_COPY_FAIL')); }
     };
-    const fbClear = el.querySelector('#fbKeyClear');
-    if (fbClear) fbClear.onclick = () => { HF.feedback.setKey(''); HF.toast('Clave quitada'); HF.go('settings'); };
-    el.querySelector('#reset').onclick = () => { if (confirm(HF.t('RESET_CONFIRM'))) { ['tribe_profile', 'campaign_progress', 'daily_challenge', 'player_statistics', 'savegame_active', 'maps', 'newgame_opts'].forEach(k => HF.store.del(k)); HF.go('hub'); } };
-    if (HF.cloud) {
-      let shown = false;
-      const copy = (txt, msg) => {
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => HF.toast(msg)).catch(() => HF.toast('No se pudo copiar automáticamente'));
-          else HF.toast('No se pudo copiar automáticamente');
-        } catch (e) { HF.toast('No se pudo copiar automáticamente'); }
-      };
-      el.querySelector('#showKey').onclick = () => {
-        shown = !shown;
-        el.querySelector('#secretKey').textContent = shown ? ckey : '••••••';
-        el.querySelector('#showKey').textContent = shown ? '🙈 Ocultar' : '👁️ Ver/Copiar';
-        if (shown) copy(ckey, 'Llave secreta copiada');
-      };
-      const sync = el.querySelector('#syncCloud');
-      if (sync) sync.onclick = () => HF.cloud.saveProfileCloud().then(r => HF.toast(r.ok ? 'Perfil sincronizado' : 'Modo sin conexión'));
-      const mail = el.querySelector('#mailRecovery');
-      if (mail) mail.onclick = () => HF.modal(`<h3>✉️ Correo de rescate</h3><p class="dim small">Se usará para recuperar tu licencia en otro dispositivo.</p>
-        <input type="email" id="recoveryMail" value="${HF.esc(remail)}" placeholder="tu_correo@ejemplo.com"><br><br>
-        <div class="row"><button id="rmNo">Cancelar</button><button id="rmGo" class="pri grow">Guardar</button></div>`, m => {
-        m.querySelector('#rmNo').onclick = HF.closeModal;
-        m.querySelector('#rmGo').onclick = () => {
-          const email = m.querySelector('#recoveryMail').value.trim();
-          if (!email || email.indexOf('@') < 1) return HF.toast('Correo no válido');
-          HF.cloud.setRecoveryEmail(email).then(r => {
-            if (r.ok) { HF.closeModal(); HF.toast('Correo de rescate guardado'); HF.go('settings'); }
-            else HF.toast(r.offline ? 'Modo sin conexión' : 'No se pudo guardar el correo');
-          });
-        };
-      });
-      el.querySelector('#linkDevice').onclick = () => HF.modal(`<h3>🔄 Transferir a otro dispositivo</h3><p class="dim small">Introduce el ID y la llave secreta del dispositivo original.</p>
-        <input id="linkId" placeholder="HF-0000"><input id="linkKey" placeholder="K-XXXXXX"><br><br>
-        <div class="row"><button id="lkNo">Cancelar</button><button id="lkGo" class="pri grow">Vincular</button></div>`, m => {
-        m.querySelector('#lkNo').onclick = HF.closeModal;
-        m.querySelector('#lkGo').onclick = () => {
-          HF.cloud.linkDevice(m.querySelector('#linkId').value, m.querySelector('#linkKey').value).then(r => {
-            if (r.ok) { HF.closeModal(); HF.toast('Dispositivo vinculado'); HF.go('settings'); }
-            else HF.toast(r.msg || 'ID o clave incorrecta');
-          });
-        };
-      });
-      el.querySelector('#recoverAccount').onclick = () => HF.modal(`<h3>❓ Recuperar cuenta</h3><p class="dim small">Introduce el correo de rescate asociado a tu licencia.</p>
-        <input type="email" id="recMail" placeholder="tu_correo@ejemplo.com"><br><br>
-        <div class="row"><button id="rcNo">Cancelar</button><button id="rcGo" class="pri grow">Recuperar</button></div>`, m => {
-        m.querySelector('#rcNo').onclick = HF.closeModal;
-        m.querySelector('#rcGo').onclick = () => {
-          const email = m.querySelector('#recMail').value.trim();
-          if (!email || email.indexOf('@') < 1) return HF.toast('Correo no válido');
-          HF.cloud.recoverByEmail(email).then(r => {
-            if (r.ok) { HF.closeModal(); HF.toast('Cuenta recuperada'); HF.go('settings'); }
-            else HF.toast(r.msg || 'No se encontró la cuenta');
-          });
+
+    function openLinkDevice() {
+      if (!HF.cloud) return;
+      HF.modal(`<h3>🔄 ${HF.t('LICENSE_LINK')}</h3>
+        <p class="dim small">${HF.t('LICENSE_LINK_DESC')}</p>
+        <label>${HF.t('LICENSE_ID')}</label><input id="lkId" placeholder="HF-0000" autocomplete="off" spellcheck="false">
+        <label>${HF.t('LICENSE_KEY')}</label><input id="lkKey" placeholder="K-XXXXXX" autocomplete="off" spellcheck="false">
+        <div class="neg small" id="lkErr"></div>
+        <div class="row"><button id="lkNo">${HF.t('CLOSE')}</button><button id="lkGo" class="pri grow">${HF.t('LICENSE_RESTORE')}</button></div>`, m => {
+        const no = m.querySelector('#lkNo');
+        if (no) no.onclick = HF.closeModal;
+        const go = m.querySelector('#lkGo');
+        if (go) go.onclick = () => {
+          const id = String(m.querySelector('#lkId').value || '').trim();
+          const key = String(m.querySelector('#lkKey').value || '').trim();
+          if (!id || !key) { HF.toast(HF.t('LICENSE_ERR_CREDENTIALS')); return; }
+          HF.cloud.linkDevice(id, key).then(r => {
+            if (r && r.ok) {
+              HF.closeModal();
+              HF.toast(HF.cloud.isPremium() ? HF.t('LICENSE_ACTIVE') : HF.t('LICENSE_LINKED'));
+              HF.go('settings');
+            } else {
+              HF.toast((r && r.msg) || HF.t('LICENSE_ERR_CREDENTIALS'));
+            }
+          }).catch(() => HF.toast(HF.t('LICENSE_ERR_CREDENTIALS')));
         };
       });
     }
+
+    function openRecoverAccount() {
+      if (!HF.cloud) return;
+      HF.modal(`<h3>🔑 ${HF.t('LICENSE_RECOVER')}</h3>
+        <p class="dim small">${HF.t('LICENSE_RECOVER_DESC')}</p>
+        <label>${HF.t('LICENSE_EMAIL')}</label>
+        <input id="rcMail" type="email" autocomplete="email" placeholder="tu_correo@ejemplo.com" value="${HF.esc(remail || '')}">
+        <div class="neg small" id="rcErr"></div>
+        <div class="row"><button id="rcNo">${HF.t('CLOSE')}</button><button id="rcGo" class="pri grow">${HF.t('LICENSE_RECOVER_GO')}</button></div>
+        <div class="dim small" style="margin-top:10px">${HF.t('LICENSE_RECOVER_ALT')}</div>
+        <button id="rcLink" style="width:100%;margin-top:4px">🔄 ${HF.t('LICENSE_LINK')}</button>`, m => {
+        const no = m.querySelector('#rcNo');
+        if (no) no.onclick = HF.closeModal;
+        const link = m.querySelector('#rcLink');
+        if (link) link.onclick = () => { HF.closeModal(); openLinkDevice(); };
+        const go = m.querySelector('#rcGo');
+        if (go) go.onclick = () => {
+          const email = String(m.querySelector('#rcMail').value || '').trim();
+          if (!email || email.indexOf('@') < 1) { HF.toast(HF.t('LICENSE_EMAIL_BAD')); return; }
+          HF.cloud.recoverByEmail(email).then(r => {
+            if (r && r.ok) {
+              HF.closeModal();
+              HF.toast(HF.t('LICENSE_RECOVER_OK'));
+              HF.go('settings');
+            } else if (r && r.pending) {
+              HF.toast(r.msg || HF.t('LICENSE_RECOVER_PENDING'), 3800);
+            } else {
+              HF.toast((r && r.msg) || HF.t('LICENSE_RECOVER_NOT_FOUND'));
+            }
+          }).catch(() => HF.toast(HF.t('LICENSE_OFFLINE')));
+        };
+      });
+    }
+
+    const buy = el.querySelector('#licenseBuy');
+    if (buy) buy.onclick = () => { if (pay) pay.openPurchase(); else toast(HF.t('LICENSE_OFFLINE')); };
+    const register = el.querySelector('#licenseRegister');
+    if (register) register.onclick = () => { if (pay) pay.openRegister({ kind: 'paid' }); };
+    const restore = el.querySelector('#licenseRestore');
+    if (restore) restore.onclick = () => openLinkDevice();
+    const check = el.querySelector('#licenseCheck');
+    if (check) check.onclick = () => { if (pay) pay.checkLicense(); };
+    const emailBtn = el.querySelector('#licenseEmail');
+    if (emailBtn) emailBtn.onclick = () => { if (pay) pay.openEmail(); };
+    const linkBtn = el.querySelector('#licenseLink');
+    if (linkBtn) linkBtn.onclick = () => openLinkDevice();
+    const recoverBtn = el.querySelector('#licenseRecover');
+    if (recoverBtn) recoverBtn.onclick = () => openRecoverAccount();
+    const syncBtn = el.querySelector('#licenseSync');
+    if (syncBtn) syncBtn.onclick = () => {
+      if (!HF.cloud) return;
+      HF.cloud.saveProfileCloud().then(r => toast(r && r.ok ? HF.t('LICENSE_SYNC_OK') : HF.t('LICENSE_OFFLINE')));
+    };
+    const keyBtn = el.querySelector('#licenseKey');
+    let shown = false;
+    if (keyBtn) keyBtn.onclick = () => {
+      shown = !shown;
+      const target = el.querySelector('#licenseSecret');
+      if (target) target.textContent = shown ? ckey : '••••••';
+      keyBtn.textContent = shown ? HF.t('LICENSE_HIDE_KEY') : HF.t('LICENSE_SHOW_KEY');
+      if (shown) copy(ckey, HF.t('LICENSE_KEY_COPIED'));
+    };
+
+    el.querySelector('#reset').onclick = () => { if (confirm(HF.t('RESET_CONFIRM'))) { ['tribe_profile', 'campaign_progress', 'daily_challenge', 'player_statistics', 'savegame_active', 'maps', 'newgame_opts', 'ef_seen', 'ef_outbox', 'paypal_pending_order'].forEach(k => HF.store.del(k)); HF.go('hub'); } };
   });
 })(window);

@@ -224,6 +224,26 @@
     // Así las tropas AISLADAS no drenan la provincia abastecida más cercana:
     // su colapso se resuelve aparte, en settle().
     for (const c of g.cells) if (c && c.o === f.id && c.comp != null) m[c.i] = c.comp;
+    // Una unidad propia acampada FUERA del territorio (tumba recuperada en
+    // tierra neutral, mapa editado, tropa aliada sobre casilla que aún no es
+    // nuestra) también come. Se le asigna la provincia abastecida más cercana:
+    // antes el HUD sumaba su mantenimiento pero settle() no lo descontaba de
+    // ninguna tesorería, así que nunca se pagaba.
+    const strays = [];
+    for (const c of g.cells) if (c && c.u && c.u.owner === f.id && m[c.i] < 0) strays.push(c);
+    if (strays.length) {
+      const provs = new Set();
+      for (const c of g.cells) if (c && c.o === f.id && c.sup && c.comp != null) provs.add(c.comp);
+      if (provs.size) for (const c of strays) {
+        let best = -1, bd = Infinity;
+        for (const x of g.cells) {
+          if (!x || x.o !== f.id || x.comp == null || !provs.has(x.comp)) continue;
+          const d = HF.hexDist(c, x);
+          if (d < bd || (d === bd && (best < 0 || x.comp < best))) { bd = d; best = x.comp; }
+        }
+        m[c.i] = best;
+      }
+    }
     return m;
   }
   HF.provOf = (g, f, c) => (c.o === f.id && c.sup) ? c.comp : provMap(g, f)[c.i];
@@ -1294,9 +1314,26 @@
       if (!triggerTrap(g, to, u)) bastionFire(g, to, u);
     } else if (opt.k === 'fuse') {
       if (human) snap(g);
-      if (opt.elite) { t.u.tier = D.pretorianTier; t.u.elite = 1; ev(g, to, 'Pretoriano forjado (Tier 4)', human ? 'good' : 'bad'); }
+      const DU = HF.UNITS[t.u.type];
+      // Coste real de las dos unidades ANTES de fundirlas (con doctrinas y
+      // carga del barco incluidas) para poder anunciar el cambio exacto.
+      const foodBefore = cellUp(f, t, 'up') + cellUp(f, c, 'up');
+      const goldBefore = cellUp(f, t, 'upGold') + cellUp(f, c, 'upGold');
+      if (opt.elite) { t.u.tier = D.pretorianTier; t.u.elite = 1; }
       else t.u.tier += u.tier;
       t.u.mv = 0; t.u.at = Math.min(t.u.at, u.at); c.u = null;
+      // El consumo se refleja EN EL ACTO y con los valores REALES (unitUpkeep
+      // aplica ASCETIC_COMMUNE, KNIGHTLY_ORDER, etc.), no con la tabla cruda:
+      // si la doctrina abarata la unidad, el aviso no puede prometer un coste
+      // que el HUD nunca va a descontar.
+      const foodNow = unitUpkeep(f, t.u, 'up') + (t.u.cargo ? unitUpkeep(f, t.u.cargo, 'up') : 0);
+      const goldNow = unitUpkeep(f, t.u, 'upGold') + (t.u.cargo ? unitUpkeep(f, t.u.cargo, 'upGold') : 0);
+      const dFood = foodNow - foodBefore, dGold = goldNow - goldBefore;
+      const delta = (dFood || dGold)
+        ? 'el ejército paga ' + (dFood >= 0 ? '+' : '') + dFood + ' comida' + (dGold ? ' y ' + (dGold >= 0 ? '+' : '') + dGold + ' oro' : '')
+        : 'el ejército no paga más que antes';
+      ev(g, to, (opt.elite ? 'Pretoriano forjado (Tier 4)' : 'Fusión: ' + DU.name + ' N' + t.u.tier) +
+        ' · paga ' + foodNow + ' comida y ' + goldNow + ' oro/turno · ' + delta, human ? 'good' : 'bad');
     } else if (opt.k === 'atk') {
       // B3.3.3 · LAST_STAND_FORT: el primer asalto que supera la defensa es absorbido
       if (opt.lastStand) {

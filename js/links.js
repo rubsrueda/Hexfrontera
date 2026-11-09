@@ -184,6 +184,27 @@
     return base ? base + '?m=' + c : '';
   }
 
+  // ---------------------------------------------------------------------------
+  // Enlaces cortos de repetición: federati.org/?r=X9K2A
+  // El código de la repetición completa se guarda en la nube y se resuelve al
+  // abrirlo (misma tabla/RPC que los mapas del editor).
+  // ---------------------------------------------------------------------------
+  function shortReplayFromUrl() {
+    var loc = G.location || {};
+    var search = String(loc.search || '');
+    var hash = String(loc.hash || '');
+    var m = /[?&](?:r|rep)=([A-Za-z0-9]{4,10})/.exec(search) ||
+            /^#(?:r|rep)=([A-Za-z0-9]{4,10})$/.exec(hash);
+    return m ? normalize(m[1]) : null;
+  }
+  function shortReplayUrl(code) {
+    var c = normalize(code);
+    if (!c) return '';
+    if (HF.shareUrl) return HF.shareUrl('r', c);
+    var base = HF.shareBase ? HF.shareBase() : '';
+    return base ? base + '?r=' + c : '';
+  }
+
   HF.links = {
     ALPHABET: ALPHABET,
     CHARS: CHARS,
@@ -198,6 +219,8 @@
     fromUrl: fromUrl,
     shortMapFromUrl: shortMapFromUrl,
     shortMapUrl: shortMapUrl,
+    shortReplayFromUrl: shortReplayFromUrl,
+    shortReplayUrl: shortReplayUrl,
     signature: signature
   };
 })(window);

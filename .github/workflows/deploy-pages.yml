@@ -72,6 +72,5 @@ jobs:
             echo "URL: ${{ steps.deployment.outputs.page_url }}"
             echo ""
             echo "Esa es la dirección que deben llevar los enlaces que compartas."
-            echo "En el juego: **Ajustes → Enlaces para compartir → Usar esta página**"
-            echo "(o pega la URL a mano) para que también funcione desde la app de escritorio/móvil."
+            echo "Configura esa URL en **js/config.js → share.base** (y en \`HF.CFG.share.base\`) para que los enlaces funcionen desde la app de escritorio/móvil."
           } >> "$GITHUB_STEP_SUMMARY"

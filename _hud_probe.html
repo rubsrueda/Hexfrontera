@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Sonda de mantenimiento · Federati</title>
+<style>
+  #app { display: none; }
+  body { margin: 0; padding: 14px; background: #0A0F1D; color: #F4EFEA;
+         font: 13px/1.5 ui-monospace, Consolas, monospace; }
+  h1 { font-size: 16px; margin: 0 0 10px; color: #F5B942; }
+  pre { white-space: pre-wrap; margin: 0; }
+  .ok { color: #6FCF97; } .warn { color: #E07A7A; }
+</style>
+</head>
+<body>
+<h1>Sonda de mantenimiento (fusas dos unidades y compara la barra superior)</h1>
+<pre id="report">Ejecutando…</pre>
+<div id="app"></div>
+<div id="modal" class="hidden"></div>
+<div id="toast" class="hidden"></div>
+<div id="tip" class="hidden"></div>
+
+<script src="js/util.js"></script>
+<script src="js/config.js"></script>
+<script src="js/music.js"></script>
+<script src="js/artdata.js"></script>
+<script src="js/art.js"></script>
+<script src="js/data.js"></script>
+<script src="js/links.js"></script>
+<script src="js/banter_data.js"></script>
+<script src="js/banter.js"></script>
+<script src="js/mapgen.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/board.js"></script>
+<script src="js/cloud.js"></script>
+<script src="js/progress.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/names.js"></script>
+<script src="js/screens.js"></script>
+<script src="js/feedback.js"></script>
+<script src="js/online.js"></script>
+<script src="js/game.js"></script>
+<script>
+function probe(tags, label) {
+  HF.bgm = null; HF.sfx = () => {}; HF.vibrate = () => {};
+  const base = HF.defaultTribe();
+  const fac = (name, human, id) => Object.assign({}, base, { name, human, tribe_id: id });
+  const g = HF.newGame({
+    R: 9, seed: 777, biome: 'plains', fog: 'NONE',
+    factions: [fac('A', true, 'a'), fac('B', false, 'b')]
+  });
+  if (tags && tags.length) g.f[0].tags = tags.slice();
+  for (const c of g.cells) if (c && c.u) c.u = null;
+  const cap = g.cells.find(c => c && c.cap && c.o === 0);
+  const ring = HF.nbs(g, cap.i).map(i => g.cells[i]).filter(c => c && c.o === 0 && c.t !== HF.T.MAR && !c.u);
+  const a = ring[0], b = ring[1];
+  a.u = { type: 'INF', tier: 1, owner: 0, mv: 1, at: 1 };
+  b.u = { type: 'INF', tier: 1, owner: 0, mv: 1, at: 1 };
+  HF.supply(g);
+  g.f[0].stock[a.comp] = { gold: 200, food: 200, wood: 50 };
+  HF.syncTotals(g.f[0]);
+
+  HF.startGame(g);
+  const bar = () => (document.querySelector('#res') || {}).textContent.replace(/\s+/g, ' ').trim();
+  const pv = () => HF.preview(g, g.f[0], null);
+  const before = { bar: bar(), f: pv().upkeep, g: pv().upkeepGold };
+  const tap = HF.cur().board.h.onTap;
+  tap(a.i); tap(b.i);
+  const after = { bar: bar(), f: pv().upkeep, g: pv().upkeepGold };
+  const notice = (g.events.filter(e => /Fusión|Pretoriano/.test(e.txt)).slice(-1)[0] || {}).txt || '(sin aviso)';
+  return {
+    label, tier: g.cells[b.i].u && g.cells[b.i].u.tier,
+    before, after, notice,
+    df: after.f - before.f, dg: after.g - before.g
+  };
+}
+
+function fmt(r) {
+  if (r.error) return 'ERROR: ' + r.error;
+  const sign = n => (n >= 0 ? '+' : '') + n;
+  return [
+    '■ ' + r.label,
+    '  Barra antes   : ' + r.before.bar,
+    '  Barra después : ' + r.after.bar,
+    '  Mantenimiento : ' + r.before.f + '/' + r.before.g + ' → ' + r.after.f + '/' + r.after.g +
+      '   (' + sign(r.df) + ' comida, ' + sign(r.dg) + ' oro)',
+    '  Nivel final   : N' + r.tier,
+    '  Aviso         : ' + r.notice,
+    ''
+  ].join('\n');
+}
+
+window.addEventListener('load', () => setTimeout(() => {
+  const out = [];
+  try { out.push(probe(null, 'Sin doctrina (INF N1 + INF N1)')); }
+  catch (e) { out.push({ error: String(e && e.stack || e) }); }
+  try { out.push(probe(['ASCETIC_COMMUNE'], 'Con ASCETIC_COMMUNE (INF)')); }
+  catch (e) { out.push({ error: String(e && e.stack || e) }); }
+  const text = out.map(fmt).join('\n');
+  document.querySelector('#report').textContent = text;
+  document.title = 'SONDA ' + out.map(r => r.error ? 'ERROR' : (r.df + '/' + r.dg)).join(' | ');
+}, 150));
+</script>
+</body>
+</html>

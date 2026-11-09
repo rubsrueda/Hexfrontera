@@ -95,7 +95,7 @@
   // tiene nada que ver con tener internet: si abres el juego desde un archivo
   // (file://) o dentro de la app instalada, esa copia no tiene dirección que
   // otros puedan abrir. Prioridad:
-  //   1. Ajustes → "Dirección pública" (HF.store 'share_base')
+  //   1. La dirección guardada en este dispositivo (HF.store 'share_base')
   //   2. HF.CFG.share.base (config.js)
   //   3. La página actual, solo si es http(s) y no es localhost/IP privada
   //   4. '' → se comparte el CÓDIGO en su lugar
@@ -162,6 +162,7 @@
     const v = raw ? String(value) : encodeURIComponent(String(value));
     if (kind === 'seed') return base + '?seed=' + v;
     if (kind === 'm') return base + '?m=' + v;
+    if (kind === 'r') return base + '?r=' + v;
     return base + '#' + kind + '=' + v;
   };
   let ac = null;

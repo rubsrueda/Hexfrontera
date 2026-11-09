@@ -511,6 +511,56 @@
     ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
     ctx.closePath();
   };
+  // Vista Combate: anillo + las dos etiquetas DENTRO del círculo y pegadas al
+  // borde inferior (nivel a la izquierda, defensa efectiva a la derecha).
+  // Antes el nivel flotaba por encima de la unidad —se perdía al apilar— y la
+  // defensa caía en el lateral, donde el propio sprite la tapaba.
+  // Devuelve la geometría usada (útil para las pruebas).
+  // Vista Combate: anillo pegado a la base de la unidad.
+  P.drawCombatRing = function (ctx, c, u, x, y, fs) {
+    const cy = y + fs * .05, R = fs * .63;
+    ctx.strokeStyle = 'rgba(244,239,234,.65)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, cy, R, 0, 7); ctx.stroke();
+    return { cx: x, cy, R };
+  };
+  // Etiquetas de la vista Combate: placa oscura en la banda inferior del
+  // círculo, nivel a la izquierda y defensa efectiva a la derecha. Se pintan
+  // en una pasada final (después de todas las unidades y del anillo) y SIN
+  // recortar, para que se lean enteras y nada las tape.
+  P.drawCombatLabels = function (ctx, c, u, x, y, fs) {
+    const g = this.game;
+    const cy = y + fs * .05, R = fs * .63;
+    const def = g ? HF.defenseAt(g, c.i) : 0;
+    const tl = 'N' + u.tier, dl = '🛡' + def;
+    const pad = fs * .07, gap = fs * .09, maxW = fs * 1.08;
+    let lab = Math.max(7, fs * .3);
+    const setFont = () => { ctx.font = '700 ' + lab + 'px "Plus Jakarta Sans", sans-serif'; };
+    setFont();
+    let tw = ctx.measureText(tl).width, dw = ctx.measureText(dl).width;
+    const fixed = gap + pad * 2;
+    // Si el texto (defensas de dos cifras) no cabe, se encoge hasta 7 px.
+    if (tw + dw + fixed > maxW) {
+      const avail = Math.max(1, maxW - fixed);
+      lab = Math.max(7, lab * avail / (tw + dw));
+      setFont();
+      tw = ctx.measureText(tl).width; dw = ctx.measureText(dl).width;
+    }
+    const bw = Math.min(maxW, tw + dw + fixed);
+    const bh = Math.max(12, fs * .32);
+    const bx = x - bw / 2, by = cy + R - bh - fs * .03;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
+    ctx.fillStyle = 'rgba(8,14,28,.88)';
+    this._roundRect(ctx, bx, by, bw, bh, bh * .45); ctx.fill();
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = 'rgba(244,239,234,.28)'; ctx.lineWidth = 1; ctx.stroke();
+    const ty = by + bh / 2;
+    ctx.textAlign = 'left'; ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, bx + pad, ty);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#bae6fd'; ctx.fillText(dl, bx + bw - pad, ty);
+    ctx.restore();
+    ctx.textAlign = 'center';
+    return { cx: x, cy, R, bx, by, bw, bh, font: lab, level: tl, def: dl };
+  };
   P._drawHop = function (ctx, now, fs) {
     const h = this.hop; if (!h) return;
     const t = Math.min(1, (now - h.t0) / h.dur);
@@ -679,6 +729,78 @@
 
     // Restituir el estilo de texto que usa el resto del tablero.
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  };
+  // Vista OTAN: en una casilla LIBRE, muestra lo que aporta a la defensa.
+  //   🛡N → defensa actual de la posición (edificio, aura de bastión o zona de
+  //         control de una unidad adyacente del mismo dueño).
+  //   +T  → bonus de terreno para infantería/ingenieros (colina +1, montaña +2).
+  // Va en la banda inferior de la casilla, atenuado, para no competir con las
+  // fichas de las unidades.
+  P.drawNatoTileDefense = function (ctx, c, x, y, fs) {
+    if (c.u) return null;                       // con guarnición ya lo dice su ficha
+    const g = this.game;
+    const def = g && HF.defenseAt ? HF.defenseAt(g, c.i) : 0;
+    const ter = c.t === T.COLINA ? 1 : c.t === T.MONTANA ? 2 : 0;
+    if (!def && !ter) return null;
+    const parts = [];
+    if (def) parts.push({ t: '🛡' + def, c: c.deg > 0 ? '#f87171' : (this._natoAura(g, c) ? '#38bdf8' : '#f4efea') });
+    if (ter) parts.push({ t: '+' + ter, c: '#4ade80' });
+    const pad = fs * .055, gap = fs * .06;
+    let lab = Math.max(7, fs * .26);
+    const setFont = () => { ctx.font = '700 ' + lab + 'px "Plus Jakarta Sans", sans-serif'; };
+    setFont();
+    let ws = parts.map(p => ctx.measureText(p.t).width);
+    const fixed = pad * 2 + gap * (parts.length - 1);
+    const maxW = fs * .96;
+    let bw = ws.reduce((a, b) => a + b, 0) + fixed;
+    if (bw > maxW) {
+      const avail = Math.max(1, maxW - fixed);
+      lab = Math.max(7, lab * avail / (bw - fixed));
+      setFont();
+      ws = parts.map(p => ctx.measureText(p.t).width);
+      bw = Math.min(maxW, ws.reduce((a, b) => a + b, 0) + fixed);
+    }
+    const bh = Math.max(10, fs * .27);
+    const bx = x - bw / 2, by = y + fs * .4 - bh / 2;
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,14,28,.78)';
+    this._roundRect(ctx, bx, by, bw, bh, bh * .45); ctx.fill();
+    ctx.strokeStyle = 'rgba(244,239,234,.16)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    let cx = bx + pad;
+    parts.forEach((p, i) => { ctx.fillStyle = p.c; ctx.fillText(p.t, cx, by + bh / 2); cx += ws[i] + gap; });
+    ctx.restore();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    return { def, ter, bx, by, bw, bh, font: lab, texts: parts.map(p => p.t) };
+  };
+  // Semáforo de la unidad propia: un punto dentro de SU casilla, en la parte
+  // superior (sobre la unidad o sobre la ficha OTAN), para que al apilar
+  // unidades se sepa a cuál pertenece y no lo tape la de delante.
+  //   verde → puede mover Y atacar (lista para actuar)
+  //   cian  → solo puede mover
+  //   rojo  → solo puede atacar
+  //   sin punto → ya agotó sus acciones este turno
+  P.drawUnitStatus = function (ctx, u, x, y, fs) {
+    const mv = u.mv > 0 || !!(u.cargo && u.cargo.mv > 0);
+    const at = u.at > 0;
+    if (!mv && !at) return null;
+    const nato = this.viewMode === 'nato';
+    const full = mv && at;
+    const col = full ? '#4ade80' : mv ? '#38bdf8' : '#f87171';
+    // OTAN: justo encima del marco de la ficha (no la tapa). Resto de vistas:
+    // sobre el cuerpo de la unidad, nunca por debajo de su dibujo.
+    const cx = x;
+    const cy = nato ? y - fs * .46 : y - fs * .08;
+    // Punto pequeño: no debe competir con el arte ni con la ficha OTAN.
+    const r = Math.max(2.5, fs * (nato ? .085 : .105));
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = 'rgba(8,14,28,.92)'; ctx.lineWidth = Math.max(1, fs * .03); ctx.stroke();
+    ctx.restore();
+    return { cx, cy, r, full, color: col, mv, at, nato };
   };
   // Unidades comerciales (carretas/urcas): chit simplificado 'T' / '≈' / '▣'.
   P.drawTradeCounter = function (ctx, car, x, y, fs) {
@@ -852,7 +974,7 @@
     const tactical = combat || nato;
     const editor = this.mode === 'paint' || !!this.mapEditor;
     const fogPat = fog ? HF.art.fogPattern(ctx, this.cam, this.W, this.H, .6, TILT) : null;
-    const items = [], walls = [];
+    const items = [], walls = [], combatLabels = [], unitStatus = [];
     // Se pintan las casillas de norte a sur (y = 1.5*size*r). Una casilla
     // elevada (tierra) invade la de arriba, asi que debe dibujarse despues:
     // de lo contrario el agua del norte tapaba el borde realzado del llano.
@@ -1114,21 +1236,11 @@
             if (resource) ctx.globalAlpha = .15;
             if (!HF.art.drawStretched(ctx, 'unit', u.type, x, y - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.fillStyle = INK; ctx.font = fs * .75 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.type].icon, x, y + fs * .05); }
             if (combat) {
-              // anillo de combate + nivel + defensa efectiva (incluye terreno, edificios, auras y deg.)
-              ctx.strokeStyle = 'rgba(244,239,234,.65)'; ctx.lineWidth = 2;
-              ctx.beginPath(); ctx.arc(x, y + fs * .05, fs * .63, 0, 7); ctx.stroke();
-              const def = g ? HF.defenseAt(g, c.i) : 0;
-              ctx.font = '700 ' + Math.max(8, fs * .4) + 'px "Plus Jakarta Sans", sans-serif';
-              // Nivel justo encima de la unidad (centrado), no en el lateral.
-              const tl = 'N' + u.tier, tw = ctx.measureText(tl).width;
-              const lw = tw + 8, lh = fs * .44, ly = y - fs * 1.45 - lh / 2;
-              ctx.fillStyle = 'rgba(8,14,28,.86)';
-              ctx.fillRect(x - lw / 2, ly, lw, lh);
-              ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x, ly + lh / 2);
-              const dl = '🛡' + def, dw = ctx.measureText(dl).width;
-              ctx.fillStyle = 'rgba(8,14,28,.86)';
-              ctx.fillRect(x + fs * .3, y + fs * .58, dw + 5, fs * .44);
-              ctx.fillStyle = '#bae6fd'; ctx.fillText(dl, x + fs * .3 + (dw + 5) / 2, y + fs * .8);
+              // Anillo de combate pegado a la unidad; las etiquetas (nivel y
+              // defensa) se acumulan y se pintan en una pasada final, por
+              // encima de todas las unidades y del propio anillo.
+              this.drawCombatRing(ctx, c, u, x, y, fs);
+              combatLabels.push({ c, u, x, y });
               ctx.font = em + 'px sans-serif';
             } else if (this.mode === 'paint') {
               const tl = 'N' + u.tier;
@@ -1147,14 +1259,17 @@
               ctx.fillStyle = this.colors[u.cargo.owner]; ctx.beginPath(); ctx.arc(kx, ky, fs * .3, 0, 7); ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.stroke();
               if (!HF.art.draw(ctx, 'unit', u.cargo.type, kx, ky, fs * .6, fs * .6)) { ctx.fillStyle = INK; ctx.font = fs * .4 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.cargo.type].icon, kx, ky); }
             }
-            if (u.owner === me) {
-              if (u.mv > 0 || (u.cargo && u.cargo.mv > 0)) { ctx.fillStyle = '#4ade80'; ctx.beginPath(); ctx.arc(x - fs * .6, y - fs * .5, fs * .13, 0, 7); ctx.fill(); }
-              if (u.at > 0) { ctx.fillStyle = '#f87171'; ctx.beginPath(); ctx.arc(x - fs * .35, y - fs * .62, fs * .13, 0, 7); ctx.fill(); }
-            }
             if (resource) ctx.globalAlpha = 1;
           }
+          // Semáforo de la unidad propia: se acumula y se pinta en una pasada
+          // final, dentro de su casilla y por encima de todo (incluida la ficha
+          // OTAN), para que al apilar unidades se sepa a cuál pertenece.
+          if (u.owner === me) unitStatus.push({ u, x, y });
         }
       }
+      // Vista OTAN: en las casillas libres se ve el valor de defensa de la
+      // posición (edificio/aura/zona de control) y el bonus de terreno.
+      if (nato && !c.u && f === 2) this.drawNatoTileDefense(ctx, c, x, y, fs);
       if (c.deg && !nato) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('💔', x - fs * .5, y - fs * .5); }
       // estados de doctrina visibles en el tablero
       ctx.fillStyle = INK; ctx.font = fs * .45 + 'px sans-serif';
@@ -1208,6 +1323,13 @@
       const y = y0 - this._lift(c, fs);
       ctx.strokeStyle = INK; ctx.lineWidth = 3; hexPath(ctx, x, y, fs); ctx.stroke();
     }
+    // Etiquetas de combate: pasada final, encima de todas las unidades, del
+    // anillo, de la niebla de borde y de los resaltados. Así ninguna unidad
+    // apilada delante las tapa.
+    for (const L of combatLabels) this.drawCombatLabels(ctx, L.c, L.u, L.x, L.y, fs);
+    // Semáforo de acciones de las unidades propias: pasada final, encima de
+    // todas las unidades, y dentro de su propia casilla.
+    for (const S of unitStatus) this.drawUnitStatus(ctx, S.u, S.x, S.y, fs);
     if (this.drag) {
       const u = this.cells[this.drag.from].u;
       if (u) { ctx.globalAlpha = .85; ctx.fillStyle = this.colors[u.owner]; ctx.beginPath(); ctx.arc(this.drag.x, this.drag.y - 20, fs * .6, 0, 7); ctx.fill(); if (!HF.art.drawStretched(ctx, 'unit', u.type, this.drag.x, this.drag.y - 20 - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.font = fs * .8 + 'px sans-serif'; ctx.fillStyle = INK; ctx.fillText(HF.UNITS[u.type].icon, this.drag.x, this.drag.y - 20); } ctx.globalAlpha = 1; }

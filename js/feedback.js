@@ -23,7 +23,7 @@
   const t = k => HF.t(k);
   const cfg = () => (HF.CFG && HF.CFG.feedback) || {};
   const online = () => !(typeof navigator !== 'undefined' && navigator.onLine === false);
-  // Clave del buzón: la del dispositivo (Ajustes → Comentarios) manda sobre la
+  // Clave del buzón: la del dispositivo (`feedback_key`) manda sobre la
   // que venga en config.js. Así se puede probar o configurar la APK sin
   // recompilar, y la build publicada sigue trayendo la clave para todos.
   const key = () => String(HF.store.get('feedback_key', '') || cfg().accessKey || '').trim();

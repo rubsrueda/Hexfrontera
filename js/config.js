@@ -46,9 +46,60 @@
       endpoint: 'https://api.web3forms.com/submit',
       subject: 'Hexfrontier · comentario de jugador'
     },
+    // Encuestas dinámicas (js/event-feedback.js + sql/event_feedback.sql).
+    //   enabled:        false apaga el módulo sin tocar la base de datos.
+    //   dismissDays:    días de enfriamiento tras pulsar «Ahora no».
+    //   waitForIdleMs:  espera máxima a que se cierre el modal de fin de
+    //                   partida antes de mostrar la encuesta.
+    eventFeedback: {
+      enabled: true,
+      dismissDays: 3,
+      waitForIdleMs: 45000
+    },
+    // Licencia completa (Ajustes → Cuenta y licencia).
+    // En la WEB el pago es con PayPal: pago único de 4.99 USD. El botón oficial
+    // lo monta js/payment.js y las órdenes se crean/capturan en la Edge
+    // Function `paypal` (supabase/functions/paypal). El Client ID es PÚBLICO;
+    // el Secret vive sólo en el entorno seguro de Supabase.
+    // `checkout` / `checkoutPromo` son enlaces de tienda para las versiones de
+    // escritorio/móvil (Steam, Google Play, etc.). Si se dejan vacíos, el
+    // proceso es manual: el jugador envía su solicitud desde Ajustes con su ID
+    // y su correo, y el autor activa la licencia en Supabase. El cliente nunca
+    // activa premium por su cuenta: la verdad está en el servidor.
+    // `promo: true` muestra el precio de bienvenida de las tiendas.
+    payment: {
+      checkout: '',
+      checkoutPromo: '',
+      promo: false,
+      paypal: {
+        // Client ID PÚBLICO. Ahora apunta al sandbox; para producción cambia
+        // este valor por el live y sigue supabase/README.md §6.
+        // Sandbox: https://developer.paypal.com/dashboard/applications/sandbox
+        clientId: 'BAAzMca-gFwyI_OCBTq3saM218wESAcqIxXMeHU8wd5hAaBUzhHCxpHvFF3zUFzOoOluVHgbsQjM0CztUo',
+        currency: 'USD',
+        amount: '4.99',
+        enabled: true
+      }
+    },
     // Música clásica dinámica (js/music.js). enabled:false deja el sintetizador
     // procedural de util.js, útil para builds 100% offline.
     music: { enabled: true, volume: 0.3, fade: 1.8, warRadius: 2 },
+    // Relato áudio das repeticións (js/replay-caster.js).
+    //   enabled: false apaga o comentarista (o visor segue funcionando).
+    //   engine: 'auto' usa `endpoint` se está definido; 'speech' forza a Web
+    //     Speech API; 'remote' usa o gateway de audio.
+    //   endpoint: URL que recibe POST {text, lang, style:'commentator'} e
+    //     devolve audio/mpeg (ou {url}). Sen endpoint, Web Speech API.
+    //   voice: nome de voz do sistema (opcional).
+    //   rate/pitch: intensidade do comentarista (0.5–2).
+    replayCaster: {
+      enabled: true,
+      engine: 'auto',
+      endpoint: '',
+      voice: '',
+      rate: 1.12,
+      pitch: 1.18
+    },
     // recursos iniciales de cada facción
     start: { gold: 30, food: 20, wood: 25 },
 

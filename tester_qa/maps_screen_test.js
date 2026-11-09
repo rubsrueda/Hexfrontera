@@ -1,6 +1,6 @@
 'use strict';
 // Pantalla de Mapas (js/maps.js): metadatos, lista, acciones por mapa, enlaces
-// para compartir mapas publicados y enrutado de #map=<id>.
+// cortos ?m= para compartir y enrutado de #map=<id>.
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -57,7 +57,7 @@ function boot(opts) {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  for (const f of ['util.js', 'config.js', 'data.js', 'names.js', 'i18n.js', 'mapgen.js', 'engine.js', 'cloud.js', 'screens.js', 'editor.js', 'maps.js'])
+  for (const f of ['util.js', 'config.js', 'data.js', 'names.js', 'i18n.js', 'links.js', 'mapgen.js', 'engine.js', 'cloud.js', 'progress.js', 'screens.js', 'editor.js', 'maps.js'])
     vm.runInContext(fs.readFileSync(path.join(JS, f), 'utf8'), sandbox);
   // Base neutra por defecto: el test no debe depender de la URL publicada que
   // el jugador tenga configurada en config.js.
@@ -177,6 +177,10 @@ function boot(opts) {
   ok(L.parseMapRef('file:///D:/index.html#map=3').kind === 'id' && L.parseMapRef('file:///D:/index.html#map=3').id === '3', 'reconoce el enlace local con #map=');
   ok(L.parseMapRef('?map=7').kind === 'id', 'reconoce ?map=');
   ok(L.parseMapRef('42').kind === 'id' && L.parseMapRef('42').id === '42', 'reconoce un id suelto');
+  ok(L.parseMapRef('https://x/y?m=X9K2A').kind === 'short' && L.parseMapRef('https://x/y?m=X9K2A').code === 'X9K2A', 'reconoce el enlace corto ?m=');
+  ok(L.parseMapRef('X9K2A').kind === 'short' && L.parseMapRef('X9K2A').code === 'X9K2A', 'reconoce un código corto suelto');
+  ok(L.parseMapRef('https://x/y?seed=7K2M9QXAB').kind === 'seed' && L.parseMapRef('https://x/y?seed=7K2M9QXAB').token === '7K2M9QXAB', 'reconoce un enlace de semilla ?seed=');
+  ok(L.parseMapRef('https://x/y?map=12').kind === 'id' && L.parseMapRef('https://x/y?map=12').id === '12', 'distingue ?map= del enlace corto');
   ok(L.parseMapRef('https://x/y#replay=abc').kind === 'replay', 'distingue un enlace de repetición');
   ok(L.parseMapRef('hola').kind === 'invalid', 'rechaza texto sin sentido');
   ok(L.parseMapRef('') === null, 'vacío no es una referencia');
@@ -208,18 +212,17 @@ function boot(opts) {
     ok(info2 === null, 'sin conexión publicar devuelve null');
   }
 
-  // Compartir: publicado → modal de enlace; sin publicar → invita a publicar.
+  // Compartir: el enlace corto ?m=XXXXX es el formato principal para mapas.
   {
     const w = boot({ maps: [{ name: 'Cruce', code: 'v1:7:9:AAAA' }, { name: 'Pub', code: 'v1:7:9:BBBB', publishedId: 5 }] });
     const HF = w.HF;
-    let shareArg = null, modalHTML = '';
-    HF.mapShareModal = entry => { shareArg = entry; };
-    HF.modal = (html) => { modalHTML = html; };
+    let shortArg = null;
+    HF.shareShortMapLink = entry => { shortArg = entry; };
     const [mine, pub] = HF.myMaps();
     HF.shareMapEntry(pub);
-    ok(shareArg && shareArg.id === 5, 'un mapa publicado se comparte directamente');
+    ok(shortArg && shortArg.publishedId === 5, 'un mapa publicado se comparte con enlace corto');
     HF.shareMapEntry(mine);
-    ok(modalHTML.includes('Publicar y compartir'), 'un mapa sin publicar pide publicarlo primero');
+    ok(shortArg && shortArg.code === 'v1:7:9:AAAA', 'un mapa sin publicar también usa el enlace corto');
   }
 
   // Enlaces entrantes #map=<id> y #map=<código>
@@ -314,6 +317,29 @@ function boot(opts) {
     ok(!missing.ok && !played, 'un id inexistente avisa y no juega');
     const rep = await HF.manualMapUse('https://x/y#replay=abc', 'play');
     ok(!rep.ok && /repetici/i.test(rep.msg), 'un enlace de repetición se rechaza con un aviso claro');
+
+    // Enlace corto ?m= y enlace de semilla ?seed=.
+    let shortAsked = null;
+    HF.cloud.resolveShortMap = c => { shortAsked = c; return Promise.resolve({ ok: true, code: code, name: 'Corto' }); };
+    played = null;
+    const shortPlay = await HF.manualMapUse('https://federati.org/?m=X9K2A', 'play');
+    ok(shortAsked === 'X9K2A', 'extrae el código del enlace corto ?m=');
+    ok(shortPlay.ok && played && played.R === 7, 'un enlace corto se juega');
+
+    let started = null;
+    HF.startGame = g => { started = g; };
+    const token = HF.links.encode({ seed: 123, size: 'small', biome: 'plains', n: 2, fog: 'FULL', difficulty: 'normal' });
+    const seedPlay = await HF.manualMapUse('https://federati.org/?seed=' + token, 'play');
+    ok(seedPlay.ok && started && started.seed === 123, 'un enlace de semilla ?seed= arranca la escaramuza');
+
+    let shortModal = '';
+    HF.modal = h => { shortModal = h; };
+    HF.CFG.share.base = 'https://hexfrontier.test/juego/';
+    HF.cloud.shortenMap = () => Promise.resolve({ ok: true, code: 'X9K2A' });
+    await HF.shareShortMapLink({ code: code, name: 'Corto' });
+    ok(shortModal.includes('https://hexfrontier.test/juego/?m=X9K2A'), 'comparte el enlace corto ?m=');
+    ok(!shortModal.includes('#map='), 'el enlace corto no usa #map=');
+    HF.CFG.share.base = '';
 
     let html = '';
     HF.modal = h => { html = h; };

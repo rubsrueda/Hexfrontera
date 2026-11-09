@@ -1,8 +1,9 @@
 /* Mapas: pantalla intermedia entre el Hub y el editor.
    - Lista "Mis mapas" (HF.savedMaps) y "Comunidad" (hf_community_maps).
    - Al tocar un mapa se despliegan sus acciones: jugar, editar y compartir.
-   - Compartir enlaza al mapa PUBLICADO en la comunidad (#map=<id>); si el mapa
-     propio aún no se ha publicado, se publica antes de compartir.
+   - Compartir usa el enlace corto ?m=XXXXX (funciona con mapas publicados o
+     no); si la nube de enlaces cortos no responde, cae al enlace #map=<id> del
+     mapa publicado.
    - Botón para abrir el editor de mapas (la función que antes tenía el dock).
    Sin módulos ES ni bundlers: un script global más.
 */
@@ -71,15 +72,31 @@
   // caso se comparte el CÓDIGO (ver HF.mapShareModal), que es portátil.
   HF.mapShareUrl = id => HF.shareUrl('map', id);
   // Acepta lo que el jugador pegue: código v1:…, enlace con #map=… / ?map=…,
-  // un id suelto de la comunidad, o (para avisar) un enlace de repetición.
+  // enlace corto ?m=XXXXX, enlace de semilla ?seed=…, un id suelto de la
+  // comunidad, o (para avisar) un enlace de repetición.
   HF.parseMapRef = value => {
     const v = String(value || '').trim();
     if (!v) return null;
     if (/^v1:/i.test(v)) return { kind: 'code', code: v };
+    const shortReplay = /[#?&](?:r|rep)=([A-Za-z0-9]{4,10})/i.exec(v);
+    if (shortReplay) {
+      const code = HF.links && HF.links.normalize ? HF.links.normalize(shortReplay[1]) : shortReplay[1].toUpperCase();
+      return { kind: 'shortReplay', code: code };
+    }
+    const short = /[#?&](?:m|mapa)=([A-Za-z0-9]{4,10})/i.exec(v);
+    if (short) {
+      const code = HF.links && HF.links.normalize ? HF.links.normalize(short[1]) : short[1].toUpperCase();
+      return { kind: 'short', code: code };
+    }
+    const seed = /[#?&](?:seed|s)=([A-Za-z0-9_-]{6,20})/i.exec(v);
+    if (seed) return { kind: 'seed', token: seed[1] };
     const m = /[#?&]map=([^&\s#]+)/i.exec(v);
     if (m) return { kind: 'id', id: decodeURIComponent(m[1]) };
     if (/[#?&]replay=/i.test(v)) return { kind: 'replay' };
     if (/^\d{1,18}$/.test(v)) return { kind: 'id', id: v };
+    // Código corto suelto (5-6 caracteres Crockford) sin la URL completa.
+    const bare = HF.links && HF.links.normalize ? HF.links.normalize(v) : v.toUpperCase();
+    if (/^[0-9A-HJKMNP-TV-Z]{5,6}$/.test(bare)) return { kind: 'short', code: bare };
     return { kind: 'invalid' };
   };
   HF.copyText = (txt, msg) => {
@@ -191,9 +208,14 @@
       };
     });
   };
-  // Compartir: fila de la comunidad → directo; mapa propio → publicar y compartir.
+  // Compartir: el formato acordado es el enlace corto ?m=XXXXX. Funciona con
+  // mapas publicados o no y no expone el código completo. Si la nube de enlaces
+  // cortos no está disponible se degrada al enlace #map=<id> del mapa publicado.
   HF.shareMapEntry = function (entry) {
     if (!entry) return;
+    if (entry.code && /^v1:/i.test(entry.code) && HF.cloud && HF.cloud.shortenMap) {
+      return HF.shareShortMapLink(entry);
+    }
     if (entry.id) return HF.mapShareModal(entry);
     if (entry.publishedId) return HF.mapShareModal({ id: entry.publishedId, name: entry.name });
     HF.modal(`<h3>🔗 ${tr('Compartir mapa', 'Share map')}</h3>
@@ -222,8 +244,13 @@
     if (!HF.cloud || !HF.cloud.shortenMap) return HF.toast(tr('Enlaces cortos no disponibles', 'Short links unavailable'));
 
     HF.toast(tr('Creando enlace…', 'Creating link…'), 1200);
-    HF.cloud.shortenMap(code, entry.name).then(r => {
+    return HF.cloud.shortenMap(code, entry.name).then(r => {
       if (!r || !r.ok || !r.code) {
+        // Si el mapa ya está publicado, el enlace #map=<id> sigue siendo una
+        // alternativa válida cuando la nube de enlaces cortos no responde.
+        if ((entry.id || entry.publishedId) && HF.mapShareModal) {
+          return HF.mapShareModal(entry.id ? entry : { id: entry.publishedId, name: entry.name });
+        }
         return HF.toast((r && r.msg) || tr('No se pudo crear el enlace', 'Could not create the link'), 3600);
       }
       const url = HF.shareUrl('m', r.code);

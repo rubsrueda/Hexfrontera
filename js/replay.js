@@ -71,14 +71,51 @@
     catch (e) { console.error(e); HF.go('hub'); HF.toast('Repetición no válida'); }
   };
 
+  // Aplicación determinista dunha entrada do log. A comparte o visor co
+  // replay-caster, que simula a partida unha vez para indexar os acontecementos
+  // críticos (capturas, capitais, eliminacións, cerco e victoria).
+  HF.replayApply = function (g, t) {
+    let r = { ok: true };
+    if (t[0] === 1) r = HF.act(g, t[1], t[2], t[3] || undefined);
+    else if (t[0] === 2) r = HF.build(g, t[1], t[2]);
+    else if (t[0] === 3) r = HF.recruit(g, t[1], t[2], t[3], t[4]);
+    else if (t[0] === 4) { HF.replayPhase(g, t[1]); }
+    else if (t[0] === 5) r = HF.loan(g, t[1]);
+    else if (t[0] === 9) r = HF.sendCargo(g, t[1], t[2], t[3], t[4]);
+    if (r && !r.ok) throw new Error(r.msg || 'acción no válida');
+    return r;
+  };
+
   HF.replayCodePrompt = function () {
-    HF.modal(`<h3>🎬 Ver repetición</h3><p class="dim small">Pega el código o el enlace completo que te compartieron.</p>
+    HF.modal(`<h3>🎬 Ver repetición</h3><p class="dim small">Pega el código o el enlace completo que te compartieron (también enlaces de mapa).</p>
       <textarea id="repInput" placeholder="#replay=… o https://…#replay=…" style="min-height:90px"></textarea>
       <div id="repErr" class="neg small"></div><br>
       <div class="row"><button id="repNo">Cancelar</button><button id="repGo" class="pri grow">Reproducir</button></div>`, m => {
       m.querySelector('#repNo').onclick = HF.closeModal;
       m.querySelector('#repGo').onclick = () => {
         const raw = m.querySelector('#repInput').value.trim();
+        if (!raw) { m.querySelector('#repErr').textContent = 'Pega un código o enlace.'; return; }
+        // El mismo campo acepta enlaces de mapa cortos (?m=XXXXX), enlaces de
+        // semilla (?seed=…) y códigos de mapa (v1:…), no solo repeticiones.
+        const ref = HF.parseMapRef ? HF.parseMapRef(raw) : null;
+        if (ref && ref.kind === 'shortReplay') {
+          HF.closeModal();
+          if (!HF.cloud || !HF.cloud.resolveShortMap) { HF.toast('Enlaces cortos no disponibles'); return; }
+          HF.toast('Abriendo repetición…', 1000);
+          HF.cloud.resolveShortMap(ref.code).then(r => {
+            if (!r || !r.ok || !r.code) { HF.toast((r && r.msg) || 'Enlace de repetición no válido', 3200); return; }
+            HF.playReplayFromCode(r.code);
+          }).catch(() => HF.toast('No se pudo abrir el enlace', 3200));
+          return;
+        }
+        if (ref && (ref.kind === 'code' || ref.kind === 'id' || ref.kind === 'short' || ref.kind === 'seed')) {
+          HF.closeModal();
+          if (!HF.manualMapUse) { HF.toast('No se pudo abrir el mapa'); return; }
+          Promise.resolve(HF.manualMapUse(raw, 'play')).then(r => {
+            if (!r || !r.ok) HF.toast((r && r.msg) || 'No se pudo abrir el mapa', 3200);
+          }).catch(() => HF.toast('No se pudo abrir el mapa', 3200));
+          return;
+        }
         const code = raw.includes('#replay=') ? raw.split('#replay=').pop() : raw;
         if (!code) { m.querySelector('#repErr').textContent = 'Pega un código o enlace.'; return; }
         HF.closeModal(); HF.playReplayFromCode(code);
@@ -105,17 +142,27 @@
       <div class="hud-bot replay-controls">
         <button id="repReset">⏮</button><button id="repPlayPause" class="pri">⏸</button><button id="repStep">⏩</button>
         <button id="repSpeed">2x</button><div class="grow small dim" id="repCounter">${HF.t('REPLAY_ACTION')} 0 / ${payload.log.length}</div>
+      </div>
+      <div class="caster-bar" id="casterBar">
+        <button id="casterPlay" class="caster-btn" aria-label="Play/Pause">⏸</button>
+        <button id="casterMute" class="caster-btn" aria-label="Mute">🔊</button>
+        <span class="caster-rate-ico" aria-hidden="true">⏩</span>
+        <input id="casterRate" class="caster-rate" type="range" min="0.75" max="1.75" step="0.05" value="1.12" aria-label="Speech rate">
+        <button id="casterNext" class="caster-btn" aria-label="Next highlight">⏭</button>
       </div></div>`;
     const q = s => el.querySelector(s);
+    let caster = null;
     const board = new HF.Board(q('#cv'), {});
     board.colors = g.f.map(f => f.color); board.game = g; board.mode = 'play'; board.viewMode = 'normal';
     board.bubbles = []; board.cells = g.cells; board.R = g.R; board.fogMap = null;
     board.fit(); board.startAnim();
-    HF.onLeave = () => { board.dispose(); if (HF.bgm) HF.bgm.stop(); };
+    HF.onLeave = () => { if (caster) caster.destroy(); board.dispose(); if (HF.bgm) HF.bgm.stop(); };
     const repTurn = q('#repTurn'), repCounter = q('#repCounter'), playBtn = q('#repPlayPause'), speedBtn = q('#repSpeed');
+    const casterPlay = q('#casterPlay'), casterMute = q('#casterMute'), casterRate = q('#casterRate'), casterNext = q('#casterNext');
     const log = payload.log || [];
     const SPEEDS = [['1x', 300], ['2x', 150], ['4x', 60]];
     let cursor = 0, timer = 0, speed = 1, playing = true, done = false;
+    let skipSurvey = false;                 // el jugador ya pidió repetir/jugar
     const render = () => {
       board.cells = g.cells; board.R = g.R; board.fogMap = null;
       board.draw();
@@ -123,24 +170,17 @@
       repCounter.textContent = `${HF.t('REPLAY_ACTION')} ${cursor} / ${log.length}`;
       playBtn.textContent = playing ? '⏸' : '▶';
       speedBtn.textContent = SPEEDS[speed][0];
+      if (casterPlay) casterPlay.textContent = playing ? '⏸' : '▶';
+      if (casterMute && caster) casterMute.textContent = caster.muted ? '🔇' : '🔊';
     };
-    const apply = t => {
-      let r = { ok: true };
-      if (t[0] === 1) r = HF.act(g, t[1], t[2], t[3] || undefined);
-      else if (t[0] === 2) r = HF.build(g, t[1], t[2]);
-      else if (t[0] === 3) r = HF.recruit(g, t[1], t[2], t[3], t[4]);
-      else if (t[0] === 4) { HF.replayPhase(g, t[1]); }
-      else if (t[0] === 5) r = HF.loan(g, t[1]);
-      else if (t[0] === 9) r = HF.sendCargo(g, t[1], t[2], t[3], t[4]);
-      if (r && !r.ok) throw new Error(r.msg || 'acción no válida');
-    };
+    const apply = t => HF.replayApply(g, t);
     const stopTimer = () => { if (timer) { clearInterval(timer); timer = 0; } };
     const finish = () => {
       if (done) return; done = true; playing = false; stopTimer(); render();
       HF.modal(`<h3 style="text-align:center">🏆 Partida Concluida</h3>
         <p style="text-align:center">La repetición terminó en el turno <b>${g.turn}</b>${g.over ? (g.over.won ? ' · Victoria de ' + HF.esc(g.f[0].name) : ' · Derrota') : ''}.</p>
         <div class="row"><button id="btnReplayRestart">🔄 Repetir</button><button id="btnPlayThisMap" class="pri grow">⚔️ ¿Puedes superarlo? Jugar este mapa</button><button id="btnReplayMenu">🏠 Menú</button></div>`, m => {
-        m.querySelector('#btnReplayRestart').onclick = () => HF.playReplay(payload);
+        m.querySelector('#btnReplayRestart').onclick = () => { skipSurvey = true; HF.playReplay(payload); };
         m.querySelector('#btnReplayMenu').onclick = () => {
           HF.closeModal(); stopTimer();
           if (HF.onLeave) { HF.onLeave(); HF.onLeave = null; }
@@ -148,20 +188,47 @@
           HF.go('hub');
         };
         m.querySelector('#btnPlayThisMap').onclick = () => {
+          skipSurvey = true;
           HF.closeModal();
           try { history.replaceState(null, '', location.pathname); } catch (e) { }
           const setup = Object.assign({}, payload.setup, { mode: 'skirmish', isReplay: false });
           try { HF.startGame(HF.newGame(setup)); } catch (e) { console.error(e); HF.go('hub'); }
         };
       });
+      // REPLAY_FINISHED: al cerrar el resumen y si no se encadenó otra vista.
+      if (HF.EventFeedbackModal) {
+        HF.EventFeedbackModal.checkAndRender('REPLAY_FINISHED', {
+          delay: 800,
+          waitForIdle: true,
+          guard: () => !skipSurvey
+        });
+      }
     };
     const stepOnce = () => {
       if (done) return;
       if (cursor >= log.length) return finish();
+      const needSnap = !!caster && !caster._indexed;
+      const before = needSnap ? HF.replayCaster.snapshot(g) : null;
       const t = log[cursor++];
       try { apply(t); }
       catch (e) { console.error('Replay', e); playing = false; stopTimer(); HF.toast('Repetición detenida: ' + e.message); render(); return; }
       HF.sfx('click');
+      render();
+      if (caster) caster.observe(cursor, before, needSnap ? HF.replayCaster.snapshot(g) : null, g, t);
+      if (cursor >= log.length) finish();
+    };
+    // Avance rápido ata un índice do log. O caster usa os índices dos
+    // acontecementos para saltar ao seguinte fito sen relatar os pasos medios.
+    const jumpTo = target => {
+      if (done) return;
+      stopTimer();
+      const end = Math.max(0, Math.min(log.length, target | 0));
+      if (end < cursor) return;
+      while (cursor < end) {
+        const t = log[cursor++];
+        try { apply(t); }
+        catch (e) { console.error('Replay', e); playing = false; break; }
+      }
       render();
       if (cursor >= log.length) finish();
     };
@@ -170,7 +237,15 @@
       stopTimer(); if (!playing || done) return;
       timer = setInterval(pulse, SPEEDS[speed][1]);
     };
-    playBtn.onclick = () => { if (done) return; playing = !playing; render(); schedule(); };
+    playBtn.onclick = () => {
+      if (done) return;
+      // Se o comentarista está a falar, "reproducir" corta a voz e retoma o
+      // taboleiro; así o botón físico e o do caster nunca se desincronizan.
+      if (caster && caster._speaking) { caster.cancelSpeech(); render(); return; }
+      playing = !playing;
+      if (caster) caster.setPlaying(playing);
+      render(); schedule();
+    };
     q('#repStep').onclick = () => { if (done) return; playing = false; stopTimer(); stepOnce(); render(); };
     speedBtn.onclick = () => { speed = (speed + 1) % SPEEDS.length; render(); schedule(); };
     q('#repReset').onclick = () => HF.playReplay(payload);
@@ -179,6 +254,31 @@
       try { history.replaceState(null, '', location.pathname); } catch (e) { }
       HF.go('hub');
     };
+
+    // Relato áudio: só fala; non pinta texto, subtítulos nin rexistros.
+    const rc = (HF.CFG && HF.CFG.replayCaster) || {};
+    try {
+      if (HF.replayCaster && rc.enabled !== false) {
+        caster = HF.replayCaster.create({
+          payload: payload, game: g, board: board, lang: HF.lang(),
+          focusCell: cell => { if (cell != null) board.centerOn(cell); },
+          onPause: () => { if (!playing) return; playing = false; stopTimer(); render(); },
+          onResume: () => { if (done || playing) return; playing = true; schedule(); render(); },
+          onJump: target => jumpTo(target)
+        });
+        if (casterRate) casterRate.value = String(caster.rate);
+        if (casterPlay) casterPlay.onclick = () => playBtn.click();
+        if (casterMute) casterMute.onclick = () => { caster.toggleMute(); render(); };
+        if (casterRate) casterRate.oninput = () => caster.setRate(+casterRate.value);
+        if (casterNext) casterNext.onclick = () => caster.nextHighlight();
+        caster.start();
+      } else {
+        const bar = q('#casterBar'); if (bar) bar.style.display = 'none';
+      }
+    } catch (e) {
+      console.error('[caster]', e);
+      const bar = q('#casterBar'); if (bar) bar.style.display = 'none';
+    }
     render();
     schedule();
   };

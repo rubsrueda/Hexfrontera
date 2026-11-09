@@ -131,13 +131,31 @@
       q('#turn').innerHTML = HF.crestHTML(f.crest, 18, 'hud-crest') + ' T' + g.turn + ' ' + (SICON[season] || '');
       q('#turn').title = HF.seasonName(season);
       q('#res').title = prov != null ? 'Provincia seleccionada' : '';
-      const loan = pv.loan || 0;
+      const loan = pv.loan || 0, upGold = pv.upkeepGold + loan, upFood = pv.upkeep;
+      // Desglose del ejército para el tooltip: la barra enseña la SUMA, no el
+      // coste de la última unidad (el coste por unidad está en su ficha).
+      let detail = '';
+      if (prov == null) {
+        const bt = {};
+        for (const c of g.cells) if (c && c.u && c.u.owner === P) { const k = c.u.type + ' N' + c.u.tier; bt[k] = (bt[k] || 0) + 1; }
+        detail = Object.keys(bt).map(k => bt[k] + '× ' + k).join(' + ');
+      }
       q('#res').innerHTML = (prov != null ? '<span>📍</span>' : '') +
-        `<span title="Ingreso bruto +${pv.inc.gold} · mantenimiento −${pv.upkeepGold}${loan ? ` · préstamo −${loan}` : ''}">${resIco('gold')}${sk.gold}<i class="pos">+${pv.inc.gold}</i><small class="upk">−${pv.upkeepGold + loan}</small></span>` +
-        `<span title="Ingreso bruto +${pv.inc.food} · mantenimiento −${pv.upkeep}">${resIco('food')}${sk.food}<i class="pos">+${pv.inc.food}</i><small class="upk">−${pv.upkeep}</small></span>` +
+        `<span title="Ingreso bruto +${pv.inc.gold} · mantenimiento −${pv.upkeepGold}${loan ? ` · préstamo −${loan}` : ''}${detail ? ` · ${detail}` : ''}">${resIco('gold')}${sk.gold}<i class="pos">+${pv.inc.gold}</i><small class="upk" id="upkGold">−${upGold}</small></span>` +
+        `<span title="Ingreso bruto +${pv.inc.food} · mantenimiento −${pv.upkeep}${detail ? ` · ${detail}` : ''}">${resIco('food')}${sk.food}<i class="pos">+${pv.inc.food}</i><small class="upk" id="upkFood">−${upFood}</small></span>` +
         `<span>${resIco('wood')}${sk.wood}${pv.inc.wood ? `<i class="pos">+${pv.inc.wood}</i>` : ''}</span>` +
         `${trL ? `<span title="Rutas terrestres activas">🛣${trL}</span>` : ''}` +
         `${trS ? `<span title="Rutas marítimas activas">⛵${trS}</span>` : ''}`;
+      // Cuando el mantenimiento cambia de verdad (reclutar, fusionar, perder
+      // una unidad, cambiar de provincia...) el chip parpadea en ámbar para que
+      // el cambio no pase desapercibido en la barra superior.
+      const bump = (id, key, val) => {
+        const el = q('#' + id);
+        if (!el) return;
+        if (st.upk && st.upk[key] !== val) { el.classList.add('bump'); setTimeout(() => el.classList.remove('bump'), 1200); }
+      };
+      bump('upkGold', 'gold', upGold); bump('upkFood', 'food', upFood);
+      st.upk = { gold: upGold, food: upFood };
       q('#bUndo').disabled = !HF.canUndo(g);
       q('#bEnd').disabled = st.busy || !!g.over;
     }
@@ -393,7 +411,13 @@
       // el disparo parto no avanza: la unidad sigue en la casilla de origen y puede retirarse
       const u = g.cells[to].u || (r.shot ? g.cells[from].u : null);
       const at = r.shot ? from : to;
-      if (u && u.owner === P && HF.ready(u) && r.kind !== 'fuse') { select(at); renderInfo(at); } else clearSel();
+      if (r.kind === 'fuse' && g.cells[to].u) {
+        // La fusión deja seleccionada la unidad resultante para que la ficha
+        // muestre al instante su nivel y su mantenimiento nuevos (antes se
+        // quedaba el texto de la unidad de origen, ya desaparecida).
+        select(to); renderInfo(to);
+      } else if (u && u.owner === P && HF.ready(u)) { select(at); renderInfo(at); }
+      else clearSel();
       pumpEvents(); refresh(); afterAction();
     }
     function afterAction() { if (g.over) showEnd(); }
@@ -759,7 +783,7 @@
       let mapScoreSent = null;
       if (HF.cloud && HF.cloud.submitMapScore && !g._mapScoreSent) {
         g._mapScoreSent = true;
-        mapScoreSent = HF.cloud.submitMapScore({
+        const scorePayload = {
           map_key: mapKey,
           player_id: HF.cloud.playerId(),
           tribe_name: me.name || (HF.genTribeName ? HF.genTribeName() : 'Mi Tribu'),
@@ -774,7 +798,24 @@
           kills: s.kills || 0,
           lost: s.lost || 0,
           deserts: s.deserts || 0
-        }).then(r => {
+        };
+        HF.store.set('last_score_payload', scorePayload);
+        mapScoreSent = HF.cloud.submitMapScore(scorePayload).then(r => {
+          // Si o servidor rexeita a marca, o xogador debe sabelo: se non, o
+          // ranking dirá que non aparece e parecerá que a partida non contou.
+          if (r && r.ok) {
+            HF.store.del('last_score_payload');
+            HF.store.del('last_score_error');
+          } else {
+            HF.store.set('last_score_error', {
+              at: Date.now(),
+              msg: (r && r.msg) || '',
+              status: (r && r.status) || 0,
+              offline: !!(r && r.offline),
+              timeout: !!(r && r.timeout)
+            });
+            HF.toast('Ranking: ' + ((r && r.msg) || 'no se pudo enviar la marca'), 3600);
+          }
           // Guardar la repetición de la mejor marca para que el Top se pueda ver.
           if (won && r && r.ok && !r.skipped && HF.replays && HF.replays.saveCode && HF.cloud.submitReplayCode) {
             HF.replays.saveCode(g).then(code => {
@@ -782,7 +823,13 @@
             }).catch(() => { });
           }
           return r;
-        }).catch(() => null);
+        }).catch(e => {
+          HF.store.set('last_score_error', {
+            at: Date.now(), msg: (e && e.message) || 'error de red', status: 0, offline: true
+          });
+          HF.toast('Ranking: no se pudo enviar la marca', 3600);
+          return null;
+        });
       }
       let extra = '';
       if (g.mode === 'campaign' && won) {
@@ -868,51 +915,29 @@
 
         mm.querySelector('#menu2').onclick = () => HF.go(g.mode === 'campaign' ? 'campaign' : 'hub');
         const nx = mm.querySelector('#nx'), ag = mm.querySelector('#again');
-        if (nx) nx.onclick = () => HF.startGame(HF.makeGame(HF.campaign[m.idx + 1], HF.loadTribe()));
-        if (ag) ag.onclick = () => HF.go(g.mode === 'campaign' ? 'campaign' : g.mode === 'daily' ? 'daily' : 'newgame');
+        // Si el jugador encadena otra partida, la encuesta de MATCH_OVER espera
+        // a que vuelva al menú; no se le planta encima del siguiente tablero.
+        if (nx) nx.onclick = () => { g._skipSurvey = true; HF.startGame(HF.makeGame(HF.campaign[m.idx + 1], HF.loadTribe())); };
+        if (ag) ag.onclick = () => { g._skipSurvey = true; HF.go(g.mode === 'campaign' ? 'campaign' : g.mode === 'daily' ? 'daily' : 'newgame'); };
         const fbk = mm.querySelector('#btnFeedback');
         if (fbk) fbk.onclick = () => { if (HF.feedback) HF.feedback.open({ stack: true }); };
         const shm = mm.querySelector('#btnShareMap');
         if (shm) shm.onclick = () => HF.shareMapLink(g);
         const sh = mm.querySelector('#btnShareReplay');
-        if (sh) sh.onclick = async () => {
-          sh.disabled = true;
-          HF.toast('Generando enlace de repetición…', 1200);
-          let code;
-          try { code = await HF.encodeReplay(HF.replayPayload(g)); }
-          catch (e) { console.error(e); sh.disabled = false; return HF.toast('No se pudo generar la repetición'); }
-          // El enlace apunta a la dirección pública del juego (Ajustes → Enlaces),
-          // nunca a la ruta desde la que se está abriendo esta copia.
-          const url = HF.shareUrl('replay', code, true);
-          const show = why => HF.modal(`<h3>🎬 Repetición de la partida</h3>
-            ${why ? `<p class="neg small">${why}</p>` : ''}
-            ${url ? `<div class="dim small">Enlace</div><textarea readonly id="repUrl" style="min-height:80px">${HF.esc(url)}</textarea>` : ''}
-            <div class="dim small">Código (pégalo en 🎬 desde el Hub)</div><textarea readonly id="repCode" style="min-height:64px">${HF.esc(code)}</textarea>
-            <div class="row">${url ? '<button id="cpUrl">Copiar enlace</button>' : ''}<button id="cpCode" class="pri grow">Copiar código</button>${url ? '' : '<button id="cfgUrl">🔗 Dirección pública</button>'}<button id="x">Cerrar</button></div>`, m2 => {
-            const copy = (txt, msg) => {
-              const done = () => HF.toast(msg, 2600);
-              try { navigator.clipboard.writeText(txt).then(done).catch(() => { m2.querySelector('#repCode').select(); }); }
-              catch (e) { m2.querySelector('#repCode').select(); }
-            };
-            const cu = m2.querySelector('#cpUrl');
-            if (cu) cu.onclick = () => copy(url, 'Enlace copiado');
-            const cf = m2.querySelector('#cfgUrl');
-            if (cf) cf.onclick = () => { HF.closeModal(); HF.askShareBase(() => { sh.disabled = false; sh.click(); }); };
-            m2.querySelector('#cpCode').onclick = () => copy(code, 'Código copiado');
-            m2.querySelector('#x').onclick = HF.closeModal;
-          });
-          sh.disabled = false;
-          if (!url) return show('Esta copia del juego no tiene una dirección pública: el enlace solo abriría en tu equipo. No depende de tu conexión a internet. Configura la dirección (Ajustes → Enlaces para compartir) y vuelve a intentarlo.');
-          if (url.length > 6000) return show('El enlace es muy largo y algunos chats lo truncan. También puedes compartir el código.');
-          try {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(url)
-                .then(() => HF.toast('¡Enlace de repetición copiado al portapapeles!', 2800))
-                .catch(() => show('No se pudo copiar automáticamente. Copia el enlace o el código.'));
-            } else show('Copia el enlace o el código para compartir.');
-          } catch (e) { show('Copia el enlace o el código para compartir.'); }
+        if (sh) sh.onclick = () => {
+          if (HF.replays && HF.replays.share) return HF.replays.share(g.replayId, g);
+          HF.toast('No se pudo generar la repetición');
         };
       });
+      // MATCH_OVER: se ofrece al cerrar el resumen (no encima de él) y se
+      // omite si el jugador ya encadenó otra partida.
+      if (HF.EventFeedbackModal) {
+        HF.EventFeedbackModal.checkAndRender('MATCH_OVER', {
+          delay: 900,
+          waitForIdle: true,
+          guard: () => !g._skipSurvey
+        });
+      }
     }
     function chart(cv) {
       const w = Math.max(260, cv.clientWidth || 320), h = 210, d = Math.min(2, G.devicePixelRatio || 1);

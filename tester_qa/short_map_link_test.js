@@ -75,6 +75,10 @@ ok(url === 'https://federati.org/?m=X9K2A', 'url corta: ' + url);
 ok(url.length <= 32, 'longitud total ' + url.length + ' caracteres');
 ok(HF.links.shortMapUrl('x9k2a') === url, 'normaliza a mayúsculas al construir la url');
 
+const rurl = HF.shareUrl('r', 'X9K2A');
+ok(rurl === 'https://federati.org/?r=X9K2A', 'url corta de repetición: ' + rurl);
+ok(HF.links.shortReplayUrl('x9k2a') === rurl, 'normaliza el código de repetición');
+
 function withUrl(search, hash) {
   global.location = { protocol: 'https:', hostname: 'federati.org', href: 'https://federati.org/' + (search || hash), search: search || '', hash: hash || '' };
   global.window.location = global.location;
@@ -91,6 +95,14 @@ withUrl('?seed=ABCDEFGH');
 ok(HF.links.shortMapFromUrl() === null, 'no confunde ?seed= con ?m=');
 withUrl('?m=AB');
 ok(HF.links.shortMapFromUrl() === null, 'rechaza códigos demasiado cortos');
+withUrl('?r=X9K2A');
+ok(HF.links.shortReplayFromUrl() === 'X9K2A', 'lee ?r=XXXXX');
+withUrl('', '#r=X9K2A');
+ok(HF.links.shortReplayFromUrl() === 'X9K2A', 'lee #r=XXXXX');
+withUrl('?rep=ABC123');
+ok(HF.links.shortReplayFromUrl() === 'ABC123', 'acepta ?rep=');
+withUrl('?m=X9K2A');
+ok(HF.links.shortReplayFromUrl() === null, 'no confunde ?m= con ?r=');
 withUrl('');
 ok(HF.links.shortMapFromUrl() === null, 'sin parámetro devuelve null');
 
@@ -132,8 +144,13 @@ const C = global.window.HF.cloud;
   ok(calls[0].body.p_code === 'v1:7:123:abc' && calls[0].body.p_name === 'Mi mapa', 'envía el código y el nombre');
   ok(typeof calls[0].body.p_player === 'string' && typeof calls[0].body.p_secret === 'string', 'envía identidad');
 
+  calls = []; rpcReply = { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, code: 'r9k2a' }) };
+  const rep = await C.shortenMap('zABCDEFGHIJKL', 'Repetición');
+  ok(rep.ok === true && rep.code === 'R9K2A', 'shortenMap acepta códigos de repetición');
+  ok(calls.length === 1 && calls[0].body.p_code === 'zABCDEFGHIJKL', 'envía el código completo de la repetición');
+
   const bad = await C.shortenMap('no-es-un-mapa');
-  ok(bad.ok === false, 'rechaza códigos que no son v1:');
+  ok(bad.ok === false, 'rechaza códigos que no son de mapa ni repetición');
 
   // Resolución + caché
   calls = []; rpcReply = { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, code: 'v1:9:55:zzz', name: 'Compartido' }) };
@@ -199,6 +216,23 @@ const C = global.window.HF.cloud;
   eval(fs.readFileSync(path.join(ROOT, 'js/main.js'), 'utf8'));
   await wait(30);
   ok(opened === null && hub === 1, 'un código inexistente vuelve al menú');
+
+  // Arranque con ?r= (repetición corta)
+  console.log('\n[arranque ?r=]');
+  withUrl('?r=X9K2A');
+  let replayed = null;
+  global.window.HF = Object.assign({}, HF, {
+    settings: () => ({ showLoreIntro: true }),
+    go: () => { },
+    playReplayFromCode: code => { replayed = code; },
+    store: HF.store,
+    links: HF.links,
+    toast: () => { },
+    cloud: { resolveShortMap: () => Promise.resolve({ ok: true, code: 'zREPLAY' }) }
+  });
+  eval(fs.readFileSync(path.join(ROOT, 'js/main.js'), 'utf8'));
+  await wait(30);
+  ok(replayed === 'zREPLAY', '?r= abre la repetición resuelta');
 
   console.log('\n' + (fails ? '=== CON FALLOS: ' + fails + ' ===' : '=== OK · enlaces cortos de mapas del editor ==='));
   process.exitCode = fails ? 1 : 0;

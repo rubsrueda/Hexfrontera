@@ -1,0 +1,9 @@
+# Configuración del proyecto Supabase (Federati)
+# Requiere Supabase CLI: https://supabase.com/docs/guides/cli
+project_id = "wwafeitljxnlvmjtwsjz"
+
+# La función de PayPal la llama el navegador sin sesión de Supabase Auth.
+# La seguridad real la aporta la verificación de la captura con PayPal y la
+# RPC fn_hf_paypal_grant, que sólo puede ejecutar la service_role.
+[functions.paypal]
+verify_jwt = false

@@ -1,6 +1,9 @@
 (function (G) {
   const HF = G.HF = G.HF || {};
   const BASE = 'https://wwafeitljxnlvmjtwsjz.supabase.co/rest/v1';
+  // Edge Functions del mismo proyecto (PayPal). La service_role NUNCA va en el
+  // cliente: la función la usa desde el entorno seguro de Supabase.
+  const FUNCTIONS_BASE = 'https://wwafeitljxnlvmjtwsjz.supabase.co/functions/v1';
   // Clave PÚBLICA (publishable/anon). La service_role NUNCA va en el cliente:
   // si alguna vez hace falta, se usa en una Edge Function con secreto de servidor.
   const API_KEY = 'sb_publishable_9jlzQGRdEZhBtbofd-poZw_pIG74t42';
@@ -9,6 +12,14 @@
     Authorization: 'Bearer ' + API_KEY,
     'Content-Type': 'application/json',
     Prefer: 'return=representation'
+  };
+  // Las Edge Functions no entienden `Prefer`; además, enviarlo obligaría a
+  // declararlo en el preflight CORS. Se usa un juego de cabeceras limpio.
+  // `apikey` basta para el gateway; no se manda Authorization con una clave
+  // publishable que no es un JWT.
+  const EDGE_HEADERS = {
+    apikey: API_KEY,
+    'Content-Type': 'application/json'
   };
   const TIMEOUT = 1500;
   const enc = encodeURIComponent;
@@ -99,6 +110,41 @@
   // RPC genérica (más margen: crear sala o publicar un estado puede tardar).
   const rpcRaw = (fn, args, ms) => request('/rpc/' + fn, { method: 'POST', body: args || {}, timeout: ms || 9000 });
 
+  // Edge Function (Deno) del proyecto. El cuerpo va en JSON y la respuesta
+  // también; `ok` refleja tanto el HTTP como el `ok` lógico del servidor.
+  async function callFunction(name, payload, ms) {
+    if (!onlineAllowed()) return { ok: false, blocked: true };
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { lastOffline = true; return { ok: false, offline: true }; }
+    if (typeof G.fetch !== 'function') { lastOffline = true; return { ok: false, offline: true }; }
+    const timeout = ms || 25000;
+    const ctrl = typeof G.AbortController === 'function' ? new G.AbortController() : null;
+    const timer = G.setTimeout(() => { if (ctrl) ctrl.abort(); }, timeout);
+    try {
+      const res = await G.fetch(FUNCTIONS_BASE + '/' + encodeURIComponent(name), {
+        method: 'POST',
+        headers: EDGE_HEADERS,
+        body: JSON.stringify(payload || {}),
+        signal: ctrl ? ctrl.signal : undefined
+      });
+      G.clearTimeout(timer);
+      let data = null;
+      try { const txt = await res.text(); data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
+      lastOffline = false;
+      if (!res.ok) return { ok: false, offline: false, status: res.status, data, msg: d3msg(data) };
+      return { ok: !(data && data.ok === false), status: res.status, data, msg: d3msg(data) };
+    } catch (e) {
+      G.clearTimeout(timer);
+      lastOffline = true;
+      const aborted = e && (e.name === 'AbortError' || /aborted/i.test(String(e.message || e)));
+      return {
+        ok: false,
+        offline: true,
+        timeout: aborted,
+        detail: String((e && e.message) || e || '')
+      };
+    }
+  }
+
   // RPC "validada": distingue "no existe la función" (falta migrar el SQL) de
   // "el servidor dijo que no" (msg). Así el cliente puede degradar con criterio.
   async function rpcCheck(fn, args, ms) {
@@ -117,27 +163,47 @@
     if (typeof data === 'string') return data;
     return String((data && (data.message || data.msg || data.error)) || '');
   }
+  // Mensaje legible cuando el servidor no devolve JSON con detalle.
+  function httpMsg(status) {
+    if (status === 401 || status === 403) return 'permiso denegado';
+    if (status === 404) return 'servidor de ranking no disponible';
+    return status ? 'error HTTP ' + status : '';
+  }
 
   // ---------- identidad ----------
+  // Registro idempotente. Se puede esperar antes de una operación que exige
+  // que la fila exista en hf_players (por ejemplo, crear una orden PayPal).
+  let registerPromise = null;
+  function ensureRegistered() {
+    if (get('cloud_registered', false)) return Promise.resolve({ ok: true, cached: true });
+    if (registerPromise) return registerPromise;
+
+    const id = playerId(), key = secretKey(), p = profileData();
+    registerPromise = rpcCheck('fn_hf_register', {
+      p_player: id, p_secret: key,
+      p_tribe_name: p.tribe_name, p_tribe: p.tribe_data, p_stats: p.stats_data
+    }).then(r => {
+      if (r.ok) { set('cloud_registered', true); return { ok: true }; }
+      if (!r.missing) return { ok: false, offline: !!r.offline, msg: r.msg };
+      // Compatibilidad: instalaciones sin sql/security_hardening.sql.
+      return request('/hf_players?on_conflict=player_id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+        body: Object.assign({ player_id: id, secret_key: key }, p)
+      }).then(rr => {
+        if (rr && rr.ok) { set('cloud_registered', true); return { ok: true }; }
+        return { ok: false, offline: !!(rr && rr.offline), msg: d3msg(rr && rr.data) };
+      });
+    }).catch(() => ({ ok: false, offline: true }));
+
+    // Si falla (sin conexión, servidor caído), el siguiente intento reintenta.
+    registerPromise.then(() => { registerPromise = null; }, () => { registerPromise = null; });
+    return registerPromise;
+  }
+
   function initIdentity() {
     const id = playerId(), key = secretKey();
-    if (!get('cloud_registered', false)) {
-      const p = profileData();
-      // 1) Camino nuevo: registro validado en servidor (no sobreescribe cuentas).
-      rpcCheck('fn_hf_register', {
-        p_player: id, p_secret: key,
-        p_tribe_name: p.tribe_name, p_tribe: p.tribe_data, p_stats: p.stats_data
-      }).then(r => {
-        if (r.ok) { set('cloud_registered', true); return; }
-        if (!r.missing) return;                 // el servidor rechazó: no insistir
-        // 2) Compatibilidad: instalaciones sin sql/security_hardening.sql.
-        return request('/hf_players?on_conflict=player_id', {
-          method: 'POST',
-          headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-          body: Object.assign({ player_id: id, secret_key: key }, p)
-        }).then(rr => { if (rr && rr.ok) set('cloud_registered', true); });
-      }).catch(() => { });
-    }
+    ensureRegistered().catch(() => { });
     // Si una edición de la tribu se quedó sin subir (cierre inesperado), se
     // reintenta al arrancar: el perfil de la nube vuelve a coincidir.
     if (get('tribe_dirty', false)) saveProfileCloud().catch(() => { });
@@ -371,7 +437,9 @@
   // pequeña (código → v1:…). sql/short_links.sql.
   async function shortenMap(mapCode, name) {
     const code = String(mapCode || '');
-    if (!/^v1:/i.test(code)) return { ok: false, msg: 'Código de mapa no válido' };
+    // Acepta códigos de mapa (v1:…) y de repetición (z…/j…): la tabla y las
+    // RPC de enlaces cortos guardan el código completo sin interpretarlo.
+    if (!/^(?:v1:|[zj])/i.test(code)) return { ok: false, msg: 'Código no válido' };
     const r = await rpcCheck('fn_hf_shorten_map', {
       p_player: playerId(), p_secret: secretKey(), p_code: code, p_name: name || ''
     });
@@ -425,6 +493,9 @@
   // con la misma fórmula: si el número no cuadra, se rechaza.
   async function submitMapScore(payload) {
     if (!payload || !payload.map_key || !payload.player_id) return { ok: false, msg: 'Puntuación incompleta' };
+    // La marca exige que exista la fila de identidad: si el registro aún no
+    // terminó, el servidor respondería «no autorizado».
+    await ensureRegistered().catch(() => { });
     const r = await rpcCheck('fn_hf_submit_map_score', {
       p_player: payload.player_id,
       p_secret: secretKey(),
@@ -440,22 +511,32 @@
       p_color: payload.color_hex,
       p_score: payload.score == null ? null : (+payload.score | 0)
     });
-    if (r.rpc) return r;                                   // servidor respondió
-    if (!r.missing) return r;                              // offline / bloqueado
+    if (r.rpc) {
+      // Servidor respondió: conservar su mensaje; si no vino, dar uno legible.
+      return r.ok ? r : Object.assign({}, r, { msg: r.msg || 'el servidor rechazó la marca' });
+    }
+    if (!r.missing) {
+      // Offline / bloqueado por seguridad.
+      return Object.assign({}, r, { msg: r.msg || (r.offline ? 'sin conexión con el servidor' : 'envío bloqueado') });
+    }
 
     // Compatibilidad pre-migración: se conserva la ruta anterior.
     const prev = await request(`/hf_map_scores?map_key=eq.${enc(payload.map_key)}&player_id=eq.${enc(payload.player_id)}&select=score,turns`);
-    if (!prev.ok) return prev;
+    if (!prev.ok) {
+      return { ok: false, offline: !!prev.offline, status: prev.status, msg: d3msg(prev.data) || httpMsg(prev.status) };
+    }
     const row = Array.isArray(prev.data) ? prev.data[0] : prev.data;
     if (row) {
       const cur = +row.score || 0, curTurns = +row.turns || 0, next = +payload.score || 0, nextTurns = +payload.turns || 0;
       if (!(next > cur || (next === cur && nextTurns < curTurns))) return { ok: true, skipped: true, data: row };
     }
-    return request('/hf_map_scores?on_conflict=map_key,player_id', {
+    const out = await request('/hf_map_scores?on_conflict=map_key,player_id', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
       body: payload
     });
+    if (out.ok) return out;
+    return { ok: false, offline: !!out.offline, status: out.status, msg: d3msg(out.data) || httpMsg(out.status) };
   }
 
   const ROW_COLS = 'player_id,tribe_name,crest,color_hex,map_key,turns,score,surplus,won';
@@ -558,7 +639,7 @@
   }
 
   HF.cloud = {
-    request, ping, initIdentity,
+    request, ping, initIdentity, ensureRegistered,
     playerId, secretKey, isPremium, recoveryEmail, verifyLicense,
     profileData, saveProfileCloud, saveProfileSoon, refreshProfile, linkDevice, restoreFromRow, setRecoveryEmail, recoverByEmail,
     submitDailyScore, flushQueue, getDailyLeaderboard,
@@ -570,6 +651,8 @@
     lastOffline: () => lastOffline,
     replayMissing: () => replayColumnMissing,
     strictServerValidation: strict,
+    functionsBase: FUNCTIONS_BASE,
+    callFunction,
     get online() { return onlineAllowed() && (typeof navigator === 'undefined' || navigator.onLine !== false); }
   };
   // RPC y consultas genéricas para el multijugador (sql/hf_multiplayer.sql).

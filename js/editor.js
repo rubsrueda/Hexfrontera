@@ -229,6 +229,8 @@
           } else ms.push(entry);
           HF.store.set('maps', ms); curName = name; HF.closeModal(); HF.toast((k >= 0 ? 'Actualizado: ' : 'Guardado: ') + name, 2500);
         if (HF.feedback) HF.feedback.prompt('map');
+        // El mapa quedó guardado: MAP_EDIT_COMPLETE puede tener campaña activa.
+        if (HF.EventFeedbackModal) HF.EventFeedbackModal.checkAndRender('MAP_EDIT_COMPLETE', { delay: 600 });
         };
       });
     };

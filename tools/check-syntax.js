@@ -67,7 +67,8 @@ function main() {
   } else {
     const sw = fs.readFileSync(SW, 'utf8');
     const cached = new Set();
-    const cacheRe = /["'](js\/[A-Za-z0-9_.-]+\.js)["']/g;
+    // Los scripts pueden vivir en subcarpetas (js/ui/components/...).
+    const cacheRe = /["'](js\/(?:[\w.-]+\/)*[\w.-]+\.js)["']/g;
     while ((m = cacheRe.exec(sw))) cached.add(m[1]);
     const missing = refs.filter(r => /^js\//.test(r) && !cached.has(r));
     for (const r of missing) problems.push('sw.js no cachea ' + r + ' (quedaría sin soporte offline)');

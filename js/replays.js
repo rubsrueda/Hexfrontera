@@ -165,14 +165,26 @@
       else if (m) { const t = m.querySelector('textarea'); if (t) t.select(); }
     } catch (e) { if (m) { const t = m.querySelector('textarea'); if (t) t.select(); } }
   }
-  function shareModal(code, e) {
-    // Enlace solo si el juego está publicado en una URL accesible; si no, el
-    // código de la repetición es lo único que funciona en otro dispositivo.
-    const url = HF.shareUrl ? HF.shareUrl('replay', code, true) : '';
+  async function shareModal(code, e) {
+    // Enlace corto ?r=XXXXX: el código completo de la partida se guarda en la
+    // nube. Si no hay nube/dirección pública, se cae al enlace #replay=.
+    let url = HF.shareUrl ? HF.shareUrl('replay', code, true) : '';
+    let short = false;
+    if (HF.cloud && HF.cloud.shortenMap && HF.shareBase && HF.shareBase()) {
+      try {
+        HF.toast('Creando enlace corto…', 1000);
+        const r = await HF.cloud.shortenMap(code, e ? e.label : '');
+        if (r && r.ok && r.code) {
+          const u = HF.shareUrl ? HF.shareUrl('r', r.code) : '';
+          if (u) { url = u; short = true; }
+        }
+      } catch (err) { }
+    }
     HF.modal(`<h3>🎬 Código de la partida</h3>
       <div class="dim small">${HF.esc(e ? e.label : 'Partida')} · ${e ? 'T' + e.turn : ''}</div>
       ${url
-        ? `<div class="dim small">Enlace</div><textarea readonly id="repUrl" style="min-height:80px">${HF.esc(url)}</textarea>`
+        ? `<div class="dim small">${short ? 'Enlace corto de la repetición' : 'Enlace'}</div><textarea readonly id="repUrl" style="min-height:80px">${HF.esc(url)}</textarea>
+           ${url.length > 6000 ? '<p class="neg small">El enlace es muy largo y algunos chats lo truncan. También puedes compartir el código.</p>' : ''}`
         : `<p class="neg small">Esta copia del juego no tiene una dirección pública: el enlace solo abriría en tu equipo. No depende de tu conexión a internet, sino de la dirección desde la que se abre el juego.</p>
            <button id="repSetup" style="width:100%;margin-bottom:6px">🔗 Configurar dirección pública</button>`}
       <div class="dim small">Código</div><textarea readonly id="repCode" style="min-height:64px">${HF.esc(code)}</textarea>
@@ -198,7 +210,7 @@
         const data = all(); data[id].code = code; persist(list(), data);
       }
       if (!e) e = entry(id);
-      shareModal(code, e);
+      await shareModal(code, e);
     } catch (err) {
       HF.toast('No se pudo generar el código');
     }
@@ -225,7 +237,7 @@
           ${extras.length ? `<div class="small" style="color:var(--acc)">${extras.map(x => HF.esc(x)).join(' · ')}</div>` : ''}
           <div class="row" style="margin-top:6px"><button data-rv="${e.id}">▶ Ver</button>${e.mapKey ? `<button data-rt="${e.id}">🏆 Top</button>` : ''}<button data-rs="${e.id}" class="pri grow">📤 Compartir</button><button data-rd="${e.id}">🗑</button></div></div>`;
       }).join('') : '<div class="dim small">Todavía no hay partidas guardadas.</div>';
-      HF.modal(`<h3>📜 Historial de partidas</h3>${body}<br><button id="rhx" style="width:100%">Cerrar</button>`, m => {
+      HF.modal(`<h3>📜 ${HF.t('MATCH_HISTORY')}</h3>${body}<br><button id="rhx" style="width:100%">${HF.t('CLOSE')}</button>`, m => {
         m.querySelector('#rhx').onclick = HF.closeModal;
         m.querySelectorAll('[data-rv]').forEach(b => b.onclick = () => play(b.dataset.rv));
         m.querySelectorAll('[data-rt]').forEach(b => b.onclick = () => {

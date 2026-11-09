@@ -17,11 +17,23 @@
   };
 
   // Hub: menú principal (y red en segundo plano, sin bloquear).
+  let entrySurveyAsked = false;
   const openHub = () => {
     HF.go('hub');
     dropBootSplash();
     G.setTimeout(() => { try { HF.cloud.initIdentity(); HF.cloud.flushQueue(); } catch (e) { } }, 0);
     G.addEventListener('online', () => { try { HF.cloud.flushQueue(); } catch (e) { } });
+    // GAME_ENTRY: una sola vez por sesión y solo si el Hub sigue delante.
+    // Si el jugador entró por un enlace directo a partida/replay, no se pregunta.
+    if (!entrySurveyAsked) {
+      entrySurveyAsked = true;
+      G.setTimeout(() => {
+        if (HF.currentScreen !== 'hub') return;
+        if (HF.EventFeedbackModal) {
+          HF.EventFeedbackModal.checkAndRender('GAME_ENTRY', { delay: 700 });
+        }
+      }, 2600);
+    }
   };
 
   // Arranque: restaurar guardados y decidir si toca la introducción.
@@ -30,6 +42,21 @@
     HF.store.recover('tribe_profile');
 
     const hash = location.hash || '';
+
+    // Enlace corto de repetición: federati.org/?r=X9K2A
+    // El código de la partida se guarda en la nube y se resuelve al abrirlo.
+    const shortReplayCode = HF.links && HF.links.shortReplayFromUrl ? HF.links.shortReplayFromUrl() : null;
+    if (shortReplayCode) {
+      dropBootSplash();
+      const fail = (msg) => { if (msg) HF.toast(msg, 3200); openHub(); };
+      if (!HF.cloud || !HF.cloud.resolveShortMap) return fail('Enlaces cortos no disponibles');
+      HF.toast('Abriendo repetición compartida…', 1200);
+      HF.cloud.resolveShortMap(shortReplayCode).then(r => {
+        if (!r || !r.ok || !r.code) return fail((r && r.msg) || 'Enlace de repetición no válido');
+        HF.playReplayFromCode(r.code);
+      }).catch(() => fail('No se pudo abrir el enlace'));
+      return;
+    }
 
     // Enlace corto de mapa del editor: federati.org/?m=X9K2A
     // El código se resuelve en la nube (tabla pequeña de enlaces).
