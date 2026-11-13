@@ -37,7 +37,11 @@
   };
 
   // Arranque: restaurar guardados y decidir si toca la introducción.
-  const boot = () => {
+  const boot = async () => {
+    // Si el runtime i18n no está cargado (pruebas o build mínimo), no bloquea
+    // el arranque: el idioma se queda en el de por defecto.
+    if (HF.initFirstBootLanguage) await HF.initFirstBootLanguage();
+    
     HF.store.recover('savegame_active');
     HF.store.recover('tribe_profile');
 

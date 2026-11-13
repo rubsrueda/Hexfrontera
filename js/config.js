@@ -111,18 +111,24 @@
       enclaveMult: 2                          // EXTRACTIVE_ENCLAVE multiplica los recursos
     },
     // [oro, comida] que produce cada edificio (3 camp., 4 pueblo, 5 ciudad, 6 bastión)
-    buildingProd: { 3: [1, 1], 4: [2, 4], 5: [4, 8], 6: [1, 2] },
+    buildingProd: {     
+    // [Gold, Food] per turn
+    3: [1, 1],   // Camp
+    4: [2, 2],   // Village
+    5: [4, 4],   // City
+    6: [3, 3],   // Bastion
+    },
     // producción extra del recurso de la casilla según el edificio construido encima
     // (se suma al rendimiento base del recurso: camino 0, campamento +1, pueblo +2, bastión +2, ciudad +3)
-    buildingResBonus: { 2: 0, 3: 1, 4: 2, 6: 2, 5: 3 },
+    buildingResBonus: { 2: 1, 3: 2, 4: 3, 6: 4, 5: 5 },
     // defensa que aporta un edificio
     buildingDef: { 3: 1, 4: 1, 5: 2, 6: 3 },
     // nivel de evolución: un edificio solo puede sustituirse por uno de nivel superior
     buildingLevel: { 0: 0, 1: 0, 2: 1, 3: 2, 4: 3, 6: 4, 5: 5 },
     buildingRank: { 3: 1, 4: 2, 6: 3, 5: 4 },
     buildingCost: {
-      2: { wood: 5 }, 3: { wood: 15 }, 4: { wood: 25, food: 25 },
-      5: { wood: 60, food: 60 }, 6: { wood: 30, gold: 20 }
+      2: { wood: 10 }, 3: { wood: 15, food: 15, gold: 15  }, 4: { wood: 25, food: 25, gold: 25 },
+      5: { wood: 60, food: 60, gold: 60 }, 6: { wood: 30, food: 30, gold: 30 }
     },
     siegeDowngrade: { 5: 4, 4: 3, 3: 0, 6: 3 },   // edificio -> edificio tras un asedio
 
@@ -164,6 +170,8 @@
       blockTurns: 2        // rondas que queda rota la ruta tras un saqueo
     },
     loan: { amount: 50, perTurn: 6, turns: 10 }, // +50 oro, -6/turno durante 10 turnos
+    // Banca de la capital: precio = (producción oro / producción recurso) * fee.
+    bank: { fee: 1.1 },
     barks: { chance: 0.5, life: 2 },          // probabilidad y duración de las burbujas de tropa
     // Diálogos vivos entre unidades y edificios (js/banter.js).
     banter: {
@@ -189,13 +197,45 @@
       // Comida refleja el consumo biológico/logístico; oro refleja equipamiento y salarios.
       // INF: base del imperio. ENG: misma comida que INF, +oro técnico. ARC: oro elevado (munición).
       // CAB: el mayor devorador de grano. SIE: el mayor pozo de oro. BAR: tripulaciones navales.
-      INF: { name: 'Infantería', icon: '💂', cost: { gold: 10, food: 5 }, up: [1, 3, 7], upGold: [1, 2, 5], from: [3, 4, 5, 6], move: 3, moveHeavy: 1, atkRange: 1, def: 0 },
-      ENG: { name: 'Ingeniero', icon: '🔧', cost: { gold: 25, food: 5, wood: 5 }, up: [1, 3, 7], upGold: [1, 3, 6], from: [3, 4, 5, 6], move: 4, moveHeavy: 1, atkRange: 1, def: 0 },
-      ARC: { name: 'Arquero', icon: '🏹', cost: { gold: 15, wood: 5 }, up: [1, 3, 6], upGold: [2, 4, 8], from: [4, 5, 6], move: 3, atkRange: 1, atk: 1, def: 0, shoot: 2, shootHill: 3 },
-      CAB: { name: 'Caballería', icon: '♞', cost: { gold: 20, food: 10 }, up: [3, 6, 11], upGold: [2, 5, 10], from: [5], move: 6, atkRange: 2, atkRangeMobile: 3, atk: 2, def: 1, defKnight: 2 },
-      SIE: { name: 'Asedio', icon: '💣', cost: { gold: 25, wood: 15, food: 10 }, up: [2, 5, 8], upGold: [3, 7, 13], from: [4, 5, 6], move: 2, atkRange: 1, atk: 1, def: 0, shoot: 2 },
-      BAR: { name: 'Barco', icon: '⛵', cost: { gold: 30, wood: 25 }, up: [2, 4, 8], upGold: [2, 4, 8], from: [3, 4, 5, 6], naval: true, move: 5, atk: 2, def: 1, shoot: 2 }
+
+     INF: {
+       name: 'Infantería', icon: '💂',
+       cost: { gold: 10, food: 10 },
+       up: [2, 6, 18], upGold: [2, 6, 18],
+       from: [3, 4, 5, 6], move: 3, moveHeavy: 1, atkRange: 1, def: 0
+     },
+     ENG: {
+       name: 'Ingeniero', icon: '🔧',
+       cost: { gold: 25, food: 10, wood: 10 },
+       up: [2, 6, 18], upGold: [2, 6, 18],
+       from: [3, 4, 5, 6], move: 2, moveHeavy: 1, atkRange: 0, def: 0
+     },
+     ARC: {
+       name: 'Arquero', icon: '🏹',
+       cost: { gold: 20, wood: 10 },
+       up: [2, 6, 18], upGold: [2, 6, 18],
+       from: [4, 5, 6], move: 3, atkRange: 1, atk: 1, def: 0, shoot: 2, shootHill: 3
+     },
+     CAB: {
+       name: 'Caballería', icon: '♞',
+       cost: { gold: 30, food: 30 },
+       up: [3, 9, 27], upGold: [3, 9, 27],
+       from: [5], move: 6, atkRange: 2, atkRangeMobile: 3, atk: 2, def: 1, defKnight: 2
+     },
+     SIE: {
+       name: 'Asedio', icon: '💣',
+       cost: { gold: 50, wood: 50, food: 30 },
+       up: [3, 9, 27], upGold: [3, 9, 27],
+       from: [4, 5, 6], move: 2, atkRange: 1, atk: 1, def: 0, shoot: 2, shootHill: 3
+     },
+     BAR: {
+       name: 'Barco', icon: '⛵',
+       cost: { gold: 60, wood: 60 },
+       up: [3, 9, 27], upGold: [3, 9, 27],
+       from: [3, 4, 5, 6], naval: true, move: 5, atk: 2, def: 1, shoot: 2
+     }
     },
+    
     mountainUnits: ['ENG'],                   // solo los ingenieros cruzan montañas y ríos sin camino
     recruitRadius: 3,                         // casillas máximas desde un edificio de origen
     fuseMax: 3, fuseMaxAscetic: 2,            // nivel máximo al fusionar
@@ -211,7 +251,7 @@
       testudoMax: 2
     },
 
-    deficit: { tombTurns: 3, martyrGrace: 2 },
+    deficit: { tombTurns: 3, martyrGrace: 2, commission: 0.5 },
     // Tumba de una unidad propia: al pisarla se consume y hay un 5% de que
     // ocurra algo (recuperar la unidad, recursos, edificio ≤ bastión o nada).
     tomb: { chance: 0.05, recover: 0.35, resources: 0.35, building: 0.2 },
@@ -249,6 +289,40 @@
 
     // condiciones de victoria por doctrina
     win: { survivalTurn: 50, gold: 500, hegemony: 0.75, goldenEra: 30, blitzTurn: 15 },
+
+    // DIPLOMACIA — Pacto Sagrado / Frontalidad Logística
+    diplomacy: {
+      // Pacto Sagrado (NAP)
+      nap: {
+        minDuration: 5, maxDuration: 30, breakPenalty: 0,        // 0 = SAGRADO
+        borderLockDefault: true, visionSharingDefault: false,
+        renewalGracePeriod: 3
+      },
+      // Acuerdos Comerciales
+      trade: {
+        maxRoutesPerTreaty: 3, routeInterdictionLoss: 0.5,
+        routeSetupCost: 10, minRouteValue: 2
+      },
+      // Préstamos / Banca
+      loans: {
+        baseInterestRate: 0.10, maxInterestRate: 0.50,
+        creditScoreImpact: { onTimePayment: +1, latePayment: -5, default: -20, earlyRepayment: +3 },
+        collateralTypes: ['trade_route', 'city_income', 'unit_production'],
+        defaultSeizureRate: 0.30, maxActiveLoansPerFaction: 3
+      },
+      // Confianza / Reputación
+      trust: {
+        baseTrust: 50, decayPerTurn: 1,
+        napBreakPenalty: 50, loanDefaultPenalty: 30,
+        tradeBetrayalPenalty: 20, warDeclarationPenalty: 15, giftBonus: 5
+      },
+      // IA Diplomacia
+      ai: {
+        napUrgencyThreshold: 2, loanDesperationThreshold: -20,
+        tradeAsymmetryThreshold: 2.0,
+        maxNAPDurationVsThreat: { low: 25, medium: 15, high: 8 }
+      }
+    },
 
     // tamaños y biomas de mapa
     sizes: {

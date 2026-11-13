@@ -790,15 +790,15 @@
     // OTAN: justo encima del marco de la ficha (no la tapa). Resto de vistas:
     // sobre el cuerpo de la unidad, nunca por debajo de su dibujo.
     const cx = x;
-    const cy = nato ? y - fs * .46 : y - fs * .08;
+    const cy = nato ? y - fs * .42 : y - fs * .06;
     // Punto pequeño: no debe competir con el arte ni con la ficha OTAN.
-    const r = Math.max(2.5, fs * (nato ? .085 : .105));
+    const r = Math.max(2.0, fs * (nato ? .075 : .095));
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
     ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    ctx.strokeStyle = 'rgba(8,14,28,.92)'; ctx.lineWidth = Math.max(1, fs * .03); ctx.stroke();
+    ctx.strokeStyle = 'rgba(8,14,28,.92)'; ctx.lineWidth = Math.max(1, fs * .02); ctx.stroke();
     ctx.restore();
     return { cx, cy, r, full, color: col, mv, at, nato };
   };
@@ -983,6 +983,14 @@
       this._orderLen = this.cells.length;
       this._order = this.cells.filter(Boolean).slice().sort((a, b) => (a.r - b.r) || (a.q - b.q));
     }
+    // DIPLOMACIA: el overlay de fronteras del Pacto Sagrado se pinta DESPUÉS del
+    // terreno y ANTES de unidades/caravanas. Antes se llamaba al principio del
+    // draw y el terreno lo tapaba por completo.
+    const drawNAP = () => {
+      if (!g || !HF.DiplomacyUI || editor) return;
+      try { HF.DiplomacyUI.drawNAPBorderOverlay(g, ctx, this); }
+      catch (e) { if (HF.dipError) HF.dipError('drawNAP', e); }
+    };
     for (const c of this._order) {
       if (!c) continue;
       const [wx, wy] = this.pos(c), [x, y0] = this.toScreen(wx, wy);
@@ -1181,6 +1189,8 @@
     for (const w of _wallsArr) this._wallGroup(ctx, w);
     _itemsArr.length = 0;
     for (const it of items) _itemsArr.push(it);
+    // Fronteras diplomáticas: sobre el terreno, bajo caravanas y unidades.
+    drawNAP();
     // Las caravanas van sobre el suelo pero por debajo de las unidades.
     this._drawCaravans(ctx, fs);
     // Orden por profundidad: las casillas del sur se dibujan después, así una

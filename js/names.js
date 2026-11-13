@@ -217,5 +217,55 @@
     return cap(compound());
   };
 
+  // --- Nombres históricos de ciudades ---
+  // 105 nombres únicos de Grecia, Roma, Hispania, Galia, Cartago, Egipto y
+  // Fenicia. Se asignan al fundar un pueblo/ciudad (y a las capitales del mapa)
+  // evitando repetir dentro de la misma partida; también se usan en el comercio
+  // naval. La Tebas egipcia va como «Diospolis Magna» y la Tripoli púnica como
+  // «Oea» para que no choquen con «Thebes» y «Tripoli».
+  HF.CITY_NAMES = [
+    // Grecia (15)
+    'Athens', 'Sparta', 'Corinth', 'Thebes', 'Mycenae', 'Argos', 'Olympia', 'Delphi',
+    'Miletus', 'Ephesus', 'Halicarnassus', 'Pergamon', 'Byzantium', 'Cyrene', 'Knossos',
+    // Roma (15)
+    'Rome', 'Pompeii', 'Herculaneum', 'Ostia', 'Capua', 'Brundisium', 'Ravenna',
+    'Mediolanum', 'Aquileia', 'Syracuse', 'Florentia', 'Verona', 'Pisa', 'Genua', 'Ancona',
+    // Hispania (15)
+    'Tarraco', 'Emerita Augusta', 'Hispalis', 'Corduba', 'Gades', 'Carthago Nova',
+    'Caesaraugusta', 'Toletum', 'Valentia', 'Lucus Augusti', 'Bracara Augusta',
+    'Asturica Augusta', 'Malaca', 'Ilerda', 'Numantia',
+    // Galia (15)
+    'Lutetia', 'Lugdunum', 'Massalia', 'Burdigala', 'Nemausus', 'Tolosa', 'Arelate',
+    'Narbo Martius', 'Augustodunum', 'Gesoriacum', 'Rotomagus', 'Vesontio', 'Limonum',
+    'Aginnum', 'Cenabum',
+    // Cartago y colonias púnicas (15)
+    'Carthage', 'Utica', 'Hadrumetum', 'Hippo Regius', 'Leptis Magna', 'Sabratha', 'Oea',
+    'Rusadir', 'Icosim', 'Tingis', 'Lixus', 'Mogador', 'Sulci', 'Nora', 'Caralis',
+    // Egipto (15)
+    'Alexandria', 'Memphis', 'Diospolis Magna', 'Heliopolis', 'Abydos', 'Hermopolis',
+    'Herakleopolis', 'Sais', 'Bubastis', 'Tanis', 'Coptos', 'Aswan', 'Edfu', 'Faiyum',
+    'Pelusium',
+    // Fenicia (15)
+    'Tyre', 'Sidon', 'Byblos', 'Arwad', 'Berytus', 'Ugarit', 'Sarepta', 'Tripoli',
+    'Baalbek', 'Amrit', 'Gaza', 'Jaffa', 'Acre', 'Caesarea', 'Shechem'
+  ];
+
+  // Devuelve un nombre libre para un asentamiento. Usa el RNG del motor (para
+  // que las repeticiones sean deterministas) y evita los ya usados en la
+  // partida. Si se agotan los 105, añade un ordinal al nombre.
+  HF.pickCityName = function (g) {
+    const used = new Set();
+    if (g && g.cells) for (const c of g.cells) if (c && c.city) used.add(c.city);
+    const free = HF.CITY_NAMES.filter(n => !used.has(n));
+    const rand = (HF.rnd && g) ? HF.rnd(g) : Math.random;
+    if (!free.length) {
+      const base = HF.CITY_NAMES[Math.min(HF.CITY_NAMES.length - 1, Math.floor(rand() * HF.CITY_NAMES.length))];
+      let k = 2;
+      while (used.has(base + ' ' + k)) k++;
+      return base + ' ' + k;
+    }
+    return free[Math.min(free.length - 1, Math.floor(rand() * free.length))];
+  };
+
   HF.nameBanks = BANKS;   // expuesto para pruebas
 })(typeof window !== 'undefined' ? window : globalThis);

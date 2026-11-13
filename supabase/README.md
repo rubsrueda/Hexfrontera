@@ -21,17 +21,29 @@ Navegador (web)
 | Archivo | Para qué |
 |---|---|
 | `sql/paypal_payments.sql` | Tabla `hf_payments`, RLS y RPC atómica `fn_hf_paypal_grant`. |
-| `supabase/functions/paypal/index.ts` | Edge Function: crea/captura órdenes y activa Premium. |
+| `sql/account_identity.sql` | RPC de identidad: registrar, perfil, licencia y RLS de `hf_players`. |
+| `sql/account_extra.sql` | Editar llave, borrar cuenta temporal y recuperar credenciales. |
+| `supabase/functions/paypal/index.ts` | Edge Function: PayPal, correo de credenciales y recuperación. |
 | `supabase/config.toml` | `verify_jwt = false` para que el navegador pueda llamar a la función. |
 | `supabase/.env.example` | Variables para desarrollo local (sin secretos reales). |
 | `js/config.js` → `payment.paypal` | Client ID público, importe y moneda que pinta el juego. |
 | `js/payment.js` | Carga el SDK, monta el botón y refresca la UI al terminar. |
+| `js/cloud.js` | Identidad, vinculación, edición de llave y recuperación por correo. |
 
 ## 1. Aplicar el SQL (una vez)
 
-En **Supabase → SQL Editor**, ejecuta el contenido de
-`sql/paypal_payments.sql`. Es idempotente. Al final muestra tres comprobaciones:
-tabla creada, función creada y `anon` sin acceso.
+En **Supabase → SQL Editor**, ejecuta en este orden:
+
+1. `sql/paypal_payments.sql` — tabla de cobros y activación Premium.
+2. `sql/account_identity.sql` — RPC de identidad y cierre de `hf_players`.
+3. `sql/account_extra.sql` — editar llave, borrar cuenta temporal y recuperar
+   credenciales.
+
+Los tres son idempotentes. Al final muestran comprobaciones con `ok = true`.
+
+> Si ya aplicaste `sql/security_hardening.sql`, puedes ejecutar igualmente
+> `account_identity.sql` y `account_extra.sql`: usan `CREATE OR REPLACE` y son
+> compatibles.
 
 Si prefieres CLI:
 
@@ -57,6 +69,13 @@ y crea:
 | `PAYPAL_SECRET_KEY` | Secret de la app sandbox | Secret de la app live |
 | `PAYPAL_API_BASE` | `https://api-m.sandbox.paypal.com` | `https://api-m.paypal.com` |
 | `ALLOWED_ORIGINS` (opcional) | `https://federati.org,https://www.federati.org` | igual |
+| `RESEND_API_KEY` (alternativa) | API key de Resend para enviar credenciales | igual |
+| `SMTP_HOST` (opción Porkbun) | `smtp.porkbun.com` | igual |
+| `SMTP_PORT` | `50587` (STARTTLS alternativo) | igual |
+| `SMTP_USER` | La dirección completa del buzón | igual |
+| `SMTP_PASS` | Contraseña del buzón (no la de Porkbun) | igual |
+| `EMAIL_FROM` | Remitente, ej. `Federati <tu@tudominio.com>` | igual |
+| `EMAIL_REPLY_TO` (opcional) | Correo de respuesta | igual |
 
 > `SUPABASE_URL` y las claves de servidor (`SUPABASE_SECRET_KEYS` o la legacy
 > `SUPABASE_SERVICE_ROLE_KEY`) las inyecta Supabase automáticamente. No las
@@ -136,7 +155,7 @@ curl -s -X POST "https://wwafeitljxnlvmjtwsjz.supabase.co/functions/v1/paypal" \
   -H "apikey: sb_publishable_9jlzQGRdEZhBtbofd-poZw_pIG74t42" \
   -H "Content-Type: application/json" \
   -d '{"action":"health"}'
-# {"ok":true,"configured":true,"sandbox":true}
+# {"ok":true,"configured":true,"sandbox":true,"email":true}
 ```
 
 Si devuelve `404 {"code":"NOT_FOUND","message":"Requested function was not
@@ -197,11 +216,106 @@ select player_id, is_premium, recovery_email, updated_at
 2. Actualiza los secretos de Supabase (`PAYPAL_CLIENT_ID`, `PAYPAL_SECRET_KEY`,
    `PAYPAL_API_BASE=https://api-m.paypal.com`).
 3. Cambia el `clientId` de `js/config.js` por el live.
-4. Sube el `C` de `sw.js` (por ejemplo `federati-v175`) para que los jugadores
-   reciban el JS nuevo.
+4. Sube el número de `C` en `sw.js` (por ejemplo, `federati-v189`) para que los
+   jugadores reciban el JS nuevo.
 5. Despliega la función y publica la web.
 6. Haz una compra real de 4.99 USD y reembólsala desde PayPal para validar el
    flujo completo.
+
+## 7. Cuentas: correo, llave y recuperación
+
+### 7.1 SQL necesario
+
+Además de `sql/paypal_payments.sql`, aplica en el SQL Editor:
+
+1. `sql/account_identity.sql` — crea `fn_hf_register`, `fn_hf_profile`,
+   `fn_hf_license`, `fn_hf_set_recovery_email`, `fn_hf_recover_request` y cierra
+   la lectura pública de `hf_players`.
+2. `sql/account_extra.sql` — crea `fn_hf_set_secret`,
+   `fn_hf_delete_player` y `fn_hf_recover_credentials`.
+
+Sin el primero, «Restaurar compra» responde «ID o clave incorrecta» y la compra
+puede fallar con `jugador_no_encontrado` porque el registro no existe.
+
+### 7.2 Configurar el correo
+
+Puedes usar **tu cuenta de Porkbun** (recomendado si ya la tienes) o Resend.
+El envío es independiente de PayPal.
+
+#### Opción A: SMTP de Porkbun (sin proveedor nuevo)
+
+Porkbun ofrece SMTP para los buzones de tu dominio. La función `paypal` ya
+soporta SMTP.
+
+1. En **Porkbun → Email**, asegúrate de que el buzón existe y tienes su
+   contraseña (no la de tu cuenta de Porkbun, sino la del buzón).
+2. En **Edge Functions → Secrets**, añade:
+
+| Key | Value |
+|---|---|
+| `SMTP_HOST` | `smtp.porkbun.com` |
+| `SMTP_PORT` | `50587` |
+| `SMTP_USER` | La dirección completa del buzón, ej. `no-reply@tudominio.com` |
+| `SMTP_PASS` | La contraseña del buzón |
+| `EMAIL_FROM` | `Federati <no-reply@tudominio.com>` (el mismo buzón o un alias permitido) |
+| `EMAIL_REPLY_TO` (opcional) | `soporte@tudominio.com` |
+
+3. Vuelve a desplegar `paypal` para que cargue el código con SMTP.
+4. Comprueba `health`: debe devolver `email_mode:"smtp"` y `email:true`.
+
+> **Puertos:** Supabase/Deno bloquea los puertos salientes 25 y 587. Porkbun
+> ofrece **50587** (STARTTLS alternativo) y **465** (TLS implícito). Usa 50587.
+> Si tu proyecto no conecta, prueba 465. Si ninguno funciona, usa Resend.
+
+#### Opción B: Resend (HTTP)
+
+1. Crea una cuenta en [Resend](https://resend.com) y verifica un dominio.
+2. Crea una **API Key**.
+3. En **Edge Functions → Secrets**, añade:
+   - `RESEND_API_KEY` = tu API key.
+   - `EMAIL_FROM` = remitente verificado, por ejemplo
+     `Federati <no-reply@tudominio.com>`.
+   - `EMAIL_REPLY_TO` (opcional).
+4. Vuelve a desplegar `paypal`.
+5. Comprueba `health`: `email_mode:"resend"` y `email:true`.
+
+```json
+{"ok":true,"configured":true,"sandbox":true,"email":true,"email_mode":"smtp","email_missing":[]}
+```
+
+Si `email` es `false`, mira `email_missing`: indica exactamente qué secreto falta.
+No hace falta configurar los dos modos: con SMTP o con Resend es suficiente.
+
+### 7.3 Flujos
+
+- **Compra:** al capturar el pago se activa `is_premium`, se registra
+  `hf_payments` y se envía al correo del pagador de PayPal (o al
+  `recovery_email`) el `player_id` y la `secret_key`. Si el correo falla, la
+  compra sigue siendo válida; el juego avisa y las credenciales siguen en
+  Ajustes.
+- **Editar llave:** Ajustes → Cuenta y licencia → **Editar llave**. Pide la
+  llave nueva; la actual viaja como prueba de identidad. Al guardar, la llave
+  anterior deja de funcionar en otros dispositivos.
+- **Recuperar cuenta:** Ajustes → **Recuperar cuenta** → correo de respaldo. Si
+  el correo existe, la Edge Function envía el ID y la llave. Por privacidad, la
+  respuesta es la misma exista o no el correo.
+- **Cambiar de teléfono:** Ajustes → **Restaurar compra** → introduce el
+  `player_id` y la `secret_key`. Se cargan la tribu, las estadísticas y la
+  licencia. La cuenta temporal de este teléfono se borra si no tiene licencia ni
+  pagos.
+
+### 7.4 Problemas frecuentes de cuenta
+
+| Síntoma | Causa probable | Solución |
+|---|---|---|
+| «ID o clave incorrecta» | Falta `account_identity.sql` o la llave no coincide | Aplica el SQL y usa el ID/llave del correo de compra. |
+| `fn_hf_profile` 404 | No se aplicó `account_identity.sql` | Ejecútalo en el SQL Editor. |
+| `fn_hf_recover_credentials` 404 | No se aplicó `account_extra.sql` | Ejecútalo en el SQL Editor. |
+| `email_no_configurado` | Faltan los secretos de correo | Añade SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`) o Resend. |
+| `smtp_error` / `Invalid login` | Usuario o contraseña del buzón incorrectos | `SMTP_PASS` es la contraseña del buzón, no la de la cuenta Porkbun. |
+| `ETIMEDOUT` / `ECONNREFUSED` al enviar | Puerto SMTP bloqueado | Usa `50587` (STARTTLS) o `465` (TLS); evita 25/587. |
+| La cuenta temporal no se borra | Tiene licencia, pagos o datos vinculados | Es intencional para no perder una compra. |
+| La llave nueva no funciona en otro móvil | Allí sigue guardada la anterior | Restaura con el ID y la llave nueva. |
 
 ## Seguridad
 

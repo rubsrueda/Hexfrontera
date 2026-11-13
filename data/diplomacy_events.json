@@ -1,0 +1,85 @@
+{
+  "templates": {
+    "nap_signed": {
+      "importance": "high",
+      "kind": "good",
+      "variants": [
+        "🕊️ {factionA} y {factionB} firman un Pacto de No Agresión. Las fronteras quedan selladas por {duration} turnos.",
+        "✍️ Tratado de paz rubricado entre {factionA} y {factionB}. \"Que la cera selle lo que la palabra promete.\"",
+        "🤝 {factionA} y {factionB} acuerdan no agredirse. Las espadas se guardan en sus vainas por {duration} lunas."
+      ]
+    },
+    "nap_expiring_soon": {
+      "importance": "high",
+      "kind": "warn",
+      "variants": [
+        "⏳ El Pacto Sagrado con {factionB} expira en {countdown} turnos. Los centinelas afilan sus espadas en la frontera.",
+        "🕯️ La cera del sello se agrieta. El tratado con {factionB} termina en {countdown} turnos. ¿Guerra o renovación?",
+        "⚠️ Alerta diplomática: PNA con {factionB} expira pronto ({countdown}T). Las guarniciones fronterizas se refuerzan."
+      ]
+    },
+    "nap_expired": {
+      "importance": "high",
+      "kind": "bad",
+      "variants": [
+        "💀 El Pacto Sagrado con {factionB} ha expirado. Las fronteras ya no están selladas. La tensión estalla.",
+        "📜 El tratado de paz con {factionB} es ahora papel mojado. Los ejércitos se movilizan en la frontera.",
+        "⚔️ La cera se ha consumido. {factionA} y {factionB} ya no están vinculados por el PNA. ¡Cuidado!"
+      ]
+    },
+    "loan_default": {
+      "importance": "high",
+      "kind": "bad",
+      "variants": [
+        "💸 {faction} incumple su préstamo. La banca embarga garantías y declara moroso al deudor. Credit Score: {score}.",
+        "🏦 Quiebra declarada: {faction} no puede pagar su deuda. Embargo de rutas comerciales y pérdida de confianza internacional.",
+        "📉 Default soberano: {faction} suspende pagos. Los acreedores exigen garantías. Relaciones diplomáticas deterioradas."
+      ]
+    },
+    "trade_route_interdicted": {
+      "importance": "medium",
+      "kind": "bad",
+      "variants": [
+        "🛤️❌ Ruta comercial interceptada por {interdictor}! El {resource} no llega a destino. Pérdida del 50% esta turno.",
+        "⚓ Hostigamiento en alta mar: {interdictor} bloquea nuestra ruta de {resource}. Caravanas desviadas, ganancias perdidas.",
+        "🚫 Embargo de facto: {interdictor} corta nuestra línea de suministro de {resource}. Economía resentida."
+      ]
+    },
+    "trade_route_restored": {
+      "importance": "medium",
+      "kind": "good",
+      "variants": [
+        "🛤️✅ Ruta comercial restablecida. El flujo de {resource} vuelve a la normalidad.",
+        "⚓ Aguas seguras: {interdictor} ha retirado sus fuerzas. Nuestras caravanas navegan libres de nuevo.",
+        "📦 Comercio reanudado: la ruta de {resource} está despejada. Ingresos recuperados."
+      ]
+    },
+    "trade_agreement_signed": {
+      "importance": "high",
+      "kind": "good",
+      "variants": [
+        "🤝 Acuerdo comercial firmado entre {factionA} y {factionB}. Intercambio de {giveResource} por {takeResource}.",
+        "📜 Tratado de comercio rubricado. {factionA} provee {giveResource}, {factionB} provee {takeResource}. Beneficio mutuo.",
+        "💎 Nueva ruta comercial: {factionA} ↔ {factionB}. La prosperidad fluye por las calzadas."
+      ]
+    },
+    "loan_accepted": {
+      "importance": "medium",
+      "kind": "good",
+      "variants": [
+        "💰 Préstamo concedido: {faction} recibe {amount} oro al {rate}% interés. {turns} turnos para devolverlo.",
+        "🏦 Financiación asegurada: {amount} oro inyectados en la tesorería de {faction}. Plazo: {turns}T.",
+        "💵 Liquidez obtenida: {faction} firma préstamo por {amount} oro. Tipo: {rate}%/turno."
+      ]
+    },
+    "nap_broken": {
+      "importance": "high",
+      "kind": "bad",
+      "variants": [
+        "💥 {faction} ROMPE el Pacto Sagrado con {target}! La cera del sello se hace añicos. ¡Casus belli!",
+        "⚔️ TRAICIÓN: {faction} viola el PNA con {target}. Las fronteras selladas se abren en sangre.",
+        "🩸 Juramento roto: {faction} ataca a {target} pese al Pacto Sagrado. La comunidad internacional condena el acto."
+      ]
+    }
+  }
+}

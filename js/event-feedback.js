@@ -38,6 +38,20 @@
 
   const cfg = () => (HF.CFG && HF.CFG.eventFeedback) || {};
   const t = (key, fallback) => (HF.t ? HF.t(key, fallback) : (fallback != null ? fallback : key));
+  // Una pregunta/opción puede guardarse como texto literal o como clave de
+  // traducción (`survey.match_over.q1_lost`). Las claves se resuelven con el
+  // idioma del jugador; si falta, HF.t cae a inglés y, por último, a la clave.
+  const SURVEY_KEY_RE = /^survey\.[a-z0-9_.-]+$/i;
+  function tr(value) {
+    const s = String(value == null ? '' : value).trim();
+    if (!SURVEY_KEY_RE.test(s)) return s;
+    const out = t(s, null);
+    if (!out || out === s) {
+      warnOnce('i18n:' + s, 'falta traducción para ' + s);
+      return s;
+    }
+    return out;
+  }
   const storeGet = (k, d) => (HF.store ? HF.store.get(k, d) : d);
   const storeSet = (k, v) => { if (HF.store) HF.store.set(k, v); };
   const now = () => Date.now();
@@ -144,19 +158,29 @@
     return d;
   }
 
-  function normalizeOptions(value) {
+  function normalizeOptions(value, labels) {
     value = parseMaybeJson(value);
+    labels = parseMaybeJson(labels);
     if (!Array.isArray(value)) return null;
     const out = [];
-    for (const item of value) {
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      // La RPC nueva manda option_labels ya resueltos. Si no vienen (servidor
+      // antiguo), se resuelven aquí con HF.t / fallback.
+      const dbLabel = Array.isArray(labels) && labels[i] != null && String(labels[i]).trim()
+        ? String(labels[i])
+        : null;
       if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
         const s = String(item).trim();
-        if (s) out.push(s);
+        if (!s) continue;
+        out.push({ value: s, label: dbLabel != null ? dbLabel : tr(s) });
       } else if (item && typeof item === 'object') {
         // Formato extendido tolerado: { value, label }. El valor es lo que se
         // guarda; la etiqueta es lo que ve el jugador.
         const v = item.value == null ? item.id : item.value;
-        if (v != null) out.push({ value: String(v), label: String(item.label == null ? v : item.label) });
+        if (v == null) continue;
+        const rawLabel = item.label == null ? v : item.label;
+        out.push({ value: String(v), label: dbLabel != null ? dbLabel : tr(rawLabel) });
       }
     }
     return out.length ? out : null;
@@ -174,7 +198,8 @@
       if (!VALID_TYPES[type]) continue;
       const text = String(item.question_text || '').trim();
       if (!text) continue;
-      let options = normalizeOptions(item.options);
+      const dbLabel = String(item.question_label || '').trim();
+      let options = normalizeOptions(item.options, item.option_labels);
       if (type === 'SELECT' && !options) continue;      // sin opciones no es usable
       if (type !== 'SELECT') {
         // Para RATING solo interesan 5 etiquetas; el resto de tipos no usa options.
@@ -184,6 +209,7 @@
       out.push({
         question_id: id,
         question_text: text,
+        question_label: dbLabel || tr(text),
         question_type: type,
         options,
         display_order: +item.display_order || 1,
@@ -195,7 +221,7 @@
   }
 
   function optionText(opt) {
-    return opt && typeof opt === 'object' ? String(opt.label) : String(opt);
+    return tr(opt && typeof opt === 'object' ? opt.label : opt);
   }
   function optionValue(opt) {
     return opt && typeof opt === 'object' ? String(opt.value) : String(opt);
@@ -423,11 +449,15 @@
       // Cabecera ---------------------------------------------------------------
       const head = el('div', 'ef-head');
       const headText = el('div', 'ef-head-text');
-      headText.appendChild(el('div', 'ef-kicker', campaign.name || t('EF_KICKER')));
+      const campaignName = String(campaign.name_label || '').trim() ||
+        (campaign.name ? tr(campaign.name) : '');
+      const campaignDesc = String(campaign.description_label || '').trim() ||
+        (campaign.description ? tr(campaign.description) : '');
+      headText.appendChild(el('div', 'ef-kicker', campaignName || t('EF_KICKER')));
       const title = el('h3', 'ef-title', t('EF_TITLE'));
       title.id = 'efTitle';
       headText.appendChild(title);
-      headText.appendChild(el('p', 'ef-desc', campaign.description || t('EF_INTRO')));
+      headText.appendChild(el('p', 'ef-desc', campaignDesc || t('EF_INTRO')));
       head.appendChild(headText);
       const closeBtn = button('ef-close', '✕', () => dismiss());
       attr(closeBtn, 'aria-label', t('EF_CLOSE'));
@@ -463,7 +493,7 @@
         state.cards[q.question_id] = card;
         const qHead = el('div', 'ef-q-head');
         qHead.appendChild(el('span', 'ef-q-num', String(i + 1)));
-        const label = el('div', 'ef-q-text', q.question_text);
+        const label = el('div', 'ef-q-text', q.question_label || q.question_text);
         qHead.appendChild(label);
         const tag = el('span', 'ef-q-tag' + (q.is_required ? ' req' : ''), q.is_required ? '*' : t('EF_OPTIONAL'));
         if (q.is_required) attr(tag, 'aria-label', t('EF_REQUIRED'));
@@ -476,7 +506,7 @@
         if (q.question_type === 'RATING') {
           const stars = el('div', 'ef-stars');
           attr(stars, 'role', 'group');
-          attr(stars, 'aria-label', q.question_text);
+          attr(stars, 'aria-label', q.question_label || q.question_text);
           const marks = [];
           for (let n = 1; n <= 5; n++) {
             const star = button('ef-star', '★', () => {
@@ -500,7 +530,7 @@
           if (opts.length <= 6) {
             const seg = el('div', 'ef-seg');
             attr(seg, 'role', 'group');
-            attr(seg, 'aria-label', q.question_text);
+            attr(seg, 'aria-label', q.question_label || q.question_text);
             const marks = [];
             for (const opt of opts) {
               const value = optionValue(opt);
@@ -520,7 +550,7 @@
             first = marks[0];
           } else {
             const select = el('select', 'ef-select');
-            attr(select, 'aria-label', q.question_text);
+            attr(select, 'aria-label', q.question_label || q.question_text);
             const ph = el('option', '', t('EF_SELECT_PH'));
             ph.value = '';
             select.appendChild(ph);
@@ -567,7 +597,7 @@
           attr(area, 'maxlength', '1000');
           attr(area, 'rows', '3');
           attr(area, 'placeholder', t('EF_TEXT_PH'));
-          attr(area, 'aria-label', q.question_text);
+          attr(area, 'aria-label', q.question_label || q.question_text);
           area.oninput = () => {
             state.values[q.question_id] = area.value;
             clearError(q.question_id);
@@ -757,7 +787,7 @@
           }
           if (r.retry) {
             queuePending(payload, ctx.key, ctx.eventType);
-            markSeen(ctx.key, 'dismissed');
+            if (!ctx.preview) markSeen(ctx.key, 'dismissed');
             close(true);
             if (HF.toast) HF.toast(t('EF_QUEUED'), 4200);
             return;
@@ -785,7 +815,7 @@
       // Eventos globales del modal ---------------------------------------------
       function dismiss() {
         if (state.sending) return;
-        markSeen(ctx.key, 'dismissed');
+        if (!ctx.preview) markSeen(ctx.key, 'dismissed');
         close(false);
       }
 
@@ -794,7 +824,7 @@
         const c = current;
         if (!c || c.overlay !== overlay) return;
         current = null;
-        if (!answered && !state.sending) markSeen(ctx.key, 'dismissed');
+        if (!answered && !state.sending && !ctx.preview) markSeen(ctx.key, 'dismissed');
         addClass(overlay, 'ef-out');
         removeClass(doc.body, 'ef-open');
         const remove = () => {
@@ -869,6 +899,20 @@
     });
   }
 
+  // La RPC nueva acepta p_locale y devuelve question_label/option_labels.
+  // Si el servidor aún tiene la firma antigua, se reintenta sin p_locale.
+  async function fetchActiveEvent(eventType) {
+    const locale = HF.lang ? HF.lang() : 'en';
+    let r = await HF.cloud.rpc('get_active_event_questions', {
+      p_event_type: eventType,
+      p_locale: locale
+    });
+    if (r && !r.ok && (r.status === 404 || r.status === 400)) {
+      r = await HF.cloud.rpc('get_active_event_questions', { p_event_type: eventType });
+    }
+    return r;
+  }
+
   // ---------------------------------------------------------------------------
   // Espera a que no haya otro modal/capa encima
   // ---------------------------------------------------------------------------
@@ -923,7 +967,7 @@
       if (opts.guard && !opts.guard()) return { shown: false, reason: 'guard' };
       if (current) return { shown: false, reason: 'busy' };
 
-      const r = await HF.cloud.rpc('get_active_event_questions', { p_event_type: eventType });
+      const r = await fetchActiveEvent(eventType);
       if (!r || !r.ok) {
         if (r && r.status === 404) warnOnce('missing', 'falta aplicar sql/event_feedback.sql (RPC no encontrada)');
         return { shown: false, reason: 'rpc' };
@@ -939,18 +983,20 @@
       // La marca de sesión va por campaign_event_id, no por tipo de evento:
       // así una campaña NUEVA de MATCH_OVER puede mostrarse en la misma sesión
       // aunque el jugador ya haya respondido otra campaña del mismo tipo.
-      if (!opts.force && sessionShown[key]) return { shown: false, reason: 'session' };
-      if (!opts.force) {
+      // `preview` (botón Probar del diagnóstico) no lee ni escribe marcas.
+      const preview = opts.preview === true;
+      if (!preview && !opts.force && sessionShown[key]) return { shown: false, reason: 'session' };
+      if (!preview && !opts.force) {
         const skip = shouldSkip(key);
         if (skip) return { shown: false, reason: skip };
       }
       if (opts.guard && !opts.guard()) return { shown: false, reason: 'guard' };
 
       // renderModal resuelve al cerrar; no bloqueamos la llamada del juego.
-      renderModal(data, questions, { eventType, key }).catch(e => {
+      renderModal(data, questions, { eventType, key, preview }).catch(e => {
         if (G.console && G.console.error) G.console.error('[event-feedback] render:', e);
       });
-      sessionShown[key] = true;
+      if (!preview) sessionShown[key] = true;
       return { shown: true, key, eventType, questions: questions.length };
     } catch (e) {
       if (G.console && G.console.error) G.console.error('[event-feedback] checkAndRender:', e);
@@ -965,8 +1011,15 @@
   async function debug(rawEventType) {
     const eventType = normalizeType(rawEventType);
     if (!eventType) return { ok: false, reason: 'bad_event' };
-    if (!online()) return { ok: false, reason: 'offline' };
-    const r = await HF.cloud.rpc('get_active_event_questions', { p_event_type: eventType });
+    if (!online()) {
+      const sec = HF.security || null;
+      return {
+        ok: false,
+        reason: sec && sec.locked ? 'security' : 'offline',
+        security: sec ? { locked: !!sec.locked, host: sec.host || '', reason: sec.reason || '' } : null
+      };
+    }
+    const r = await fetchActiveEvent(eventType);
     const data = normalizePayload(r && r.data);
     const questions = data ? normalizeQuestions(data.questions) : [];
     const event = (data && data.event) || {};
@@ -977,6 +1030,8 @@
       active: !!(data && data.active === true),
       campaign_event_id: event.campaign_event_id || null,
       event_type: event.event_type || eventType,
+      locale: HF.lang ? HF.lang() : 'en',
+      payload_locale: (data && data.locale) || null,
       questions: questions.length,
       question_types: questions.map(q => q.question_type),
       seen: key ? (seen()[key] || null) : null,
@@ -988,6 +1043,11 @@
 
   function debugSummary(d) {
     if (!d) return 'Sin respuesta del diagnóstico.';
+    if (d.reason === 'security') {
+      const host = (d.security && d.security.host) || 'este dominio';
+      return 'Servicios en línea desactivados para ' + host +
+        '. Añade el host a HF.CFG.security.allowedHosts o abre el juego desde federati.org.';
+    }
     if (d.reason === 'offline') return 'Sin conexión: no se pudo consultar la RPC.';
     if (!d.ok) return 'La RPC no respondió correctamente' + (d.status ? ' (HTTP ' + d.status + ')' : '') + '. Revisa el SQL/PostgREST.';
     if (!d.active) return 'No hay una campaña activa para MATCH_OVER en este momento (fechas o is_active).';
@@ -1024,7 +1084,7 @@
       if (force) force.onclick = () => {
         HF.closeModal();
         G.setTimeout(() => {
-          checkAndRender('MATCH_OVER', { force: true, waitForIdle: true }).then(r => {
+          checkAndRender('MATCH_OVER', { force: true, preview: true, waitForIdle: true }).then(r => {
             if (!r || !r.shown) {
               if (HF.toast) HF.toast('No se mostró: ' + ((r && r.reason) || 'desconocido'), 4200);
             }
@@ -1033,10 +1093,15 @@
       };
       debug('MATCH_OVER').then(d => {
         if (!body) return;
+        const firstQ = d.payload && d.payload.questions && d.payload.questions[0];
         const rows = [
           ['RPC', d.ok ? 'OK' : 'ERROR' + (d.status ? ' ' + d.status : '')],
           ['Campaña activa', d.active ? 'SÍ' : 'NO'],
+          ['Idioma del jugador', d.locale || '—'],
+          ['Locale de la RPC', d.payload_locale || '—'],
           ['Preguntas', String(d.questions == null ? 0 : d.questions)],
+          ['Texto 1 (BD)', firstQ ? (firstQ.question_text || '—') : '—'],
+          ['Etiqueta 1', firstQ ? (firstQ.question_label || firstQ.question_text || '—') : '—'],
           ['campaign_event_id', d.campaign_event_id || '—'],
           ['Ya respondida/descartada', d.seen ? (d.seen.status + ' · ' + new Date(d.seen.at).toLocaleString()) : 'no'],
           ['Pendiente de envío', d.pending ? 'sí' : 'no'],

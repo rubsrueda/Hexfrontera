@@ -43,8 +43,15 @@ BEGIN
 
     -- Se insertan en desorden a propósito: el RPC debe ordenar por display_order.
     INSERT INTO public.hf_event_questions (campaign_event_id, question_text, question_type, display_order, is_required)
-    VALUES (v_event, '¿Cómo fue la partida?', 'RATING', 1, TRUE)
+    VALUES (v_event, 'survey.qa.q1', 'RATING', 1, TRUE)
     RETURNING question_id INTO v_q_rating;
+
+    INSERT INTO public.hf_survey_translations (translation_key, locale, translation_text)
+    VALUES
+        ('survey.qa.q1', 'en', 'How was the match?'),
+        ('survey.qa.q1', 'es', '¿Cómo fue la partida?')
+    ON CONFLICT (translation_key, locale) DO UPDATE
+    SET translation_text = EXCLUDED.translation_text;
 
     INSERT INTO public.hf_event_questions (campaign_event_id, question_text, question_type, options, display_order, is_required)
     VALUES (v_event, '¿Qué dificultad elegiste?', 'SELECT', '["Fácil","Media","Difícil"]'::jsonb, 3, TRUE)
@@ -87,6 +94,14 @@ BEGIN
     IF (v_json -> 'event' ->> 'collect_user_info')::BOOLEAN IS NOT TRUE
        OR (v_json -> 'event' ->> 'allow_comments')::BOOLEAN IS NOT TRUE THEN
         RAISE EXCEPTION 'FALLO 1: flags del evento incorrectos: %', v_json;
+    END IF;
+    IF (v_json -> 'questions' -> 0 ->> 'question_label') <> 'How was the match?' THEN
+        RAISE EXCEPTION 'FALLO 1: traducción en inglés incorrecta: %', v_json;
+    END IF;
+    v_json := public.get_active_event_questions('match_over', 'es');
+    IF (v_json ->> 'locale') <> 'es'
+       OR (v_json -> 'questions' -> 0 ->> 'question_label') <> '¿Cómo fue la partida?' THEN
+        RAISE EXCEPTION 'FALLO 1: traducción en español incorrecta: %', v_json;
     END IF;
 
     -- Un tipo sin campaña devuelve active=false y no NULL.

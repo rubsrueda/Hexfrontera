@@ -6,14 +6,17 @@ evento y envía la transacción.
 
 | Pieza | Archivo |
 |---|---|
-| Esquema, RLS, RPC y vista analítica | [`event_feedback.sql`](event_feedback.sql) |
+| Esquema, catálogo de eventos, RLS y RPC | [`event_feedback.sql`](event_feedback.sql) |
+| Listado de eventos configurados | [`list_event_feedback.sql`](list_event_feedback.sql) |
 | Migración desde los nombres sin prefijo | [`migrate_event_feedback_hf_prefix.sql`](migrate_event_feedback_hf_prefix.sql) |
-| Diagnóstico de solo lectura | [`diagnose_event_feedback.sql`](diagnose_event_feedback.sql) |
+| Diagnóstico de solo lectura | [`diagnose_event_feedback.sql`](diagnose_event_feedback.sql), [`healthcheck_event_feedback.sql`](healthcheck_event_feedback.sql), [`list_event_feedback.sql`](list_event_feedback.sql) |
 | Verificación transaccional (no deja datos) | [`verify_event_feedback.sql`](verify_event_feedback.sql) |
 | Modal dinámico | [`../js/event-feedback.js`](../js/event-feedback.js) |
-| Textos en 13 idiomas | [`../js/event-feedback-langs.js`](../js/event-feedback-langs.js) |
+| Textos de interfaz en 13 idiomas | [`../js/event-feedback-langs.js`](../js/event-feedback-langs.js) |
+| Tabla de traducciones (runtime) | [`survey_translations_seed.sql`](survey_translations_seed.sql) |
+| Equivalente SQL Server | [`sqlserver/schema.sql`](sqlserver/schema.sql), [`sqlserver/survey_translations.sql`](sqlserver/survey_translations.sql) |
 | Estilos | [`../css/style.css`](../css/style.css) (bloque `ef-`) |
-| Pruebas | [`../tester_qa/event_feedback_test.js`](../tester_qa/event_feedback_test.js) |
+| Pruebas | [`../tester_qa/event_feedback_test.js`](../tester_qa/event_feedback_test.js), [`../tester_qa/survey_translations_test.js`](../tester_qa/survey_translations_test.js) |
 
 ---
 
@@ -26,17 +29,19 @@ evento y envía la transacción.
      ejecutar `event_feedback.sql`.
    - Todas las tablas llevan prefijo `hf_` (`hf_campaigns`,
      `hf_campaign_events`, `hf_event_questions`, `hf_player_responses`,
-     `hf_response_details`); los índices usan `idx_hf_*` y la vista
-     `hf_v_event_feedback`.
-2. **Verificar** (opcional, recomendado) pegando
+     `hf_response_details`, `hf_survey_translations`); los índices usan
+     `idx_hf_*` y la vista `hf_v_event_feedback`.
+2. **Cargar las traducciones**: ejecuta
+   `sql/survey_translations_seed.sql` (13 idiomas × 12 claves).
+3. **Verificar** (opcional, recomendado) pegando
    `sql/verify_event_feedback.sql`. Crea una campaña de prueba, comprueba
    lectura, orden, envío atómico y errores, y termina con `ROLLBACK`.
-3. **Crear la primera campaña** (ejemplo al final de este documento).
-4. **Recargar el esquema de PostgREST** si el RPC aún responde 404:
+4. **Crear la primera campaña** (ejemplo al final de este documento).
+5. **Recargar el esquema de PostgREST** si el RPC aún responde 404:
    ```sql
    NOTIFY pgrst, 'reload schema';
    ```
-5. En la build de producción, regenerar `dist/` con `npm run build` para que el
+6. En la build de producción, regenerar `dist/` con `npm run build` para que el
    nuevo JS/CSS entre en el empaquetado. Para Electron/Capacitor, regenerar
    `wrappers/www` con el script `stage` de `wrappers/` (no editar `www` a mano).
 
@@ -56,11 +61,16 @@ No hace falta tocar el cliente para cambiar preguntas: basta con editar filas de
 ## 2. Modelo de datos
 
 ```text
-hf_campaigns 1 ──── N hf_campaign_events 1 ──── N hf_event_questions
-                                            │
-hf_player_responses 1 ──── N hf_response_details ┘
+hf_event_types 1 ── N hf_campaign_events 1 ── N hf_event_questions
+                            │
+hf_campaigns 1 ─────────────┘
+                            │
+                            └── N hf_player_responses 1 ── N hf_response_details
 ```
 
+- **`hf_event_types`**: catálogo de disparadores disponibles. `is_active` apaga
+  el tipo para todas las campañas; `trigger_hint` documenta dónde se dispara en
+  el cliente. Los 5 actuales se siembran en el esquema.
 - **`hf_campaigns`**: ventana `[start_date, end_date]` inclusiva. `is_active`
   permite cerrar una campaña sin borrarla.
 - **`hf_campaign_events`**: disparador (`GAME_ENTRY`, `MATCH_OVER`,
@@ -85,6 +95,58 @@ hf_player_responses 1 ──── N hf_response_details ┘
 | `allow_comments = false` | El servidor **descarta** el comentario. |
 | Encuesta vacía | Se rechaza salvo que haya un comentario voluntario. |
 | PII | El cliente anónimo no puede leer `hf_player_responses` ni `hf_response_details`; solo escribe por la RPC validada. |
+
+---
+
+## 2b. Catálogo de eventos
+
+`hf_event_types` es la lista consultable de disparadores. El esquema siembra los
+5 actuales:
+
+| event_type | label | trigger_hint |
+|---|---|---|
+| `GAME_ENTRY` | Entrada al juego | `main.js · openHub()` |
+| `MATCH_OVER` | Fin de partida | `game.js · showEnd()` |
+| `TRIBE_MODIFIED` | Tribu modificada | `screens.js · salir de Tribu` |
+| `MAP_EDIT_COMPLETE` | Mapa guardado | `editor.js · guardar` |
+| `REPLAY_FINISHED` | Repetición terminada | `replay.js · finish()` |
+
+`hf_campaign_events.event_type` tiene FK al catálogo. Para añadir un evento
+nuevo:
+
+```sql
+INSERT INTO public.hf_event_types
+    (event_type, label, description, trigger_hint, sort_order)
+VALUES
+    ('NEW_EVENT', 'Nuevo evento', 'Qué lo dispara', 'archivo.js · función()', 60);
+
+INSERT INTO public.hf_campaign_events
+    (campaign_id, event_type, collect_user_info, allow_comments)
+VALUES
+    ('<campaign-id>', 'NEW_EVENT', TRUE, TRUE);
+```
+
+Y añadir el hook en el cliente:
+
+```js
+HF.EventFeedbackModal.checkAndRender('NEW_EVENT');
+```
+
+El catálogo por sí solo **no dispara** nada: el cliente sigue necesitando el
+punto de llamada. Lo que sí consigue es que el tipo exista, se valide, se pueda
+listar y se pueda activar/desactivar globalmente.
+
+### Consultar uso y detectar huecos
+
+[`list_event_feedback.sql`](list_event_feedback.sql) ejecuta
+`hf_v_event_type_usage`, que devuelve por tipo: campañas configuradas, vigentes,
+preguntas, respuestas y última respuesta. La segunda consulta muestra los tipos
+del catálogo **sin ninguna campaña**, que son los candidatos a configurar o a
+retirar.
+
+```sql
+SELECT * FROM public.hf_v_event_type_usage ORDER BY sort_order;
+```
 
 ---
 
@@ -169,6 +231,156 @@ Errores (siempre `{"ok": false, "error": "CÓDIGO"}`):
 
 ---
 
+## 3.5. Contenido multiidioma
+
+La fuente de verdad en runtime es la tabla **`hf_survey_translations`**. Las
+preguntas/opciones guardan **claves**, no texto; la RPC
+`get_active_event_questions(p_event_type, p_locale)` devuelve `question_label`,
+`name_label`/`description_label` y `option_labels` ya resueltos para el idioma
+del jugador. Fallback: locale base → inglés → clave.
+
+Ventaja: cambiar copy es un `INSERT/UPDATE` en la tabla; **no hay que
+recompilar ni desplegar el cliente**.
+
+```sql
+CREATE TABLE public.hf_survey_translations (
+    translation_key  VARCHAR(160) NOT NULL,
+    locale           VARCHAR(10)  NOT NULL,
+    translation_text TEXT         NOT NULL,
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (translation_key, locale),
+    CHECK (translation_key ~ '^survey\.[a-z0-9_.-]+$'),
+    CHECK (btrim(translation_text) <> '')
+);
+```
+
+```sql
+INSERT INTO public.hf_survey_translations (translation_key, locale, translation_text)
+VALUES
+    ('survey.match_over.q1_lost', 'en', 'Was there any moment where you felt lost...'),
+    ('survey.match_over.q1_lost', 'es', '¿Hubo algún momento en el que te sentiste perdido...'),
+    ('survey.match_over.q1_lost', 'ja', 'どこかで迷ったり、次に何をすればいいか分からないと感じた瞬間はありましたか？')
+ON CONFLICT (translation_key, locale) DO UPDATE
+SET translation_text = EXCLUDED.translation_text, updated_at = NOW();
+```
+
+El seed completo (13 idiomas × 12 claves) está en
+[`survey_translations_seed.sql`](survey_translations_seed.sql). Para SQL Server,
+la tabla + inserts equivalentes están en
+[`sqlserver/survey_translations.sql`](sqlserver/survey_translations.sql).
+
+### Preguntas y opciones
+
+```sql
+INSERT INTO public.hf_event_questions
+    (question_id, campaign_event_id, question_text, question_type, options, display_order, is_required)
+VALUES
+    ('c2eebc99-9c0b-4ef8-bb6d-6bb9bd380b22', 'b2eebc99-9c0b-4ef8-bb6d-6bb9bd380a33',
+     'survey.match_over.q1_lost', 'TEXT', NULL, 1, TRUE),
+    ('c4eebc99-9c0b-4ef8-bb6d-6bb9bd380b44', 'b2eebc99-9c0b-4ef8-bb6d-6bb9bd380a33',
+     'survey.match_over.q3_return', 'SELECT',
+     '["survey.match_over.opt_yes","survey.match_over.opt_maybe","survey.match_over.opt_no"]'::jsonb,
+     3, TRUE)
+ON CONFLICT (question_id) DO UPDATE
+SET question_text = EXCLUDED.question_text,
+    options = EXCLUDED.options;
+```
+
+Si también cambias `question_type`, `display_order` o `is_required`, añádelos al
+`DO UPDATE`; el ejemplo solo actualiza texto y opciones.
+
+- `question_text` puede ser una clave (`survey.…`) o texto literal. Se admite
+  contenido mixto; no hay migración obligatoria.
+- En `SELECT`, cada opción es una clave. **La respuesta guarda la clave**
+  (`response_value = 'survey.match_over.opt_yes'`), no la etiqueta traducida:
+  así los informes son comparables entre idiomas.
+- En `RATING`, `options` puede llevar 5 claves de etiqueta; el valor sigue
+  siendo `1..5`.
+- `TEXT` guarda el texto libre del jugador en su idioma; eso no se traduce.
+- `hf_campaigns.name` y `description` también admiten claves (`survey.match_over.title`,
+  `survey.match_over.intro`); el modal las resuelve igual. Si son texto literal,
+  se muestran tal cual.
+- Si `collect_user_info = TRUE`, el modal ya pide correo y alias (con validación
+  de email). No añadas además una pregunta `TEXT` de correo: saldría dos veces.
+  Si prefieres que el correo sea una pregunta más, pon `collect_user_info =
+  FALSE` y usa una pregunta `TEXT`/`SELECT` propia.
+
+### Seed y edición
+
+La tabla es la única fuente de verdad. El seed inicial
+[`survey_translations_seed.sql`](survey_translations_seed.sql) carga los 13
+idiomas × 12 claves y se puede volver a ejecutar (`ON CONFLICT` actualiza el
+texto). Para cambiar copy:
+
+```sql
+UPDATE public.hf_survey_translations
+SET translation_text = 'Nuevo texto', updated_at = NOW()
+WHERE translation_key = 'survey.match_over.q1_lost'
+  AND locale = 'es';
+```
+
+El cliente **no carga ningún archivo de traducción de encuestas en runtime**:
+la RPC devuelve `question_label`/`option_labels` desde la tabla. No hay JSON ni
+generador que desplegar; `npm run build` solo empaqueta el juego.
+
+### SQL Server
+
+La app actual habla con **PostgreSQL/Supabase** (PostgREST + RPC). SQL Server no
+es intercambiable sin cambiar la capa de datos: no hay PostgREST, RLS funciona
+distinto y `JSONB`/`TIMESTAMPTZ` no existen con esos nombres.
+
+El esquema completo equivalente está en
+[`sqlserver/schema.sql`](sqlserver/schema.sql) y la tabla + 156 inserts en
+[`sqlserver/survey_translations.sql`](sqlserver/survey_translations.sql)
+(`UNIQUEIDENTIFIER`, `NVARCHAR`, `DATETIME2`, `OPENJSON`/`MERGE`). Para servir el
+mismo JSON al cliente necesitas una API o un stored procedure; el resto del
+esquema requiere la traducción de tipos (`UUID → UNIQUEIDENTIFIER`,
+`JSONB → NVARCHAR(MAX)`, `TIMESTAMPTZ → DATETIMEOFFSET`, `BOOLEAN → BIT`).
+
+### Reglas de las claves
+
+- Formato: `survey.<evento>.<pregunta>` en minúsculas, `[a-z0-9_.-]`; el
+  `CHECK` de `hf_survey_translations` rechaza cualquier otra cosa.
+- Una clave es **inmutable** una vez que hay respuestas: en `SELECT`,
+  `response_value` guarda la clave, no la etiqueta. Si renombras la clave,
+  conserva la antigua o migra los datos para no romper la analítica.
+- No reutilices la misma clave para preguntas con significados distintos.
+
+### Añadir una pregunta o una campaña
+
+1. Inserta la pregunta con su clave en `hf_event_questions` (como arriba).
+2. Inserta sus traducciones en `hf_survey_translations` para los 13 locales
+   (o edita las filas de `hf_survey_translations` directamente).
+3. Comprueba:
+   ```sql
+   SELECT locale, translation_text
+   FROM public.hf_survey_translations
+   WHERE translation_key = 'survey.match_over.q1_lost'
+   ORDER BY locale;
+   ```
+4. No hace falta tocar `event-feedback.js` ni recompilar el cliente: la RPC lee
+   la tabla en cada carga.
+5. `node tester_qa/survey_translations_test.js` valida que el seed PostgreSQL y
+   el de SQL Server tengan las mismas 156 filas (13 idiomas × 12 claves).
+
+### Diagnóstico de claves
+
+- Si falta el locale del jugador, `hf_survey_label` usa inglés.
+- Si también falta inglés, devuelve la clave; el modal la muestra y
+  `event-feedback.js` deja un aviso en consola (`falta traducción para survey.…`).
+- El catálogo actual de ejemplo tiene 12 claves por idioma para
+  `survey.match_over`.
+- El juego solo traduce lo que pasa por `HF.t`/la tabla. Los diálogos y pantallas
+  con literales en español (`game.js`, `screens.js`, `maps.js`, `editor.js`,
+  `replays.js`, etc.) son deuda de localización aparte; el idioma del survey
+  depende de que `question_text`/`options` sean claves.
+- Puedes probar la resolución sin abrir el juego:
+  ```sql
+  SELECT public.hf_survey_label('survey.match_over.q1_lost', 'ja');
+  ```
+
+---
+
 ## 4. Integración en el juego
 
 API global:
@@ -183,6 +395,7 @@ Opciones:
 | Opción | Uso |
 |---|---|
 | `force: true` | Ignora la marca de "ya respondida/descartada" y la de sesión. Para soporte/pruebas. |
+| `preview: true` | No lee ni escribe marcas locales; lo usa «Probar MATCH_OVER» del diagnóstico. Un envío real sigue siendo real. |
 | `waitForIdle: true` | Espera a que se cierre el modal de fin de partida (o cualquier capa) antes de mostrarse. |
 | `waitForIdleMs` | Límite de esa espera (por defecto `eventFeedback.waitForIdleMs`, 45 s). |
 | `delay` | Retardo extra en ms tras estar libre la UI. |
@@ -301,7 +514,10 @@ son `RESTRICT` a propósito para conservar el histórico; desactívala con
 
 La vista `hf_v_event_feedback` es plana (una fila por respuesta a pregunta) y está
 revocada para `anon`/`authenticated`: se consulta con `service_role` o desde el
-SQL Editor.
+SQL Editor. `question_text` y `response_value` de un `SELECT` contienen la
+**clave** (`survey.match_over.opt_yes`), no la etiqueta traducida; para informes
+legibles, traduce esas claves con `hf_survey_translations` o con la función
+`hf_survey_label(key, locale)`.
 
 ```sql
 SELECT campaign_name, event_type, responded_at, player_email, player_alias,
@@ -334,8 +550,10 @@ ORDER BY encuestas DESC;
 
 ## 7. Diagnóstico rápido
 
-Atajo: ejecuta [`diagnose_event_feedback.sql`](diagnose_event_feedback.sql) y
-compara el JSON del RPC con la lista de campañas (`el_rpc_elige_esta = true`).
+Atajo: ejecuta [`healthcheck_event_feedback.sql`](healthcheck_event_feedback.sql)
+para comprobar tabla/firmas/permisos/RPC, y
+[`diagnose_event_feedback.sql`](diagnose_event_feedback.sql) para comparar el
+JSON del RPC con la lista de campañas (`el_rpc_elige_esta = true`).
 
 Lista las campañas **una por fila** (con id y nombre) para ver cuál elige el RPC:
 
@@ -364,6 +582,7 @@ SELECT public.get_active_event_questions('MATCH_OVER');
 | No aparece el modal | `SELECT * FROM get_active_event_questions('MATCH_OVER');` → debe tener `active: true` y preguntas. Revisar `start_date`/`end_date`, `is_active` de campaña y evento, y que el evento tenga preguntas. |
 | Ya respondió una y no sale la nueva | Ejecuta `await EventFeedbackModal.debug('MATCH_OVER')`. Si el `campaign_event_id` que devuelve es el mismo que ya está en `seen`, no es una campaña nueva: crea otra campaña/evento o limpia `hf_ef_seen`. Si `session: true`, recarga o llama a `EventFeedbackModal.reset()`. Si el jugador pulsó «Repetir»/«Siguiente» en el resumen, la encuesta se omitió a propósito; pulsa «Menú» para verla. |
 | Hay dos campañas activas para el mismo evento | El RPC elige la de `start_date` más reciente. Cierra/desactiva la anterior (`is_active = FALSE` o `end_date = NOW()`) o asegúrate de que la nueva tenga `start_date` posterior. |
+| La encuesta sale en el idioma equivocado | En Ajustes → Diagnóstico mira `Idioma del jugador`, `Locale de la RPC` y `Texto 1 (BD)`. Si el locale es el correcto pero `Texto 1 (BD)` es español literal, la pregunta no es una clave `survey.*`: cámbiala por clave y carga `hf_survey_translations`. Si `Locale de la RPC` es `es`, el jugador no tiene alemán seleccionado o la build es vieja. |
 | El RPC responde 404 | Falta aplicar el SQL o PostgREST no ha recargado el esquema: `NOTIFY pgrst, 'reload schema';`. |
 | No se guarda la respuesta | Revisar el retorno de `fn_ef_submit_response` y los `GRANT EXECUTE`. La tabla tiene RLS: el cliente **no** debe insertar directamente. |
 | «Ya no está activa» | La campaña caducó entre la carga y el envío, o se desactivó. |

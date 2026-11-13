@@ -525,6 +525,82 @@ function submitCall() { return rpcCalls.find(c => c.fn === 'fn_ef_submit_respons
   EF.reset();
 
   // -------------------------------------------------------------------------
+  // 12b. Claves canónicas + etiquetas resueltas por la RPC
+  // -------------------------------------------------------------------------
+  resetAll();
+  activePayload = payload({
+    questions: [
+      { question_id: Q.text, question_text: 'survey.match_over.q1_lost', question_label: '¿Hubo algún momento en el que te sentiste perdido?', question_type: 'TEXT', display_order: 1, is_required: true },
+      { question_id: Q.select, question_text: 'survey.match_over.q3_return', question_label: '¿Volverás a jugar?', question_type: 'SELECT', options: ['survey.match_over.opt_yes', 'survey.match_over.opt_maybe', 'survey.match_over.opt_no'], option_labels: ['Sí, sin duda', 'Quizá', 'No'], display_order: 2, is_required: true }
+    ]
+  });
+  {
+    await open();
+    const s = sheet();
+    const cards = s.querySelectorAll('.ef-q');
+    ok(cards[0].querySelector('.ef-q-text').textContent === '¿Hubo algún momento en el que te sentiste perdido?',
+      'pinta question_label resuelto por la RPC');
+    ok(cards[1].querySelector('.ef-q-text').textContent === '¿Volverás a jugar?',
+      'pinta la segunda question_label');
+    const opts = cards[1].querySelectorAll('.ef-opt');
+    ok(opts[0].textContent === 'Sí, sin duda',
+      'pinta option_labels resuelto por la RPC');
+    opts[0].onclick();
+    const ta = cards[0].querySelector('.ef-text');
+    ta.value = 'Me perdí al principio';
+    ta.oninput();
+    s.querySelector('.ef-send').onclick();
+    await wait(20);
+    const call = submitCall();
+    const byId = {};
+    for (const a of call.args.p_answers) byId[a.question_id] = a.value;
+    ok(byId[Q.select] === 'survey.match_over.opt_yes',
+      'SELECT guarda la clave canónica, no la etiqueta traducida');
+    ok(byId[Q.text] === 'Me perdí al principio',
+      'TEXT guarda el texto libre del jugador');
+  }
+  EF.reset();
+
+  // -------------------------------------------------------------------------
+  // 12c. La RPC nueva manda etiquetas ya resueltas (DB-first)
+  // -------------------------------------------------------------------------
+  resetAll();
+  activePayload = payload({
+    campaign: { campaign_id: 'campaign-db', name: 'survey.match_over.title', name_label: 'CAMPAÑA DB', description: 'x', description_label: 'DESC DB' },
+    questions: [
+      { question_id: Q.text, question_text: 'survey.match_over.q1_lost', question_label: 'ETIQUETA DB', question_type: 'TEXT', display_order: 1, is_required: true },
+      { question_id: Q.select, question_text: 'survey.match_over.q3_return', question_label: 'PREGUNTA DB', question_type: 'SELECT', options: ['survey.match_over.opt_yes', 'survey.match_over.opt_maybe'], option_labels: ['OPCIÓN DB', 'OTRA DB'], display_order: 2, is_required: false }
+    ]
+  });
+  {
+    await open();
+    const s = sheet();
+    ok(s.querySelector('.ef-kicker').textContent === 'CAMPAÑA DB',
+      'usa name_label de la BD para la campaña');
+    const cards = s.querySelectorAll('.ef-q');
+    ok(cards[0].querySelector('.ef-q-text').textContent === 'ETIQUETA DB',
+      'usa question_label de la BD para la pregunta');
+    ok(cards[1].querySelectorAll('.ef-opt')[0].textContent === 'OPCIÓN DB',
+      'usa option_labels de la BD para la opción');
+  }
+  EF.reset();
+
+  // -------------------------------------------------------------------------
+  // 12d. La preview del diagnóstico no envenena el disparador real
+  // -------------------------------------------------------------------------
+  resetAll();
+  {
+    const preview = await open({ preview: true, force: true });
+    ok(preview.shown === true, 'la preview se abre aunque no haya marcas');
+    sheet().querySelector('.ef-later').onclick();
+    await wait(280);
+    ok(!EF.seen()['event-1'], 'cerrar la preview no escribe la marca de descarte');
+    const real = await open();
+    ok(real.shown === true, 'el disparador real vuelve a mostrar la encuesta tras la preview');
+  }
+  EF.reset();
+
+  // -------------------------------------------------------------------------
   // 13. Diagnóstico sin pintar
   // -------------------------------------------------------------------------
   resetAll();
@@ -549,7 +625,7 @@ function submitCall() { return rpcCalls.find(c => c.fn === 'fn_ef_submit_respons
   EF.reset();
 
   // -------------------------------------------------------------------------
-  // 15. Los cinco disparadores están conectados en el shell
+  // 15. Integración: los cinco disparadores están conectados en el shell
   // -------------------------------------------------------------------------
   {
     const src = name => fs.readFileSync(path.join(JS, name), 'utf8');

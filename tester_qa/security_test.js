@@ -83,7 +83,7 @@ ok(!/hf_players\?[^`'"]*select=\*/.test(cloudCode), 'ninguna consulta a hf_playe
 ok(/fn_hf_submit_map_score/.test(cloudCode), 'las marcas van por fn_hf_submit_map_score');
 ok(/fn_hf_upvote_map/.test(cloudCode), 'los votos van por fn_hf_upvote_map');
 ok(/fn_hf_license/.test(cloudCode), 'la licencia se consulta al servidor (fn_hf_license)');
-ok(/fn_hf_recover_request/.test(cloudCode), 'la recuperación usa fn_hf_recover_request');
+ok(/recover-request/.test(cloudCode) && /callFunction\('paypal'/.test(cloudCode), 'la recuperación pide las credenciales por la Edge Function');
 ok(!/service_role/.test(cloudCode), 'cloud.js no usa service_role');
 ok(/p_score/.test(cloudCode) && /kills/.test(cloudCode) && /deserts/.test(cloudCode), 'envía hechos de la partida para que el servidor recalcule');
 ok(/blocked: true/.test(cloudCode), 'la red se corta si el dominio no está autorizado');

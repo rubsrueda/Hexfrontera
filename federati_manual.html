@@ -1,0 +1,1539 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FEDERATI — Manual de Campo / Field Manual</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- html2pdf.js for generating PDFs directly in browser -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Inter:wght@300;400;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #e2e8f0;
+        }
+
+        .title-font {
+            font-family: 'Cinzel', serif;
+        }
+
+        .pdf-page {
+            background-color: #ffffff;
+            color: #1e293b;
+            padding: 40px;
+            margin: 0 auto;
+            max-width: 900px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            border-radius: 4px;
+        }
+
+        /* Styling specifically for clean PDF export */
+        .pdf-export {
+            font-size: 11pt;
+            line-height: 1.5;
+            color: #111827 !important;
+            background: #ffffff !important;
+        }
+
+        .pdf-export h1 {
+            font-family: 'Cinzel', serif;
+            color: #7c2d12;
+            border-bottom: 2px solid #7c2d12;
+            padding-bottom: 6px;
+            margin-top: 15px;
+            margin-bottom: 12px;
+            font-weight: 700;
+        }
+
+        .pdf-export h2 {
+            font-family: 'Cinzel', serif;
+            color: #9a3412;
+            border-bottom: 1px solid #fed7aa;
+            padding-bottom: 4px;
+            margin-top: 18px;
+            margin-bottom: 10px;
+            font-size: 14pt;
+            font-weight: 700;
+        }
+
+        .pdf-export h3 {
+            color: #1e293b;
+            margin-top: 12px;
+            margin-bottom: 6px;
+            font-size: 11pt;
+            font-weight: 700;
+        }
+
+        .pdf-export table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 9.5pt;
+        }
+
+        .pdf-export th {
+            background-color: #f1f5f9;
+            color: #0f172a;
+            font-weight: 700;
+            text-align: left;
+            padding: 6px 8px;
+            border: 1px solid #cbd5e1;
+        }
+
+        .pdf-export td {
+            padding: 5px 8px;
+            border: 1px solid #cbd5e1;
+        }
+
+        .pdf-export ul, .pdf-export ol {
+            margin-top: 4px;
+            margin-bottom: 8px;
+            padding-left: 20px;
+        }
+
+        .pdf-export li {
+            margin-bottom: 4px;
+        }
+
+        .pdf-export .badge {
+            background-color: #fef3c7;
+            color: #92400e;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 8.5pt;
+        }
+
+        .pdf-export blockquote {
+            border-left: 4px solid #ea580c;
+            padding-left: 12px;
+            margin: 10px 0;
+            color: #475569;
+            font-style: italic;
+        }
+
+        .no-print {
+            display: block;
+        }
+
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            body {
+                background: white !important;
+            }
+            .pdf-page {
+                box-shadow: none !important;
+                padding: 0 !important;
+                max-width: 100% !important;
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-12">
+
+    <!-- Sticky Navigation Header -->
+    <header class="no-print sticky top-0 z-50 bg-slate-900/95 backdrop-blur border-b border-slate-800 shadow-lg px-4 py-3">
+        <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center space-x-3">
+                <span class="text-2xl">⚔️</span>
+                <div>
+                    <h1 class="title-font text-lg font-bold text-amber-500 tracking-wider">FEDERATI</h1>
+                    <p class="text-xs text-slate-400">Documentación Oficial / Official Documentation</p>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- Language Selector -->
+                <div class="inline-flex rounded-md shadow-sm bg-slate-800 p-1 border border-slate-700">
+                    <button id="btn-es" onclick="switchLanguage('es')" class="px-4 py-1.5 text-xs font-semibold rounded text-amber-400 bg-slate-700 shadow-sm transition">
+                        🇪🇸 Español
+                    </button>
+                    <button id="btn-en" onclick="switchLanguage('en')" class="px-4 py-1.5 text-xs font-semibold rounded text-slate-400 hover:text-slate-200 transition">
+                        🇬🇧 English
+                    </button>
+                </div>
+
+                <!-- Export PDF Button -->
+                <button onclick="downloadPDF()" class="flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-2 px-4 rounded shadow transition transform active:scale-95">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    Descargar PDF / Download PDF
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-5xl mx-auto mt-6 px-4">
+
+        <!-- Spanish Document Container -->
+        <div id="doc-es" class="pdf-page pdf-export">
+            <div class="text-center border-b-2 border-amber-900/30 pb-4 mb-6">
+                <h1 class="text-3xl font-black text-amber-900 tracking-wide uppercase mb-1">FEDERATI — Manual de Campo</h1>
+                <p class="text-xs font-semibold uppercase tracking-widest text-slate-600">Estrategia Determinista Hexagonal · Año 500 d.C. · Crónicas de la Frontera</p>
+            </div>
+
+            <h2>I. LA IDEA CENTRAL</h2>
+            <p><strong>Federati es un juego de ajedrez donde las piezas comen de verdad.</strong></p>
+            <p>Cada unidad cuesta comida y oro <em>cada turno</em>, pagado por la provincia que la alimenta. Recluta demasiadas y tu ejército morirá de hambre. Corta la línea de suministro enemiga y su ejército se disolverá sin necesidad de batalla.</p>
+            <p><strong>Sin dados. Sin RNG en el combate. Misma semilla (seed) = misma partida.</strong></p>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Lo que sabes</th>
+                        <th>Lo que calculas</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Atributos de unidad, bonos de terreno, efectos de doctrina</td>
+                        <td>Daño exacto, mantenimiento exacto, alcance exacto de suministro</td>
+                    </tr>
+                    <tr>
+                        <td>Vectores de tormenta (visibles con 1 turno de antelación)</td>
+                        <td>Si tu caballería puede atacar y retirarse a tiempo</td>
+                    </tr>
+                    <tr>
+                        <td>Tus ingresos, tu mantenimiento, tus reservas</td>
+                        <td>Cuántos turnos tienes antes de tener que expandirte o consolidarte</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <p><strong>Gana por:</strong> Conquista, Supervivencia (turno 50), Oro (500), Hegemonía (75% de territorio), Blitz (turno 15), Maravilla, Inanición, Cultural, Financiera o Vasallaje — según tu doctrina de <strong>Victoria</strong>.</p>
+
+            <h2>II. PRIMEROS TURNOS — INICIO RÁPIDO</h2>
+            <h3>1. Mover → Expandir → Construir</h3>
+            <ul>
+                <li><strong>Haz clic en una unidad</strong> y luego <strong>haz clic en un hexágono de destino</strong>. La Infantería se mueve 3, Ingenieros 4, Caballería 6, Barcos 5.</li>
+                <li><strong>Expándete a hexágonos neutrales</strong> (bordes grises). Cada hexágono conectado = territorio.</li>
+                <li><strong>Construye un Campamento</strong> en un hexágono propio: haz clic en el hexágono → <strong>Construir</strong> → Campamento (15 de madera). Los campamentos producen oro y comida.</li>
+            </ul>
+
+            <h3>2. La Regla de Oro: Cada Unidad es una Factura</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Unidad</th>
+                        <th>Mantenimiento Nivel 1</th>
+                        <th>Mantenimiento Nivel 2</th>
+                        <th>Mantenimiento Nivel 3</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>Infantería 💂</td><td>1🌾 / 1💰</td><td>3🌾 / 2💰</td><td>7🌾 / 5💰</td></tr>
+                    <tr><td>Ingeniero 🔧</td><td>1🌾 / 1💰</td><td>3🌾 / 3💰</td><td>7🌾 / 6💰</td></tr>
+                    <tr><td>Arquero 🏹</td><td>1🌾 / 2💰</td><td>3🌾 / 4💰</td><td>6🌾 / 8💰</td></tr>
+                    <tr><td>Caballería ♞</td><td>3🌾 / 2💰</td><td>6🌾 / 5💰</td><td>11🌾 / 10💰</td></tr>
+                    <tr><td>Asedio 💣</td><td>2🌾 / 3💰</td><td>5🌾 / 7💰</td><td>8🌾 / 13💰</td></tr>
+                    <tr><td>Barco ⛵</td><td>2🌾 / 2💰</td><td>4🌾 / 4💰</td><td>8🌾 / 8💰</td></tr>
+                </tbody>
+            </table>
+            <p><strong>Si una provincia no puede pagar:</strong> Las unidades bajan un nivel (tier). Las unidades de Nivel 1 <strong>desertan</strong> (dejan una tumba ⚰️, <strong>−400 puntos</strong>).</p>
+
+            <h3>3. Líneas de Suministro = Vida</h3>
+            <ul>
+                <li>Una <strong>provincia</strong> = hexágonos propios conectados con al menos un edificio (Campamento, Pueblo, Ciudad, Bastión).</li>
+                <li>Los <strong>ingresos</strong> fluyen desde los hexágonos → almacén de la provincia → pagan a las unidades locales.</li>
+                <li><strong>Corta la conexión</strong> → la provincia pasa a estar <strong>AISLADA</strong> (pulso rojo). Se crea automáticamente un Campamento si tiene ≥3 hexágonos, pero <em>empieza con el almacén vacío</em>.</li>
+                <li>Las <strong>rutas comerciales</strong> (3 terrestres + 3 marítimas) unen Pueblos/Ciudades → oro adicional. Los saqueadores las bloquean por 2 turnos. Las tormentas hunden barcos.</li>
+            </ul>
+
+            <h2>III. UNIDADES — ROLES Y FUSIÓN</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Unidad</th>
+                        <th>Rol</th>
+                        <th>Mov.</th>
+                        <th>Alcance Atq.</th>
+                        <th>Especial</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Infantería</strong> 💂</td><td>Muro / Contención</td><td>3</td><td>1</td><td>Defensa de terreno (Colina +1, Montaña +2), aura de Bastión +2</td></tr>
+                    <tr><td><strong>Ingeniero</strong> 🔧</td><td>Construir / Cruzar</td><td>4</td><td>1</td><td>Única unidad que cruza montañas/ríos sin caminos; construye caminos</td></tr>
+                    <tr><td><strong>Arquero</strong> 🏹</td><td>Disparo / Degradar</td><td>3</td><td>1 (2 disparo, 3 colina)</td><td>Degrada la defensa enemiga (degradación 1, cincel 2)</td></tr>
+                    <tr><td><strong>Caballería</strong> ♞</td><td>Flanqueo / Carga</td><td>6</td><td>2 (3 móvil)</td><td>Bono de carga +1, puede retirarse tras atacar (Ataque Parto)</td></tr>
+                    <tr><td><strong>Asedio</strong> 💣</td><td>Sitio / Destrucción</td><td>2</td><td>1 (2 disparo)</td><td>Degrada edificios, ignora defensa de murallas</td></tr>
+                    <tr><td><strong>Barco</strong> ⛵</td><td>Transporte / Naval</td><td>5</td><td>2</td><td>Transporta 1 unidad terrestre (embarque/desembarque en costa)</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Fusión: Dos del Mismo Tipo → Uno de Nivel Superior</h3>
+            <ul>
+                <li>Selecciona unidad → <strong>Fusionar</strong> → elige unidad del mismo tipo → <strong>Nivel N+1</strong> (máximo N3).</li>
+                <li>Atributos: Las unidades que no son infantería ganan +1 Atq / +1 Def por nivel. El mantenimiento <strong>crece exponencialmente</strong>.</li>
+                <li><em>Ejemplo:</em> 2× INF N1 (1🌾 c/u) → 1× INF N2 (3🌾). <strong>La eficiencia decae — fusiona por poder de combate, no por economía.</strong></li>
+            </ul>
+
+            <h2>IV. LA ECONOMÍA — TRES RECURSOS</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Recurso</th>
+                        <th>Fuente</th>
+                        <th>Uso Principal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Oro</strong> 💰</td><td>Pueblos/Ciudades, Minas de oro, Rutas comerciales, Botín</td><td>Reclutar, Mantenimiento (cab/arq/asedio), Edificios, Préstamos, Sobornos</td></tr>
+                    <tr><td><strong>Trigo (Comida)</strong> 🌾</td><td>Granjas (hex. trigo), Pueblos/Ciudades, Bono de Otoño</td><td>Mantenimiento (TODAS las unidades), Reclutar (inf/eng/cab/asedio)</td></tr>
+                    <tr><td><strong>Madera</strong> 🪵</td><td>Bosques (talar = entrar al hex.), Hex. madera, Bono Primavera</td><td>Reclutar (eng/arq/asedio/barco), Edificios, Caminos</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Edificios — Cadena de Mejora</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nivel</th>
+                        <th>Edificio</th>
+                        <th>Coste</th>
+                        <th>Producción (Oro/Comida)</th>
+                        <th>Defensa</th>
+                        <th>Especial</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>2</td><td><strong>Campamento</strong></td><td>5🪵</td><td>0 / 0</td><td>0</td><td>Funda nueva provincia (mín. 3 hex. aislados)</td></tr>
+                    <tr><td>3</td><td><strong>Pueblo</strong></td><td>15🪵</td><td>+1 / +1</td><td>1</td><td>Punto final de ruta comercial</td></tr>
+                    <tr><td>4</td><td><strong>Ciudad</strong></td><td>25🪵 + 25🌾</td><td>+2 / +4</td><td>1</td><td>Punto comercial, +2 bono de recurso</td></tr>
+                    <tr><td>5</td><td><strong>Bastión</strong></td><td>60🪵 + 60🌾</td><td>+4 / +8</td><td>2</td><td>Aura +2 defensa a adyacentes, dispara a alcance 2 (Troneras)</td></tr>
+                    <tr><td>6</td><td><strong>Fortaleza</strong></td><td>30🪵 + 20💰</td><td>+1 / +2</td><td>3</td><td>Máxima defensa, el asedio la degrada a Ciudad</td></tr>
+                </tbody>
+            </table>
+
+            <p><strong>Caminos</strong> (construidos por Ingenieros en hexágonos propios): Coste de movimiento <strong>0.25</strong> (frente a 1). La caballería en caminos alcanza <strong>24 hexágonos/turno</strong>.</p>
+
+            <h2>V. DOCTRINAS — TU IDENTIDAD ESTRATÉGICA</h2>
+            <p>Elige <strong>un camino por pilar</strong> (3 opciones por nivel, 9 nodos en total). Cada pilar tiene 3 niveles.</p>
+
+            <h3>ALMA 🕊️ — <em>Cómo existes</em></h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nivel 1</th>
+                        <th>Nivel 2</th>
+                        <th>Nivel 3 (Elige Uno)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>A1 Raíz Terrestre</strong> (Sedentaria)<br>+3💰/turno/ciudad</td>
+                        <td><strong>A1.1 Burocracia</strong></td>
+                        <td>
+                            • <strong>A1.1.1 Integración Universal</strong>: Casillas conquistadas nunca se rebelan<br>
+                            • <strong>A1.1.2 Enclave de Explotación</strong>: Talar = +20🪵<br>
+                            • <strong>A1.1.3 Sustitución Demográfica</strong>: Purga rebeldes al instante
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A1.2 Teocracia Monumental</strong></td>
+                        <td>
+                            • <strong>A1.2.1 Devoción Fanática</strong>: 2 turnos de gracia en déficit, luego pérdida total<br>
+                            • <strong>A1.2.2 Herejía Inquisitorial</strong>: Matar enemigo en tu tierra = +10💰<br>
+                            • <strong>A1.2.3 Ascetismo Agrario</strong>: Máx fusión N2; -1 mant. INF/ENG
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A1.3 Casta Feudal</strong></td>
+                        <td>
+                            • <strong>A1.3.1 Servidumbre Hereditaria</strong>: -50%🪵 coste edificios<br>
+                            • <strong>A1.3.2 Orden de Caballería</strong>: Cab Def 2, mant. ×2<br>
+                            • <strong>A1.3.3 Señorío Fortificado</strong>: Bastión se construye al instante
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>A2 Flujo Oceánico</strong> (Talasocracia)<br>Unidades terrestres caminan sobre agua</td>
+                        <td><strong>A2.1 Talasocracia Mercantil</strong></td>
+                        <td>
+                            • <strong>A2.1.1 Rutas de la Seda Marina</strong>: Puerto a puerto = +3💰<br>
+                            • <strong>A2.1.2 Monopolio Portuario</strong>: Barcos/puertos -30% coste<br>
+                            • <strong>A2.1.3 Factoría Costera</strong>: Funda factorías en islas neutrales
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A2.2 Asalto Corsario</strong></td>
+                        <td>
+                            • <strong>A2.2.1 Pillaje de Riberas</strong>: Saqueo costero = 100% producción robada<br>
+                            • <strong>A2.2.2 Drakkars Temerarios</strong>: Barcos atacan tierra a alcance 1<br>
+                            • <strong>A2.2.3 Fuego de Ensenada</strong>: Quemar puerto = bloquea tesorería 1 turno
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A2.3 Comunidades Anfibias</strong></td>
+                        <td>
+                            • <strong>A2.3.1 Marismas Sagradas</strong>: Enemigo en tu río termina turno<br>
+                            • <strong>A2.3.2 Flota Doméstica</strong>: Barcos en costa = +1🌾 + estabilidad<br>
+                            • <strong>A2.3.3 Aislamiento Isleño</strong>: Ciudades insulares inmunes a asedio
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>A3 Dispersión Móvil</strong> (Nómada)<br>Cab sin penalización de colina, -1 mant.</td>
+                        <td><strong>A3.1 Clan Pastoril</strong></td>
+                        <td>
+                            • <strong>A3.1.1 Trashumancia Estacional</strong>: Mover campamento a nuevo bioma = +20💰<br>
+                            • <strong>A3.1.2 Yurtas Desmontables</strong>: Empacar campamento = +15🪵, reubicar<br>
+                            • <strong>A3.1.3 Rebaños Libres</strong>: Rebaños capturan neutrales adyacentes
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A3.2 Horda de Choque</strong></td>
+                        <td>
+                            • <strong>A3.2.1 Economía del Botín</strong>: 80% ingresos por bajas<br>
+                            • <strong>A3.2.2 Terror Psicológico</strong>: Capturar capital = vecinos huyen<br>
+                            • <strong>A3.2.3 Tributo a Galope</strong>: Facciones menores pagan 2💰/turno
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A3.3 Guerrilla Silvana</strong></td>
+                        <td>
+                            • <strong>A3.3.1 Red de Guías</strong>: Ingenieros +1 mov, gratis en montaña/río<br>
+                            • <strong>A3.3.2 Tierra Quemada</strong>: Abandonar casilla → cenizas 4 turnos<br>
+                            • <strong>A3.3.3 Emboscada Fronteriza</strong>: Atacar desde bosque ignora defensa
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>ARMA ⚔️ — <em>Cómo luchas</em></h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nivel 1</th>
+                        <th>Nivel 2</th>
+                        <th>Nivel 3 (Elige Uno)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>B1 Fuerza Pesada</strong> (Línea Pesada)<br>Inf alcance 4, asentamientos mín. 3</td>
+                        <td><strong>B1.1 Disciplina de Legión</strong></td>
+                        <td>
+                            • <strong>B1.1.1 Testudo Impenetrable</strong>: +1 Def por INF/ENG adyacente (máx 2)<br>
+                            • <strong>B1.1.2 Guardia de Élite</strong>: 2× INF N3 → <strong>Pretoriano N4 (4/4)</strong> (máx 1)<br>
+                            • <strong>B1.1.3 Castramentación</strong>: INF construye fuerte provisional
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B1.2 Enjambre de Leva</strong><br>INF N1 a mitad de coste</td>
+                        <td>
+                            • <strong>B1.2.1 Picas Comunales</strong>: Caballería enemiga pierde bono de carga<br>
+                            • <strong>B1.2.2 Sacrificio de Vanguardia</strong>: Muerte de N1 → atacante -1 Atq este turno<br>
+                            • <strong>B1.2.3 Marea Campesina</strong>: Mover 3 reclutas a misma casilla = fusión gratis
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B1.3 Ingeniería de Sitio</strong></td>
+                        <td>
+                            • <strong>B1.3.1 Balística Incendiaria</strong>: Proyectiles queman granjas enemigas<br>
+                            • <strong>B1.3.2 Zapadores Minadores</strong>: Ignoran defensa de empalizada<br>
+                            • <strong>B1.3.3 Foso Circundante</strong>: Rodear ciudad = bloquea reclutamiento
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>B2 Guerra de Maniobra</strong><br>Cab alcance 3, sin pena. colina</td>
+                        <td><strong>B2.1 Hostigadores a Caballo</strong></td>
+                        <td>
+                            • <strong>B2.1.1 Disparo Parto</strong>: Cab ataca, sobrevive, conserva 1 mov para retirarse<br>
+                            • <strong>B2.1.2 Lluvia de la Estepa</strong>: 3 cab disparando a misma casilla = aniquilación<br>
+                            • <strong>B2.1.3 Círculo de Hostigamiento</strong>: Cab adyacente reduce Def enemiga a 0
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B2.2 Choque Blindado</strong></td>
+                        <td>
+                            • <strong>B2.2.1 Lanzas Cataphractas</strong>: Cab Atq 3, Def 2<br>
+                            • <strong>B2.2.2 Estampida de Guerra</strong>: Empuja defensor 1 casilla al impactar<br>
+                            • <strong>B2.2.3 Persecución Implacable</strong>: Baja → avance gratuito a la casilla
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B2.3 Batidores Ligeros</strong></td>
+                        <td>
+                            • <strong>B2.3.1 Raid de Suministros</strong>: Cortar suministro = paraliza mov 1 turno<br>
+                            • <strong>B2.3.2 Fantasma de la Estepa</strong>: Explorador inatacable si tiene vía de escape<br>
+                            • <strong>B2.3.3 Retirada Fingida</strong>: Atrae al enemigo forzando su movimiento
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>B3 Control de Zona</strong> (Denegación de Área)</td>
+                        <td><strong>B3.1 Maestría Balística</strong></td>
+                        <td>
+                            • <strong>B3.1.1 Fuego de Interdicción</strong>: Disparo aut. en turno enemigo si está en alcance<br>
+                            • <strong>B3.1.2 Flechas de Cincel</strong>: Arqueros reducen Def en 2 puntos<br>
+                            • <strong>B3.1.3 Fuego de Fósforo</strong>: Arqueros incendian bosque (arde 2 turnos)
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B3.2 Guerra Oculta</strong></td>
+                        <td>
+                            • <strong>B3.2.1 Camuflaje de Emboscada</strong>: Atacar desde bosque = +2 Atq<br>
+                            • <strong>B3.2.2 Abrojos y Trampas</strong>: INF coloca trampa (5💰); elimina al primer enemigo<br>
+                            • <strong>B3.2.3 Veneno Neurotóxico</strong>: Enemigo herido pierde 1 nivel al final del turno
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B3.3 Guarnición Inmóvil</strong></td>
+                        <td>
+                            • <strong>B3.3.1 Troneras de Muralla</strong>: Bastión dispara al primer enemigo a alcance 2<br>
+                            • <strong>B3.3.2 Alerta de Almenaras</strong>: Torres revelan radio 4<br>
+                            • <strong>B3.3.3 Último Bastión</strong>: Ciudad con guarnición absorbe primer golpe letal
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>VICTORIA 👑 — <em>Cómo ganas</em></h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nivel 1</th>
+                        <th>Nivel 2</th>
+                        <th>Nivel 3 (Elige Uno)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>C1 Dominación Total</strong></td>
+                        <td><strong>C1.1 Guerra Relámpago</strong></td>
+                        <td>
+                            • <strong>C1.1.1 Decapitación</strong>: Capturar capital = elimina tropas enemigas al instante<br>
+                            • <strong>C1.1.2 Colapso en Dominó</strong>: Capturar ciudad → granjas vecinas se rinden<br>
+                            • <strong>C1.1.3 Rendición por Shock</strong>: 3 bajas en 1 turno = enemigo cede 2 casillas
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C1.2 Guerra de Desgaste</strong></td>
+                        <td>
+                            • <strong>C1.2.1 Erradicación de Bastiones</strong>: Destruir bastiones enemigos = victoria<br>
+                            • <strong>C1.2.2 Asfixia de Trincheras</strong>: Terreno enemigo &lt;5 casillas = victoria<br>
+                            • <strong>C1.2.3 Rendición por Hambre</strong>: Enemigo en bancarrota 2 turnos = victoria
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C1.3 Hegemonía Territorial</strong></td>
+                        <td>
+                            • <strong>C1.3.1 Mancha Voraz</strong>: Captura neutral es gratuita (sin coste de oro)<br>
+                            • <strong>C1.3.2 Cerco Geográfico</strong>: Rodear territorio enemigo por completo = victoria<br>
+                            • <strong>C1.3.3 Pax Imperialis</strong>: Alcanzar 60% del mapa → cuenta atrás de 10 turnos
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>C2 Trascendencia Magna</strong></td>
+                        <td><strong>C2.1 La Gran Obra</strong></td>
+                        <td>
+                            • <strong>C2.1.1 Pirámide Eterna</strong>: Construir en Bastión (150💰), sobrevivir 15 turnos = victoria<br>
+                            • <strong>C2.1.2 Torre del Saber</strong>: Casilla única, máxima velocidad tecnológica<br>
+                            • <strong>C2.1.3 Utopía Agraria</strong>: 10 granjas N3 contiguas intactas = victoria
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C2.2 Hegemonía Cultural</strong></td>
+                        <td>
+                            • <strong>C2.2.1 El Gran Jubileo</strong>: Tesorería llena → puntos culturales por turno<br>
+                            • <strong>C2.2.2 Peregrinación Sagrada</strong>: Enemigo en templo → pacificación neutral<br>
+                            • <strong>C2.2.3 Faro Continental</strong>: Revela mapa completo; resistir 20 turnos = victoria
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C2.3 Resistencia de Tiempo</strong></td>
+                        <td>
+                            • <strong>C2.3.1 Bastión Inconmovible</strong>: Capital inmune si ≥1 granja sigue viva<br>
+                            • <strong>C2.3.2 La Edad Dorada</strong>: Balance positivo 30 turnos consecutivos = victoria<br>
+                            • <strong>C2.3.3 Pacto de Concordia</strong>: Pagar a rivales; paz 20 turnos = victoria
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>C3 Guerra Económica</strong></td>
+                        <td><strong>C3.1 Banca Central</strong></td>
+                        <td>
+                            • <strong>C3.1.1 OPA Hostil</strong>: 40💰 en provincia conectada = soborna pueblo/bastión adyacente<br>
+                            • <strong>C3.1.2 Control Mercantil</strong>: Controlar todos los nodos comerciales = victoria<br>
+                            • <strong>C3.1.3 Burbuja Especulativa</strong>: Prestar oro a rivales; impago en 5 turnos = victoria
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C3.2 Estrangulamiento Logístico</strong></td>
+                        <td>
+                            • <strong>C3.2.1 Bancarrota Inducida</strong>: 3 unidades enemigas muertas/desertadas aisladas = victoria<br>
+                            • <strong>C3.2.2 Bloqueo de Arterias</strong>: Bloquear 3 rutas enemigas 5 turnos = victoria<br>
+                            • <strong>C3.2.3 Guerra de Corsarios</strong>: Saquear todos los convoys marítimos = victoria
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C3.3 Tributo y Vasallaje</strong></td>
+                        <td>
+                            • <strong>C3.3.1 Red de Extorsión</strong>: Ejército mayor = exige 50% de ingresos rivales<br>
+                            • <strong>C3.3.2 Embargo Total</strong>: Control de fronteras = enemigo no puede construir granjas<br>
+                            • <strong>C3.3.3 Protectorado Dorado</strong>: Pagar mantenimiento enemigo = no pueden atacar
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>VI. MAPAS, BIOMAS Y ESTACIONES</h2>
+            <h3>Tamaños</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tamaño</th>
+                        <th>Radio</th>
+                        <th>Hexágonos</th>
+                        <th>Facciones</th>
+                        <th>Partida Típica</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Pequeño</strong></td><td>R=7</td><td>169</td><td>2</td><td>Tutorial, 15-25 turnos</td></tr>
+                    <tr><td><strong>Mediano</strong></td><td>R=12</td><td>469</td><td>2-4</td><td>Estándar, 25-40 turnos</td></tr>
+                    <tr><td><strong>Enorme</strong></td><td>R=18</td><td>1027</td><td>4-6</td><td>Épica, 40-60+ turnos</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Biomas</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Bioma</th>
+                        <th>Tierra/Mar</th>
+                        <th>Colinas</th>
+                        <th>Montañas</th>
+                        <th>Árboles</th>
+                        <th>Especial</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Llanuras</strong></td><td>90/10</td><td>12%</td><td>5%</td><td>12%</td><td>Abierto, movimiento rápido</td></tr>
+                    <tr><td><strong>Bosques</strong></td><td>90/10</td><td>15%</td><td>6%</td><td>35%</td><td>Árboles se expanden rápido (primavera ×2)</td></tr>
+                    <tr><td><strong>Archipiélago</strong></td><td>50/50</td><td>10%</td><td>4%</td><td>12%</td><td>Dominio naval, abundantes costas</td></tr>
+                    <tr><td><strong>Montañas</strong></td><td>90/10</td><td>25%</td><td>15%</td><td>12%</td><td>Ingenieros esenciales</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Estaciones (6 turnos cada una)</h3>
+            <ul>
+                <li><strong>Primavera:</strong> Expansión de árboles ×2.</li>
+                <li><strong>Verano:</strong> Barcos +1 de movimiento en mar.</li>
+                <li><strong>Otoño:</strong> Hexágonos de trigo +1 de comida.</li>
+                <li><strong>Invierno:</strong> Solo efecto visual (capa de nieve).</li>
+            </ul>
+
+            <h2>VII. COMBATE — RESOLUCIÓN DETERMINISTA</h2>
+            <p><strong>Sin dados. Nunca.</strong></p>
+            <pre class="bg-slate-100 p-3 rounded font-mono text-xs my-2 border border-slate-300">Daño = Atq Atacante + Bono Terreno + Carga + Doctrina - Def Defensor - Terreno Def - Aura Bastión</pre>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Atacante</th>
+                        <th>Atq Base (N1/N2/N3)</th>
+                        <th>Bonos Clave</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>INF</td><td>0 / 1 / 2</td><td>Colina +1, Montaña +2, Aura de Bastión +2</td></tr>
+                    <tr><td>ENG</td><td>0 / 1 / 2</td><td>Ninguno (constructor)</td></tr>
+                    <tr><td>ARC</td><td>1 / 2 / 3</td><td>Disparo 2 (Colina 3), degrada Defensa</td></tr>
+                    <tr><td>CAB</td><td>2 / 3 / 4</td><td>Carga +1, alcance 2 (3 móvil), retirada (Parto)</td></tr>
+                    <tr><td>SIE</td><td>1 / 2 / 3</td><td>Disparo 2, degrada edificios</td></tr>
+                    <tr><td>BAR</td><td>2 / 3 / 4</td><td>Naval, transporta 1 unidad</td></tr>
+                </tbody>
+            </table>
+
+            <p><strong>Defensa</strong> = Def Unidad + Terreno (Colina +1 INF, Montaña +2 INF) + Aura Bastión +2 adyacente.</p>
+            <p><strong>Resultado</strong>: Si Daño ≥ HP Defensor (1 por nivel) → El defensor pierde un nivel o muere. <strong>Exacto. Predecible. Reutilizable.</strong></p>
+
+            <h2>VIII. DESAFÍO DIARIO Y CAMPAÑA</h2>
+            <h3>Campaña — 30 Niveles, 5 Actos</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Acto</th>
+                        <th>Temática</th>
+                        <th>Niebla</th>
+                        <th>Dificultad</th>
+                        <th>Bloqueo de Estrellas</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>I · Despertar</td><td>Tutorial</td><td>NINGUNA</td><td>Fácil</td><td>0</td></tr>
+                    <tr><td>II · Fronteras</td><td>Expansión</td><td>COMPLETA</td><td>Normal</td><td>12 ★</td></tr>
+                    <tr><td>III · Marejada</td><td>Naval/Tormentas</td><td>COMPLETA</td><td>Normal</td><td>24 ★</td></tr>
+                    <tr><td>IV · Hierro</td><td>Sitio/Doctrina</td><td>COMPLETA</td><td>Difícil</td><td>36 ★</td></tr>
+                    <tr><td>V · Corona</td><td>Maestría</td><td>COMPLETA</td><td>Difícil</td><td>48 ★</td></tr>
+                </tbody>
+            </table>
+            <p><strong>Cada nivel</strong>: Objetivo de turnos Par (★ por superar el par), Desafío (★ por condición especial: sin casillas aisladas, sin deserciones, cortar suministro enemigo 2×). <strong>Máximo 3 estrellas por nivel.</strong></p>
+
+            <h3>Desafío Diario</h3>
+            <ul>
+                <li><strong>Misma semilla para todos</strong> (basada en la fecha).</li>
+                <li>Mapa, facciones, niebla y objetivo idénticos.</li>
+                <li><strong>Clasificación por mapa</strong> — compara tu puntuación globalmente.</li>
+                <li><strong>Enlace de repetición</strong> (semilla de 9 caracteres) — comparte o estudia.</li>
+            </ul>
+
+            <h2>IX. MULTIJUADOR — RELOJ DE AJEDREZ ASINCRÓNICO</h2>
+            <ul>
+                <li><strong>Hasta 4 jugadores</strong> por sala.</li>
+                <li><strong>Bolsa de tiempo</strong>: 210 segundos (3:30) + <strong>3 segundos por acción</strong>.</li>
+                <li>El banco llega a 0 → <strong>el puesto se convierte en bot</strong> (la sala continúa).</li>
+                <li><strong>Planificación simultánea</strong> → resolución secuencial.</li>
+                <li><strong>Clasificaciones</strong>: Puntuaciones validadas por servidor. Replicable vía <code>?seed=XXXXXXXXX</code>.</li>
+            </ul>
+
+            <h2>X. INTERFAZ — MODOS DE VISTA (Pulsa `V` o clic en icono)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Modo</th>
+                        <th>Atajo</th>
+                        <th>Propósito</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Normal</strong></td><td><code>1</code></td><td>Diorama estándar</td></tr>
+                    <tr><td><strong>Político</strong></td><td><code>2</code></td><td>Fronteras de soberanía, asentamientos</td></tr>
+                    <tr><td><strong>Recursos</strong></td><td><code>3</code></td><td>Brillo de recursos, producción</td></tr>
+                    <tr><td><strong>Combate</strong></td><td><code>4</code></td><td>Anillos de unidad, etiquetas Atq/Def, vista previa</td></tr>
+                    <tr><td><strong>OTAN</strong></td><td><code>5</code></td><td>Símbolos militares (APP-6), defensa de casilla</td></tr>
+                    <tr><td><strong>Logística</strong></td><td><code>6</code></td><td><strong>Estado de suministro, rutas, tormentas, pasos estrechos</strong></td></tr>
+                </tbody>
+            </table>
+
+            <p><strong>Vista Logística (`6` o `L`):</strong></p>
+            <ul>
+                <li><strong>Estado de Provincia</strong> = Verde (saludable) → Amarillo (forzado) → Naranja (vulnerable) → Rojo (crítico/aislado).</li>
+                <li><strong>Rutas Comerciales</strong> = Sólida (segura), Punteada naranja (amenazada), Rota roja (cortada), Pulso azul (tormenta).</li>
+                <li><strong>Conos de Tormenta</strong> = Flecha azul indicando trayectoria predicha a 3 turnos.</li>
+                <li><strong>Pasos Estrechos (Chokepoints)</strong> = Borde blanco pulsante en puentes y pasos clave.</li>
+            </ul>
+
+            <h2>XI. ATAJOS DE TECLADO Y CONTROLES</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tecla</th>
+                        <th>Acción</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>Clic</code></td><td>Seleccionar unidad / Mover a hexágono / Menú construir</td></tr>
+                    <tr><td><code>Clic Der. / Clic Largo</code></td><td>Cancelar / Deseleccionar</td></tr>
+                    <tr><td><code>F</code></td><td><strong>Fusionar</strong> unidad seleccionada con objetivo</td></tr>
+                    <tr><td><code>B</code></td><td>Menú de <strong>Construcción</strong> en hexágono seleccionado</td></tr>
+                    <tr><td><code>R</code></td><td>Menú de <strong>Reclutamiento</strong> (en edificio válido)</td></tr>
+                    <tr><td><code>D</code></td><td>Pantalla de <strong>Doctrina</strong></td></tr>
+                    <tr><td><code>V / 1-6</code></td><td>Alternar modos de vista</td></tr>
+                    <tr><td><code>Espacio</code></td><td><strong>Finalizar turno</strong></td></tr>
+                    <tr><td><code>Z</code></td><td><strong>Deshacer</strong> (solo un jugador, antes de confirmar)</td></tr>
+                    <tr><td><code>Esc</code></td><td>Menú / Pausa</td></tr>
+                    <tr><td><code>?</code></td><td><strong>Ayuda contextual</strong> (detalles de unidad/edificio/hex)</td></tr>
+                    <tr><td><code>Rueda Ratón</code></td><td>Zoom</td></tr>
+                    <tr><td><code>Arrastrar / 2 dedos</code></td><td>Desplazar cámara</td></tr>
+                </tbody>
+            </table>
+
+            <h2>XII. ERRORES COMUNES — LEER UNA VEZ</h2>
+            <ol>
+                <li><strong>Reclutar en exceso = suicidio.</strong> 6 de caballería = 66 de comida/turno. Vas a morir de hambre.</li>
+                <li><strong>Muerte de la Capital = fin de la partida.</strong> La provincia principal NO tiene acceso al superávit global. Protégela.</li>
+                <li><strong>La niebla oculta saqueadores.</strong> La caballería en caminos mueve 24 hex/turno. Explora.</li>
+                <li><strong>Las tormentas hunden barcos en alta mar.</strong> Muévete a la costa (distancia ≤1) cuando el cono se acerque.</li>
+                <li><strong>Deserción = −400 puntos.</strong> En campaña cuesta estrellas; en clasificatoria destruye tu puntuación.</li>
+                <li><strong>El auto-campamento por aislamiento</strong> empieza con el <strong>almacén vacío</strong>. Debe sobrevivir inmediatamente del ingreso local.</li>
+                <li><strong>Rutas comerciales = oro gratis.</strong> Máximo 3 terrestres + 3 marítimas. Construye caminos para unir ciudades lejanas.</li>
+                <li><strong>El préstamo (50💰, -6💰/turno ×10)</strong> es una herramienta, no una muleta. La bancarrota con préstamo activo genera <strong>doble deserción</strong>.</li>
+                <li><strong>Tumbas (5% probabilidad)</strong> en unidades muertas: pisa sobre ellas → podrías recuperar la unidad, recursos o edificio.</li>
+                <li><strong>Las estaciones importan.</strong> Primavera = plaga de árboles (bloquean pasos). Verano = velocidad naval. Otoño = bonanza agrícola.</li>
+                <li><strong>Revisa tus derrotas.</strong> Misma semilla = misma partida. Aprende el turno exacto en que perdiste la guerra logística.</li>
+            </ol>
+
+            <h2>XIII. TÁCTICAS AVANZADAS</h2>
+            <h3>El Estrangulamiento</h3>
+            <p>No ataques al ejército. <strong>Corta la ruta.</strong> Los saqueadores bloquean 2 turnos. Las tormentas bloquean el mar. Una provincia con 0 comida sufre deserción masiva en 2 turnos. <strong>La victoria por inanición (Bancarrota Inducida)</strong> es más rápida que la conquista.</p>
+
+            <h3>El Blitz de Caballería</h3>
+            <p><strong>C1.1.1 Decapitación</strong> + <strong>B2.2.1 Cataphractas</strong> + <strong>A1.3.2 Orden de Caballería</strong> = Caballería con Atq 3/Def 2, se retira tras atacar y captura la capital → victoria instantánea. Alto riesgo, alta recompensa.</p>
+
+            <h3>La Economía Nómada</h3>
+            <p><strong>A3 Dispersión Móvil</strong> + <strong>A3.1.2 Yurtas</strong> + <strong>C3.1.1 OPA Hostil</strong> = Empaca campamento (15🪵), muévete a un bioma rico, soborna ciudades enemigas. Nunca defiendas posiciones fijas.</p>
+
+            <h3>El Sitio Naval</h3>
+            <p><strong>A2 Flujo Oceánico</strong> + <strong>A2.2.1 Pillaje</strong> + <strong>C3.2.3 Corsarios</strong> = Barcos caminan por tierra, saquean el 100% de producción y ganan asaltando todos los convoys. Domina en Archipiélago.</p>
+
+            <h3>El Muro de Ingenieros</h3>
+            <p><strong>A3.3.1 Red de Guías</strong> + <strong>B1.1.3 Castramentación</strong> + <strong>B3.3.1 Troneras</strong> = Los ingenieros construyen fuertes instantáneos, los bastiones disparan automáticamente y las montañas son terreno libre. Convierte el bioma de Montañas en una fortaleza impenetrable.</p>
+
+            <h2>XIV. NOTAS TÉCNICAS</h2>
+            <ul>
+                <li><strong>Sin conexión:</strong> PWA completa — instala desde el navegador, juega en cualquier lugar.</li>
+                <li><strong>Repeticiones:</strong> Deterministas. <code>federati.org/?seed=XXXXXXXXX</code> (9 chars) o <code>?m=XXXXX</code> (mapa personalizado).</li>
+                <li><strong>Idiomas:</strong> 13 (ES, EN, ZH, HI, FR, AR, BN, PT, RU, DE, JA, KO, IT).</li>
+                <li><strong>Plataformas:</strong> Web, Android, iOS, Steam (misma partida guardada mediante copia en la nube).</li>
+                <li><strong>Sin anuncios. Sin energía. Sin pay-to-win.</strong> Licencia = solo para copia en la nube y recuperación de cuenta.</li>
+            </ul>
+
+            <h2>XV. GLOSARIO DE TÉRMINOS</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Término</th>
+                        <th>Significado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Provincia</strong></td><td>Hexágonos propios conectados con un edificio; tiene su propio almacén.</td></tr>
+                    <tr><td><strong>Abastecido (sup)</strong></td><td>Hexágono conectado a la capital provincial → genera ingresos, paga mantenimiento.</td></tr>
+                    <tr><td><strong>Aislado (iso)</strong></td><td>Hexágono desconectado de la capital → pulso rojo, auto-campamento si ≥3 hex.</td></tr>
+                    <tr><td><strong>Mantenimiento</strong></td><td>Coste en comida/oro por unidad por turno, pagado por su provincia.</td></tr>
+                    <tr><td><strong>Deserción</strong></td><td>Unidad no pagada → baja de nivel o se convierte en tumba (−400 pts).</td></tr>
+                    <tr><td><strong>Ruta comercial</strong></td><td>Camino terrestre/marítimo entre Pueblos/Ciudades → oro extra; máx 3 c/u.</td></tr>
+                    <tr><td><strong>Saqueo</strong></td><td>El saqueador corta la ruta → bloqueado 2 turnos, sin entrega de oro.</td></tr>
+                    <tr><td><strong>Tormenta</strong></td><td>Aparece en alta mar (35%/turno), mueve 1/turno, hunde barcos en mar abierto.</td></tr>
+                    <tr><td><strong>Fusión</strong></td><td>Dos unidades del mismo tipo → una de nivel superior (máx N3).</td></tr>
+                    <tr><td><strong>Par</strong></td><td>Objetivo de turnos en nivel de campaña (superarlo = estrella).</td></tr>
+                    <tr><td><strong>Semilla (seed)</strong></td><td>Código de 9 caracteres = repetición exacta de mapa.</td></tr>
+                    <tr><td><strong>Doctrina</strong></td><td>117 nodos en 3 pilares (Alma/Arma/Victoria); elige 1 ruta en cada uno.</td></tr>
+                </tbody>
+            </table>
+
+            <div class="mt-8 pt-4 border-t border-slate-300 text-center font-bold italic text-slate-700">
+                <p>La frontera no perdona. Calcula. Suministra. Vence.</p>
+                <p class="text-xs font-normal text-slate-500 mt-1">Federati — Crónicas de la Frontera · Estrategia Determinista · Sin Dados · Sin Piedad</p>
+            </div>
+        </div>
+
+
+        <!-- English Document Container (Hidden by default) -->
+        <div id="doc-en" class="pdf-page pdf-export hidden">
+            <div class="text-center border-b-2 border-amber-900/30 pb-4 mb-6">
+                <h1 class="text-3xl font-black text-amber-900 tracking-wide uppercase mb-1">FEDERATI — Field Manual</h1>
+                <p class="text-xs font-semibold uppercase tracking-widest text-slate-600">Deterministic Hex Strategy · Year 500 AD · The Borderlands Chronicle</p>
+            </div>
+
+            <h2>I. THE CORE IDEA</h2>
+            <p><strong>Federati is a game of chess where the pieces eat.</strong></p>
+            <p>Every unit costs food and gold <em>each turn</em>, paid by the province that feeds it. Recruit too many and your army starves. Cut an enemy's supply line and their army dissolves without a battle.</p>
+            <p><strong>No dice. No RNG in combat. Same seed = same game.</strong></p>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>What you know</th>
+                        <th>What you calculate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Unit stats, terrain bonuses, doctrine effects</td>
+                        <td>Exact damage, exact upkeep, exact supply range</td>
+                    </tr>
+                    <tr>
+                        <td>Storm vectors (visible 1 turn ahead)</td>
+                        <td>Whether your cavalry can strike and retreat</td>
+                    </tr>
+                    <tr>
+                        <td>Your income, your upkeep, your stockpiles</td>
+                        <td>How many turns until you must expand or consolidate</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <p><strong>Win by:</strong> Conquest, Survival (turn 50), Gold (500), Hegemony (75% land), Blitz (turn 15), Wonder, Starvation, Cultural, Financial, or Vassalage — depending on your <strong>Victoria</strong> doctrine.</p>
+
+            <h2>II. FIRST TURNS — THE QUICK START</h2>
+            <h3>1. Move → Expand → Build</h3>
+            <ul>
+                <li><strong>Click a unit</strong>, then <strong>click a destination hex</strong>. Infantry moves 3, Engineers 4, Cavalry 6, Ships 5.</li>
+                <li><strong>Expand into neutral hexes</strong> (grey borders). Each connected hex = territory.</li>
+                <li><strong>Build a Camp</strong> on a hex you own: click the hex → <strong>Build</strong> → Camp (15 wood). Camps produce gold + food.</li>
+            </ul>
+
+            <h3>2. The Golden Rule: Every Unit Is a Bill</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Unit</th>
+                        <th>Tier 1 Upkeep</th>
+                        <th>Tier 2 Upkeep</th>
+                        <th>Tier 3 Upkeep</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>Infantry 💂</td><td>1🌾 / 1💰</td><td>3🌾 / 2💰</td><td>7🌾 / 5💰</td></tr>
+                    <tr><td>Engineer 🔧</td><td>1🌾 / 1💰</td><td>3🌾 / 3💰</td><td>7🌾 / 6💰</td></tr>
+                    <tr><td>Archer 🏹</td><td>1🌾 / 2💰</td><td>3🌾 / 4💰</td><td>6🌾 / 8💰</td></tr>
+                    <tr><td>Cavalry ♞</td><td>3🌾 / 2💰</td><td>6🌾 / 5💰</td><td>11🌾 / 10💰</td></tr>
+                    <tr><td>Siege 💣</td><td>2🌾 / 3💰</td><td>5🌾 / 7💰</td><td>8🌾 / 13💰</td></tr>
+                    <tr><td>Ship ⛵</td><td>2🌾 / 2💰</td><td>4🌾 / 4💰</td><td>8🌾 / 8💰</td></tr>
+                </tbody>
+            </table>
+            <p><strong>If a province cannot pay:</strong> Units drop a tier. Tier 1 units <strong>desert</strong> (leave a tomb ⚰️, <strong>−400 score</strong>).</p>
+
+            <h3>3. Supply Lines = Life</h3>
+            <ul>
+                <li>A <strong>province</strong> = connected owned hexes with at least one building (Camp, Town, City, Bastion).</li>
+                <li><strong>Income</strong> flows from hexes → province warehouse → pays local units.</li>
+                <li><strong>Cut the connection</strong> → province becomes <strong>ISOLATED</strong> (red pulse). Auto-creates a Camp if ≥3 hexes, but <em>starts with empty warehouse</em>.</li>
+                <li><strong>Trade routes</strong> (3 land + 3 sea) link Towns/Cities → bonus gold. Raiders block for 2 turns. Storms sink ships.</li>
+            </ul>
+
+            <h2>III. UNITS — ROLES & FUSION</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Unit</th>
+                        <th>Role</th>
+                        <th>Move</th>
+                        <th>Atk Range</th>
+                        <th>Special</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Infantry</strong> 💂</td><td>Wall / Hold</td><td>3</td><td>1</td><td>Terrain defense (Hill +1, Mtn +2), Bastion aura +2</td></tr>
+                    <tr><td><strong>Engineer</strong> 🔧</td><td>Build / Cross</td><td>4</td><td>1</td><td>Only unit crossing mountains/rivers without roads; builds roads</td></tr>
+                    <tr><td><strong>Archer</strong> 🏹</td><td>Fire / Degrade</td><td>3</td><td>1 (shoot 2, hill 3)</td><td>Degrades enemy defense (shootDeg 1, chisel 2)</td></tr>
+                    <tr><td><strong>Cavalry</strong> ♞</td><td>Flank / Charge</td><td>6</td><td>2 (mobile 3)</td><td>Charge bonus +1, can retreat after attack (Parthian)</td></tr>
+                    <tr><td><strong>Siege</strong> 💣</td><td>Siege / Crack</td><td>2</td><td>1 (shoot 2)</td><td>Degrades buildings, ignores wall defense</td></tr>
+                    <tr><td><strong>Ship</strong> ⛵</td><td>Transport / Naval</td><td>5</td><td>2</td><td>Carries 1 land unit (embark/disembark at coast)</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Fusion: Two Same-Type → One Higher Tier</h3>
+            <ul>
+                <li>Select unit → <strong>Fuse</strong> → target same-type unit → <strong>N+1 tier</strong> (max N3).</li>
+                <li>Stats: Non-infantry gain +1 Atk / +1 Def per tier. Upkeep <strong>jumps exponentially</strong>.</li>
+                <li><em>Example:</em> 2× INF N1 (1🌾 each) → 1× INF N2 (3🌾). <strong>Efficiency drops — fuse for power, not economy.</strong></li>
+            </ul>
+
+            <h2>IV. THE ECONOMY — THREE RESOURCES</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Resource</th>
+                        <th>Source</th>
+                        <th>Primary Use</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Gold</strong> 💰</td><td>Towns/Cities, Gold mines, Trade routes, Loot</td><td>Recruit, Upkeep (cav/archer/siege), Buildings, Loans, Bribes</td></tr>
+                    <tr><td><strong>Food</strong> 🌾</td><td>Farms (wheat hexes), Towns/Cities, Autumn bonus</td><td>Upkeep (ALL units), Recruit (inf/eng/cav/siege)</td></tr>
+                    <tr><td><strong>Wood</strong> 🪵</td><td>Forests (chop = enter tree hex), Wood hexes, Spring bonus</td><td>Recruit (eng/archer/siege/ship), Buildings, Roads</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Buildings — Upgrade Chain</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Level</th>
+                        <th>Building</th>
+                        <th>Cost</th>
+                        <th>Production (Gold/Food)</th>
+                        <th>Defense</th>
+                        <th>Special</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>2</td><td><strong>Camp</strong></td><td>5🪵</td><td>0 / 0</td><td>0</td><td>Found new province (min 3 isolated hexes)</td></tr>
+                    <tr><td>3</td><td><strong>Town</strong></td><td>15🪵</td><td>+1 / +1</td><td>1</td><td>Trade route endpoint</td></tr>
+                    <tr><td>4</td><td><strong>City</strong></td><td>25🪵 + 25🌾</td><td>+2 / +4</td><td>1</td><td>Trade route endpoint, +2 resource bonus</td></tr>
+                    <tr><td>5</td><td><strong>Bastion</strong></td><td>60🪵 + 60🌾</td><td>+4 / +8</td><td>2</td><td>Aura +2 defense to adjacent, shoots at range 2 (Wall Embrasures)</td></tr>
+                    <tr><td>6</td><td><strong>Fortress</strong></td><td>30🪵 + 20💰</td><td>+1 / +2</td><td>3</td><td>Highest defense, siege degrades to City</td></tr>
+                </tbody>
+            </table>
+
+            <p><strong>Roads</strong> (built by Engineers on owned hexes): Movement cost <strong>0.25</strong> (vs 1). Cavalry on roads = <strong>24 hexes/turn</strong>.</p>
+
+            <h2>V. DOCTRINES — YOUR STRATEGIC IDENTITY</h2>
+            <p>Choose <strong>one path per pillar</strong> (3 choices each, 9 total nodes). Each pillar has 3 tiers.</p>
+
+            <h3>ALMA (Soul) 🕊️ — <em>How you exist</em></h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tier 1</th>
+                        <th>Tier 2</th>
+                        <th>Tier 3 (Pick One)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>A1 Raíz Terrestre</strong> (Sedentary)<br>+3💰/turn/city</td>
+                        <td><strong>A1.1 Burocracia</strong></td>
+                        <td>
+                            • <strong>A1.1.1 Integración Universal</strong>: Conquered tiles never rebel<br>
+                            • <strong>A1.1.2 Enclave de Explotación</strong>: Chop = +20🪵<br>
+                            • <strong>A1.1.3 Sustitución Demográfica</strong>: Purge rebels instantly
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A1.2 Teocracia Monumental</strong></td>
+                        <td>
+                            • <strong>A1.2.1 Devoción Fanática</strong>: 2 turns grace on deficit, then total loss<br>
+                            • <strong>A1.2.2 Herejía Inquisitorial</strong>: Kill enemy in your land = +10💰<br>
+                            • <strong>A1.2.3 Ascetismo Agrario</strong>: Max fusion N2; -1 upkeep INF/ENG
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A1.3 Casta Feudal</strong></td>
+                        <td>
+                            • <strong>A1.3.1 Servidumbre Hereditaria</strong>: -50%🪵 building cost<br>
+                            • <strong>A1.3.2 Orden de Caballería</strong>: Cav Def 2, upkeep ×2<br>
+                            • <strong>A1.3.3 Señorío Fortificado</strong>: Bastion builds instantly
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>A2 Flujo Oceánico</strong> (Thalassocracy)<br>Land units walk on water</td>
+                        <td><strong>A2.1 Talasocracia Mercantil</strong></td>
+                        <td>
+                            • <strong>A2.1.1 Rutas de la Seda Marina</strong>: Port-to-port = +3💰<br>
+                            • <strong>A2.1.2 Monopolio Portuario</strong>: Ships/ports -30% cost<br>
+                            • <strong>A2.1.3 Factoría Costera</strong>: Found factories on neutral islands
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A2.2 Asalto Corsario</strong></td>
+                        <td>
+                            • <strong>A2.2.1 Pillaje de Riberas</strong>: Coastal raid = 100% production stolen<br>
+                            • <strong>A2.2.2 Drakkars Temerarios</strong>: Ships attack land at range 1<br>
+                            • <strong>A2.2.3 Fuego de Ensenada</strong>: Burn port = blocks treasury 1 turn
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A2.3 Comunidades Anfibias</strong></td>
+                        <td>
+                            • <strong>A2.3.1 Marismas Sagradas</strong>: Enemy in your river ends turn<br>
+                            • <strong>A2.3.2 Flota Doméstica</strong>: Ships on coast = +1🌾 + stability<br>
+                            • <strong>A2.3.3 Aislamiento Isleño</strong>: Island cities immune to siege/catapult
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>A3 Dispersión Móvil</strong> (Nomad)<br>Cav no hill penalty, -1 upkeep</td>
+                        <td><strong>A3.1 Clan Pastoril</strong></td>
+                        <td>
+                            • <strong>A3.1.1 Trashumancia Estacional</strong>: Move camp to new biome = +20💰<br>
+                            • <strong>A3.1.2 Yurtas Desmontables</strong>: Pack camp = +15🪵, re-place<br>
+                            • <strong>A3.1.3 Rebaños Libres</strong>: Herds auto-capture adjacent neutral
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A3.2 Horda de Choque</strong></td>
+                        <td>
+                            • <strong>A3.2.1 Economía del Botín</strong>: 80% income from kills<br>
+                            • <strong>A3.2.2 Terror Psicológico</strong>: Capture capital = neighbors flee<br>
+                            • <strong>A3.2.3 Tributo a Galope</strong>: Minor factions pay 2💰/turn if unattacked
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>A3.3 Guerrilla Silvana</strong></td>
+                        <td>
+                            • <strong>A3.3.1 Red de Guías</strong>: Engineers +1 move, free mountain/river<br>
+                            • <strong>A3.3.2 Tierra Quemada</strong>: Abandon tile → ashes 4 turns (impassable)<br>
+                            • <strong>A3.3.3 Emboscada Fronteriza</strong>: Attack from forest ignores defense
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>ARMA (Weapon) ⚔️ — <em>How you fight</em></h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tier 1</th>
+                        <th>Tier 2</th>
+                        <th>Tier 3 (Pick One)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>B1 Fuerza Pesada</strong> (Heavy Line)<br>Inf range 4, settlements min 3</td>
+                        <td><strong>B1.1 Disciplina de Legión</strong></td>
+                        <td>
+                            • <strong>B1.1.1 Testudo Impenetrable</strong>: +1 Def per adjacent INF/ENG (max 2)<br>
+                            • <strong>B1.1.2 Guardia de Élite</strong>: Fuse 2× INF N3 → <strong>Pretoriano N4 (4/4)</strong>, max 1<br>
+                            • <strong>B1.1.3 Castramentación</strong>: INF build provisional fort
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B1.2 Enjambre de Leva</strong> (Levy Swarm)<br>INF N1 half cost</td>
+                        <td>
+                            • <strong>B1.2.1 Picas Comunales</strong>: Enemy cav loses charge<br>
+                            • <strong>B1.2.2 Sacrificio de Vanguardia</strong>: N1 death → attacker -1 Atk this turn<br>
+                            • <strong>B1.2.3 Marea Campesina</strong>: Move 3 recruits to same tile = free fuse
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B1.3 Ingeniería de Sitio</strong></td>
+                        <td>
+                            • <strong>B1.3.1 Balística Incendiaria</strong>: Projectiles burn enemy farms<br>
+                            • <strong>B1.3.2 Zapadores Minadores</strong>: Ignore palisade defense (undermine)<br>
+                            • <strong>B1.3.3 Foso Circundante</strong>: Encircle city = blocks all recruitment
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>B2 Guerra de Maniobra</strong> (Mobile War)<br>Cav range 3, no hill penalty</td>
+                        <td><strong>B2.1 Hostigadores a Caballo</strong></td>
+                        <td>
+                            • <strong>B2.1.1 Disparo Parto</strong>: Cav attacks, survives, keeps 1 move to retreat<br>
+                            • <strong>B2.1.2 Lluvia de la Estepa</strong>: 3 cav shooting same tile = annihilate<br>
+                            • <strong>B2.1.3 Círculo de Hostigamiento</strong>: Adjacent cav reduce enemy Def to 0
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B2.2 Choque Blindado</strong></td>
+                        <td>
+                            • <strong>B2.2.1 Lanzas Cataphractas</strong>: Cav Atk 3, Def 2<br>
+                            • <strong>B2.2.2 Estampida de Guerra</strong>: Push defender back 1 tile on hit<br>
+                            • <strong>B2.2.3 Persecución Implacable</strong>: Kill → free advance into tile
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B2.3 Batidores Ligeros</strong></td>
+                        <td>
+                            • <strong>B2.3.1 Raid de Suministros</strong>: Cut enemy supply = paralyzes move 1 turn<br>
+                            • <strong>B2.3.2 Fantasma de la Estepa</strong>: Scout unattackable if escape hex free<br>
+                            • <strong>B2.3.3 Retirada Fingida</strong>: Lure enemy forward, force their move
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>B3 Control de Zona</strong> (Area Denial)</td>
+                        <td><strong>B3.1 Maestría Balística</strong></td>
+                        <td>
+                            • <strong>B3.1.1 Fuego de Interdicción</strong>: Auto-shoot on enemy turn if in range<br>
+                            • <strong>B3.1.2 Flechas de Cincel</strong>: Archers degrade Def by 2<br>
+                            • <strong>B3.1.3 Fuego de Fósforo</strong>: Archers ignite forest (burns 2 turns, expels units)
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B3.2 Guerra Oculta</strong></td>
+                        <td>
+                            • <strong>B3.2.1 Camuflaje de Emboscada</strong>: Attack from forest = +2 Atk<br>
+                            • <strong>B3.2.2 Abrojos y Trampas</strong>: INF places trap (5💰) on neutral adj; kills first enemy<br>
+                            • <strong>B3.2.3 Veneno Neurotóxico</strong>: Wounded enemy loses 1 tier end of turn
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>B3.3 Guarnición Inmóvil</strong></td>
+                        <td>
+                            • <strong>B3.3.1 Troneras de Muralla</strong>: Bastion auto-shoots first enemy at range 2 (1 deg/turn)<br>
+                            • <strong>B3.3.2 Alerta de Almenaras</strong>: Towers reveal radius 4<br>
+                            • <strong>B3.3.3 Último Bastión</strong>: City with garrison absorbs first lethal hit
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>VICTORIA (Victory) 👑 — <em>How you win</em></h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tier 1</th>
+                        <th>Tier 2</th>
+                        <th>Tier 3 (Pick One)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>C1 Dominación Total</strong></td>
+                        <td><strong>C1.1 Guerra Relámpago</strong></td>
+                        <td>
+                            • <strong>C1.1.1 Decapitación</strong>: Capture capital = instant kill all their troops<br>
+                            • <strong>C1.1.2 Colapso en Dominó</strong>: Capture city → neighbor farms surrender<br>
+                            • <strong>C1.1.3 Rendición por Shock</strong>: Kill 3 in 1 turn = enemy cedes 2 tiles
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C1.2 Guerra de Desgaste</strong></td>
+                        <td>
+                            • <strong>C1.2.1 Erradicación de Bastiones</strong>: Destroy all enemy bastions = win<br>
+                            • <strong>C1.2.2 Asfixia de Trincheras</strong>: Enemy land &lt;5 tiles = win<br>
+                            • <strong>C1.2.3 Rendición por Hambre</strong>: Enemy bankrupt 2 turns = win
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C1.3 Hegemonía Territorial</strong></td>
+                        <td>
+                            • <strong>C1.3.1 Mancha Voraz</strong>: Capture neutral = free (no gold cost)<br>
+                            • <strong>C1.3.2 Cerco Geográfico</strong>: Fully encircle enemy territory = win<br>
+                            • <strong>C1.3.3 Pax Imperialis</strong>: Reach 60% map → 10-turn countdown
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>C2 Trascendencia Magna</strong></td>
+                        <td><strong>C2.1 La Gran Obra</strong></td>
+                        <td>
+                            • <strong>C2.1.1 Pirámide Eterna</strong>: Build on Bastion (150💰), survive 15 turns = win<br>
+                            • <strong>C2.1.2 Torre del Saber</strong>: Single tile, max tech speed<br>
+                            • <strong>C2.1.3 Utopía Agraria</strong>: 10 contiguous Level 3 farms intact = win
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C2.2 Hegemonía Cultural</strong></td>
+                        <td>
+                            • <strong>C2.2.1 El Gran Jubileo</strong>: Full treasury → culture points/turn<br>
+                            • <strong>C2.2.2 Peregrinación Sagrada</strong>: Enemy on temple → neutral pacifist<br>
+                            • <strong>C2.2.3 Faro Continental</strong>: Reveal full map; lasts 20 turns = win
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C2.3 Resistencia de Tiempo</strong></td>
+                        <td>
+                            • <strong>C2.3.1 Bastión Inconmovible</strong>: Capital immune if ≥1 farm alive<br>
+                            • <strong>C2.3.2 La Edad Dorada</strong>: Positive balance 30 consecutive turns = win<br>
+                            • <strong>C2.3.3 Pacto de Concordia</strong>: Pay rivals; peace 20 turns = win
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>C3 Guerra Económica</strong></td>
+                        <td><strong>C3.1 Banca Central</strong></td>
+                        <td>
+                            • <strong>C3.1.1 OPA Hostil</strong>: 40💰 in connected province = bribe adjacent town/bastion<br>
+                            • <strong>C3.1.2 Control Mercantil</strong>: Control all trade nodes = win<br>
+                            • <strong>C3.1.3 Burbuja Especulativa</strong>: Loan rivals gold; default in 5 turns = win
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C3.2 Estrangulamiento Logístico</strong></td>
+                        <td>
+                            • <strong>C3.2.1 Bancarrota Inducida</strong>: 3 enemy units starved/deserted isolated = win<br>
+                            • <strong>C3.2.2 Bloqueo de Arterias</strong>: Block 3 main enemy routes 5 turns = win<br>
+                            • <strong>C3.2.3 Guerra de Corsarios</strong>: Raid all enemy sea convoys = win
+                        </td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td><strong>C3.3 Tributo y Vasallaje</strong></td>
+                        <td>
+                            • <strong>C3.3.1 Red de Extorsión</strong>: Larger army = demand 50% rival income<br>
+                            • <strong>C3.3.2 Embargo Total</strong>: Control borders = enemy cannot build farms<br>
+                            • <strong>C3.3.3 Protectorado Dorado</strong>: Pay enemy upkeep = they cannot attack
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h2>VI. MAPS, BIOMES & SEASONS</h2>
+            <h3>Sizes</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Size</th>
+                        <th>Radius</th>
+                        <th>Hexes</th>
+                        <th>Factions</th>
+                        <th>Typical Game</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Small</strong></td><td>R=7</td><td>169</td><td>2</td><td>Tutorial, 15-25 turns</td></tr>
+                    <tr><td><strong>Medium</strong></td><td>R=12</td><td>469</td><td>2-4</td><td>Standard, 25-40 turns</td></tr>
+                    <tr><td><strong>Huge</strong></td><td>R=18</td><td>1027</td><td>4-6</td><td>Epic, 40-60+ turns</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Biomes</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Biome</th>
+                        <th>Land/Sea</th>
+                        <th>Hills</th>
+                        <th>Mountains</th>
+                        <th>Trees</th>
+                        <th>Special</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Plains</strong></td><td>90/10</td><td>12%</td><td>5%</td><td>12%</td><td>Open, fast movement</td></tr>
+                    <tr><td><strong>Forests</strong></td><td>90/10</td><td>15%</td><td>6%</td><td>35%</td><td>Trees spread fast (spring ×2)</td></tr>
+                    <tr><td><strong>Archipelago</strong></td><td>50/50</td><td>10%</td><td>4%</td><td>12%</td><td>Naval dominant, many coasts</td></tr>
+                    <tr><td><strong>Mountains</strong></td><td>90/10</td><td>25%</td><td>15%</td><td>12%</td><td>Engineers essential</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Seasons (6 turns each)</h3>
+            <ul>
+                <li><strong>Spring:</strong> Tree spread ×2.</li>
+                <li><strong>Summer:</strong> Ships +1 move on sea.</li>
+                <li><strong>Autumn:</strong> Wheat hexes +1 food.</li>
+                <li><strong>Winter:</strong> Visual only (snow shader).</li>
+            </ul>
+
+            <h2>VII. COMBAT — DETERMINISTIC RESOLUTION</h2>
+            <p><strong>No dice. Ever.</strong></p>
+            <pre class="bg-slate-100 p-3 rounded font-mono text-xs my-2 border border-slate-300">Damage = Attacker Atk + Terrain Bonus + Charge + Doctrine - Defender Def - Terrain Def - Bastion Aura</pre>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Attacker</th>
+                        <th>Base Atk (N1/N2/N3)</th>
+                        <th>Key Bonuses</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>INF</td><td>0 / 1 / 2</td><td>Hill +1, Mtn +2, Bastion aura +2</td></tr>
+                    <tr><td>ENG</td><td>0 / 1 / 2</td><td>None (builder)</td></tr>
+                    <tr><td>ARC</td><td>1 / 2 / 3</td><td>Shoot 2 (Hill 3), degrades Def</td></tr>
+                    <tr><td>CAB</td><td>2 / 3 / 4</td><td>Charge +1, range 2 (3 mobile), retreat (Parthian)</td></tr>
+                    <tr><td>SIE</td><td>1 / 2 / 3</td><td>Shoot 2, degrades buildings</td></tr>
+                    <tr><td>BAR</td><td>2 / 3 / 4</td><td>Naval, transport 1</td></tr>
+                </tbody>
+            </table>
+
+            <p><strong>Defense</strong> = Unit Def + Terrain (Hill +1 INF, Mtn +2 INF) + Bastion Aura +2 adjacent.</p>
+            <p><strong>Result</strong>: If Damage ≥ Defender HP (1 per tier) → Defender loses tier / dies. <strong>Exact. Predictable. Replayable.</strong></p>
+
+            <h2>VIII. THE DAILY & CAMPAIGN</h2>
+            <h3>Campaign — 30 Levels, 5 Acts</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Act</th>
+                        <th>Theme</th>
+                        <th>Fog</th>
+                        <th>Difficulty</th>
+                        <th>Star Gates</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>I · Awakening</td><td>Tutorial</td><td>NONE</td><td>Easy</td><td>0</td></tr>
+                    <tr><td>II · Borders</td><td>Expansion</td><td>FULL</td><td>Normal</td><td>12 ★</td></tr>
+                    <tr><td>III · Surge</td><td>Naval/Storms</td><td>FULL</td><td>Normal</td><td>24 ★</td></tr>
+                    <tr><td>IV · Iron</td><td>Siege/Doctrine</td><td>FULL</td><td>Hard</td><td>36 ★</td></tr>
+                    <tr><td>V · Crown</td><td>Mastery</td><td>FULL</td><td>Hard</td><td>48 ★</td></tr>
+                </tbody>
+            </table>
+            <p><strong>Each level</strong>: Par turn target (★ for beating par), Challenge (★ for special condition: no isolated tiles, no desertions, cut enemy 2×). <strong>3 stars max per level.</strong></p>
+
+            <h3>Daily Challenge</h3>
+            <ul>
+                <li><strong>Same seed for everyone</strong> (date-based).</li>
+                <li>Identical map, factions, fog, goal.</li>
+                <li><strong>Ranking by map</strong> — compare your score globally.</li>
+                <li><strong>Replay link</strong> (9-char seed) — share or study.</li>
+            </ul>
+
+            <h2>IX. MULTIPLAYER — ASYNCHRONOUS CHESS CLOCK</h2>
+            <ul>
+                <li><strong>Up to 4 players</strong> per room.</li>
+                <li><strong>Time bank</strong>: 210 seconds (3:30) + <strong>3 seconds per action</strong>.</li>
+                <li>Bank hits 0 → <strong>seat becomes bot</strong> (room continues).</li>
+                <li><strong>Simultaneous planning</strong> → sequential resolution.</li>
+                <li><strong>Rankings</strong>: Server-validated scores (no cheating). Replays shareable via <code>?seed=XXXXXXXXX</code>.</li>
+            </ul>
+
+            <h2>X. INTERFACE — VIEW MODES (Press `V` or click icon)</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Mode</th>
+                        <th>Hotkey</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Normal</strong></td><td><code>1</code></td><td>Standard diorama</td></tr>
+                    <tr><td><strong>Political</strong></td><td><code>2</code></td><td>Sovereignty borders, settlements</td></tr>
+                    <tr><td><strong>Resources</strong></td><td><code>3</code></td><td>Resource glows, production</td></tr>
+                    <tr><td><strong>Combat</strong></td><td><code>4</code></td><td>Unit rings, Atk/Def labels, combat preview</td></tr>
+                    <tr><td><strong>NATO</strong></td><td><code>5</code></td><td>Military symbols (APP-6), tile defense</td></tr>
+                    <tr><td><strong>Logistics</strong></td><td><code>6</code></td><td><strong>Supply health, route status, storm cones, chokepoints</strong></td></tr>
+                </tbody>
+            </table>
+
+            <p><strong>Logistics View (`6` or `L`):</strong></p>
+            <ul>
+                <li><strong>Province fill</strong> = Green (healthy) → Yellow (strained) → Orange (vulnerable) → Red (critical/isolated).</li>
+                <li><strong>Trade routes</strong> = Solid (secure), Dashed orange (threatened), Broken red (cut), Blue pulse (storm).</li>
+                <li><strong>Storm cones</strong> = Blue arrow showing 3-turn predicted path.</li>
+                <li><strong>Chokepoints</strong> = Pulsing white outline on critical bridge hexes.</li>
+            </ul>
+
+            <h2>XI. HOTKEYS & CONTROLS</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>Click</code></td><td>Select unit / Move to hex / Build menu</td></tr>
+                    <tr><td><code>Right-click / Long press</code></td><td>Cancel / Deselect</td></tr>
+                    <tr><td><code>F</code></td><td><strong>Fuse</strong> selected unit with target</td></tr>
+                    <tr><td><code>B</code></td><td><strong>Build</strong> menu on selected hex</td></tr>
+                    <tr><td><code>R</code></td><td><strong>Recruit</strong> menu (if on valid building)</td></tr>
+                    <tr><td><code>D</code></td><td><strong>Doctrine</strong> screen</td></tr>
+                    <tr><td><code>V / 1-6</code></td><td>Cycle view modes</td></tr>
+                    <tr><td><code>Space</code></td><td><strong>End turn</strong></td></tr>
+                    <tr><td><code>Z</code></td><td><strong>Undo</strong> (single-player only, before commit)</td></tr>
+                    <tr><td><code>Esc</code></td><td>Menu / Pause</td></tr>
+                    <tr><td><code>?</code></td><td><strong>Context help</strong> (shows unit/building/hex details)</td></tr>
+                    <tr><td><code>Mouse wheel</code></td><td>Zoom</td></tr>
+                    <tr><td><code>Drag / Two-finger</code></td><td>Pan</td></tr>
+                </tbody>
+            </table>
+
+            <h2>XII. COMMON PITFALLS — READ THESE ONCE</h2>
+            <ol>
+                <li><strong>Over-recruiting = suicide.</strong> 6 cavalry = 66 food/turn. You <em>will</em> starve.</li>
+                <li><strong>Capital death = game over.</strong> Main province has NO access to global surplus. Protect it.</li>
+                <li><strong>Fog hides raiders.</strong> Cavalry on roads moves 24 hexes/turn. Scout.</li>
+                <li><strong>Storms sink ships at sea.</strong> Move to coast (dist ≤1) when cone approaches.</li>
+                <li><strong>Desertion = −400 score.</strong> In campaign, this costs stars. In ranked, it tanks rating.</li>
+                <li><strong>Auto-camp on isolation</strong> starts with <strong>empty warehouse</strong>. It must survive on local income immediately.</li>
+                <li><strong>Trade routes = free gold.</strong> 3 land + 3 sea max. Build roads to connect distant cities.</li>
+                <li><strong>Loan (50💰, -6💰/turn ×10)</strong> is a tool, not a crutch. Bankruptcy during loan = <strong>double desertion</strong>.</li>
+                <li><strong>Tombs (5% chance)</strong> on your dead units: step on them → might recover unit / resources / building.</li>
+                <li><strong>Seasons matter.</strong> Spring = tree spam (block paths). Summer = naval speed. Autumn = food boom.</li>
+                <li><strong>Replay your losses.</strong> Same seed = same game. Learn the exact turn you lost the supply war.</li>
+            </ol>
+
+            <h2>XIII. ADVANCED TACTICS</h2>
+            <h3>The Stranglehold</h3>
+            <p>Don't attack the army. <strong>Cut the route.</strong> Raiders block 2 turns. Storms block sea. A province with 0 food → mass desertion in 2 turns. <strong>Victory by starvation (INDUCED_BANKRUPTCY)</strong> is faster than conquest.</p>
+
+            <h3>The Cavalry Blitz</h3>
+            <p><strong>C1.1.1 Decapitación</strong> + <strong>B2.2.1 Cataphractas</strong> + <strong>A1.3.2 Knightly Order</strong> = Cavalry that hits Atk 3/Def 2, retreats after attack, and captures capital → instant win. High risk, high reward.</p>
+
+            <h3>The Nomad Economy</h3>
+            <p><strong>A3 Dispersión Móvil</strong> + <strong>A3.1.2 Yurtas</strong> + <strong>C3.1.1 OPA Hostil</strong> = Pack camp (15🪵), move to rich biome, bribe enemy towns. Never defend fixed positions.</p>
+
+            <h3>The Naval Siege</h3>
+            <p><strong>A2 Flujo Oceánico</strong> + <strong>A2.2.1 Pillaje</strong> + <strong>C3.2.3 Corsarios</strong> = Ships walk on land, raid 100% production, win by raiding all convoys. Dominates Archipelago.</p>
+
+            <h3>The Engineer Wall</h3>
+            <p><strong>A3.3.1 Red de Guías</strong> + <strong>B1.1.3 Castramentación</strong> + <strong>B3.3.1 Troneras</strong> = Engineers build instant forts, bastions auto-shoot, mountains are free terrain. Turns Montañas biome into a fortress.</p>
+
+            <h2>XIV. TECHNICAL NOTES</h2>
+            <ul>
+                <li><strong>Offline:</strong> Full PWA — install from browser, play anywhere.</li>
+                <li><strong>Replays:</strong> Deterministic. <code>federati.org/?seed=XXXXXXXXX</code> (9 chars) or <code>?m=XXXXX</code> (custom map).</li>
+                <li><strong>Languages:</strong> 13 (ES, EN, ZH, HI, FR, AR, BN, PT, RU, DE, JA, KO, IT).</li>
+                <li><strong>Platforms:</strong> Web, Android, iOS, Steam (same save via cloud backup).</li>
+                <li><strong>No ads. No energy. No pay-to-win.</strong> License = cloud backup + account recovery only.</li>
+            </ul>
+
+            <h2>XV. GLOSSARY — IN-GAME TERMS</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Term</th>
+                        <th>Meaning</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Provincia</strong></td><td>Connected owned hexes with a building; has its own warehouse.</td></tr>
+                    <tr><td><strong>Abastecido (sup)</strong></td><td>Hex connected to province capital → earns income, pays upkeep.</td></tr>
+                    <tr><td><strong>Aislado (iso)</strong></td><td>Hex cut off from capital → red pulse, auto-camp if ≥3 hexes.</td></tr>
+                    <tr><td><strong>Mantenimiento</strong></td><td>Food/Gold cost per unit per turn, paid by its province.</td></tr>
+                    <tr><td><strong>Deserción</strong></td><td>Unit cannot be paid → drops tier or becomes tomb (−400 pts).</td></tr>
+                    <tr><td><strong>Ruta comercial</strong></td><td>Land/sea path between Towns/Cities → bonus gold; max 3 each.</td></tr>
+                    <tr><td><strong>Saqueo</strong></td><td>Raider cuts route → blocked 2 turns, no gold delivered.</td></tr>
+                    <tr><td><strong>Tormenta</strong></td><td>Spawns deep sea (35%/turn), moves 1/turn, sinks ships at sea.</td></tr>
+                    <tr><td><strong>Fusión</strong></td><td>Two same-type units → one higher tier (max N3).</td></tr>
+                    <tr><td><strong>Par</strong></td><td>Target turn count for campaign level (beat it = star).</td></tr>
+                    <tr><td><strong>Semilla (seed)</strong></td><td>9-char code = exact map replay.</td></tr>
+                    <tr><td><strong>Doctrina</strong></td><td>117 nodes in 3 pillars (Alma/Arma/Victoria); pick 1 path each.</td></tr>
+                </tbody>
+            </table>
+
+            <div class="mt-8 pt-4 border-t border-slate-300 text-center font-bold italic text-slate-700">
+                <p>The frontier does not forgive. Calculate. Supply. Win.</p>
+                <p class="text-xs font-normal text-slate-500 mt-1">Federati — Field Manual · Deterministic Hex Strategy · No Dice · No Mercy</p>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        let currentLang = 'es';
+
+        function switchLanguage(lang) {
+            currentLang = lang;
+            const docEs = document.getElementById('doc-es');
+            const docEn = document.getElementById('doc-en');
+            const btnEs = document.getElementById('btn-es');
+            const btnEn = document.getElementById('btn-en');
+
+            if (lang === 'es') {
+                docEs.classList.remove('hidden');
+                docEn.classList.add('hidden');
+
+                btnEs.className = "px-4 py-1.5 text-xs font-semibold rounded text-amber-400 bg-slate-700 shadow-sm transition";
+                btnEn.className = "px-4 py-1.5 text-xs font-semibold rounded text-slate-400 hover:text-slate-200 transition";
+            } else {
+                docEs.classList.add('hidden');
+                docEn.classList.remove('hidden');
+
+                btnEn.className = "px-4 py-1.5 text-xs font-semibold rounded text-amber-400 bg-slate-700 shadow-sm transition";
+                btnEs.className = "px-4 py-1.5 text-xs font-semibold rounded text-slate-400 hover:text-slate-200 transition";
+            }
+        }
+
+        function downloadPDF() {
+            const activeElement = currentLang === 'es' ? document.getElementById('doc-es') : document.getElementById('doc-en');
+            const filename = currentLang === 'es' ? 'FEDERATI_Manual_de_Campo_ES.pdf' : 'FEDERATI_Field_Manual_EN.pdf';
+
+            const opt = {
+                margin:       [10, 10, 10, 10],
+                filename:     filename,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            // Generate PDF using html2pdf library
+            html2pdf().set(opt).from(activeElement).save();
+        }
+    </script>
+</body>
+</html>
+```eof

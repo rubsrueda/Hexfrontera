@@ -14,6 +14,10 @@
     // Solo el Ingeniero cruza ríos y montañas sin camino/puente.
     if (c.t === T.MONTANA) return isRoad(c) || (HF.CFG.mountainUnits || ['ENG']).indexOf(u.type) >= 0;
     if (c.t === T.RIO) return isRoad(c) || u.type === 'ENG';
+    // DIPLOMACIA: Fronteras selladas por PNA (Pacto Sagrado) son intransitables para enemigos
+    if (c.borderControl && c.borderControl.napLocked && f && c.o !== f.id && c.o >= 0) {
+      return false;
+    }
     return true;
   };
   // camino y todo edificio superior: sin penalización de terreno y transitable por cualquier unidad de tierra
@@ -93,6 +97,13 @@
       const m = HF.generateMap({ R: o.R, seed: o.seed, biome: o.biome, factions: nF });
       g.cells = m.cells; caps = m.caps; g._grid = m.grid;
     }
+    // Nombres históricos para los asentamientos que ya trae el mapa (las
+    // capitales primero). Se evitan repetidos dentro de la misma partida.
+    const nameCell = c => {
+      if (c && (c.b === B.PUEBLO || c.b === B.CIUDAD) && !c.city) c.city = HF.pickCityName(g);
+    };
+    for (const ci of (caps || [])) nameCell(g.cells[ci]);
+    for (const c of g.cells) nameCell(c);
     const sr = o.startRes || HF.CFG.start;
     o.factions.forEach((fo, k) => {
       const t = { alma_path: fo.alma_path, arma_path: fo.arma_path, victoria_path: fo.victoria_path };
@@ -115,6 +126,31 @@
     if (o.setup) o.setup(g);
     HF.supply(g);
     HF.initStock(g);
+    // DIPLOMACIA: Inicializar estructuras diplomáticas
+    if (HF.initDiplomacy) HF.initDiplomacy(g);
+    // Inicializar extensiones de diplomacia en facciones
+    for (const f of g.f) {
+      f.treaties = []; f.treatyHistory = [];
+      f.economy = { 
+        income: {food:0,gold:0,wood:0,iron:0,population:0}, 
+        expenses: {food:0,gold:0,wood:0,iron:0,population:0}, 
+        net: {food:0,gold:0,wood:0,iron:0,population:0}, 
+        activeLoans: [], loansGiven: [], creditScore: 70, defaultHistory: 0, 
+        strategicReserves: {food:0,gold:0,wood:0,iron:0} 
+      };
+      f.diplomacy = { 
+        threatMap: new Map(), preferredTargets: [], securedFlanks: [], 
+        tradePartners: [], trustScores: new Map() 
+      };
+    }
+    // Inicializar borderControl y tradeRoutes en celdas
+    for (const c of g.cells) if (c) {
+      c.borderControl = { owner: c.o, contestedBy: null, napLocked: false };
+      c.tradeRoutes = [];
+    }
+    // Normaliza todo el estado diplomático recién creado (Maps numéricos,
+    // arrays, config desde HF.CFG.diplomacy y enlaces facción↔tratado).
+    if (HF.Diplomacy) { HF.Diplomacy.ensure(g); HF.Diplomacy.ensureCells(g); }
     HF.updateFog(g);
     HF.recordTimeline(g);
     save_rs(g);
@@ -349,8 +385,11 @@
     const comp = c && c.comp != null ? c.comp : mainComp(g, f);
     if (f.stock && f.stock[comp]) { f.stock[comp].gold += amount; syncTotals(f); }
     else f.gold = (f.gold || 0) + amount;
-    ev(g, cellId, 'Caravana entregada: +' + amount + ' oro', 'good');
+    ev(g, cellId, 'Caravana entregada' + cityAt(c) + ': +' + amount + ' oro', 'good');
   }
+  // « en Tarraco» (o vacío si la casilla no tiene nombre de ciudad).
+  const cityAt = c => (c && c.city) ? ' en ' + c.city : '';
+  const RES_ES = { gold: 'oro', food: 'comida', wood: 'madera' };
   // Al final de cada ronda: aparecen caravanas para las rutas activas, avanzan
   // 4 casillas y devengan 5 de oro por turno. Al llegar entregan la carga.
   HF.syncCaravans = function (g) {
@@ -424,7 +463,14 @@
     const origin = src != null && g.cells[src] ? g.cells[src] : c;
     const range = tradeStrikeRange(g, u, origin);
     if (naval && !seaTrade) return { ok: false, msg: 'Un barco no puede asaltar una carreta' };
-    if (!naval && seaTrade && range <= 1) return { ok: false, msg: 'La infantería no alcanza el mar: hostiga la urca desde la costa con arqueros o asedio' };
+    // Permitir que infantería ataque caravanas marítimas desde costa adyacente (range=1)
+    if (!naval && seaTrade && range <= 1) {
+      const isCoastal = HF.nbs(g, origin.i).some(j => {
+        const n = g.cells[j];
+        return n && isWater(n);
+      });
+      if (!isCoastal) return { ok: false, msg: 'La infantería no alcanza el mar: hostiga la urca desde la costa con arqueros o asedio' };
+    }
     if (t.u && t.u.owner !== u.owner) return { ok: false, msg: 'Una unidad enemiga protege el comercio' };
     if (HF.hexDist(origin, t) > range) return { ok: false, msg: 'El comercio queda fuera de alcance' };
     if (origin !== c && origin.u) return { ok: false, msg: 'La posición de asalto está ocupada' };
@@ -490,7 +536,7 @@
     const comp = c && c.comp != null ? c.comp : mainComp(g, f);
     if (f.stock && f.stock[comp] && f.stock[comp][res] != null) { f.stock[comp][res] += qty; syncTotals(f); }
     else f[res] = (f[res] || 0) + qty;
-    ev(g, cellId, 'Carga entregada: +' + qty + ' ' + res, 'good');
+    ev(g, cellId, 'Carga entregada' + cityAt(c) + ': +' + qty + ' ' + (RES_ES[res] || res), 'good');
   }
   // Crea una urca de carga: viaja sola y es saqueable como el comercio naval.
   HF.sendCargo = function (g, fromId, toId, res, qty) {
@@ -514,7 +560,8 @@
       key: 'cargo:' + f.id + ':' + id, owner: f.id, kind: 'cargo',
       path: path.slice(), pos: 0, dir: 1, cargo: { res, qty: q }
     });
-    ev(g, fromId, 'Urca de carga: ' + q + ' ' + res + ' rumbo al puerto', 'info');
+    const destName = to.city || HF.BNAME[to.b] || 'el puerto';
+    ev(g, fromId, 'Urca de carga: ' + q + ' ' + (RES_ES[res] || res) + ' rumbo a ' + destName, 'info');
     // La repetición reconstruye la partida: registrar el envío manual.
     if (g.replayLog && !g.noReplay) g.replayLog.push([9, fromId, toId, res, q]);
     return { ok: true, qty: q };
@@ -548,6 +595,160 @@
     const i = HF.income(g, f, comp), u = HF.upkeepOf(g, f, 'up', comp), ug = HF.upkeepOf(g, f, 'upGold', comp);
     const loan = f.loan && f.loan.turns > 0 && (comp == null || f.loan.comp === comp) ? f.loan.perTurn : 0;
     return { inc: i, upkeep: u, upkeepGold: ug, loan, netFood: i.food - u, netGold: i.gold - ug - loan };
+  };
+
+  // ---------- desglose detallado de recursos para la pantalla de información ----------
+  HF.resourceBreakdown = function (g, f, comp) {
+    const C = HF.CFG.income;
+    const autumn = seasonOf(g) === 2;
+    const mult = has(f, 'EXTRACTIVE_ENCLAVE') ? C.enclaveMult : 1;
+    
+    const breakdown = {
+      income: {
+        terrain: { gold: 0, food: 0, wood: 0, detail: {} },
+        resources: { gold: 0, food: 0, wood: 0, detail: {} },
+        buildings: { gold: 0, food: 0, wood: 0, detail: {} },
+        doctrines: { gold: 0, food: 0, wood: 0, detail: {} },
+        caravans: { gold: 0, food: 0, wood: 0, detail: {} },
+        total: { gold: 0, food: 0, wood: 0 }
+      },
+      expenses: {
+        units: { gold: 0, food: 0, wood: 0, detail: {} },
+        loans: { gold: 0, food: 0, wood: 0, detail: {} },
+        total: { gold: 0, food: 0, wood: 0 }
+      },
+      net: { gold: 0, food: 0, wood: 0 }
+    };
+
+    const tName = Object.keys(T), rName = ['', 'ORO', 'TRIGO', 'MADERA'];
+    const BNAME = HF.BNAME, PROD = HF.PROD;
+
+    // Contadores para el desglose por tipo de terreno
+    const terrainCounts = { LLANO: 0, COLINA: 0, MONTANA: 0, RIO: 0, MAR: 0 };
+    const resourceCounts = { ORO: 0, TRIGO: 0, MADERA: 0 };
+    const buildingCounts = { CAMPAMENTO: 0, PUEBLO: 0, CIUDAD: 0, BASTION: 0, CAMINO: 0 };
+    const unitCounts = {};
+
+    for (const c of g.cells) {
+      if (!c || c.o !== f.id || !c.sup || (comp != null && c.comp !== comp)) continue;
+      if (c.b === B.ARBOL) continue;
+      if (c.burn > 0 || c.fire > 0) continue;
+
+      // Terreno base
+      const tKey = tName[c.t];
+      terrainCounts[tKey] = (terrainCounts[tKey] || 0) + 1;
+      const terrainInc = C.terrain[tKey] || {};
+      for (const k in terrainInc) {
+        breakdown.income.terrain[k] += terrainInc[k];
+        breakdown.income.terrain.detail[tKey] = (breakdown.income.terrain.detail[tKey] || { gold: 0, food: 0, wood: 0 });
+        breakdown.income.terrain.detail[tKey][k] = (breakdown.income.terrain.detail[tKey][k] || 0) + terrainInc[k];
+      }
+
+      // Edificios
+      if (c.b && PROD[c.b]) {
+        const bName = BNAME[c.b] || 'Desconocido';
+        buildingCounts[bName] = (buildingCounts[bName] || 0) + 1;
+        breakdown.income.buildings.gold += PROD[c.b][0];
+        breakdown.income.buildings.food += PROD[c.b][1];
+        breakdown.income.buildings.detail[bName] = breakdown.income.buildings.detail[bName] || { gold: 0, food: 0, count: 0 };
+        breakdown.income.buildings.detail[bName].gold += PROD[c.b][0];
+        breakdown.income.buildings.detail[bName].food += PROD[c.b][1];
+        breakdown.income.buildings.detail[bName].count++;
+      }
+
+      // Recursos naturales
+      if (c.res) {
+        const rKey = rName[c.res];
+        resourceCounts[rKey] = (resourceCounts[rKey] || 0) + 1;
+        const bonus = HF.CFG.buildingResBonus[c.b] || 0;
+        const R = C.resource[rKey] || {};
+        for (const k in R) {
+          const val = R[k] * mult + bonus;
+          breakdown.income.resources[k] += val;
+          breakdown.income.resources.detail[rKey] = breakdown.income.resources.detail[rKey] || { gold: 0, food: 0, wood: 0, count: 0 };
+          breakdown.income.resources.detail[rKey][k] = (breakdown.income.resources.detail[rKey][k] || 0) + val;
+          breakdown.income.resources.detail[rKey].count++;
+        }
+        // Otoño: +1 comida por trigo
+        if (autumn && c.res === HF.RES.TRIGO) {
+          breakdown.income.resources.food += HF.CFG.seasons.autumnWheatFood;
+          breakdown.income.resources.detail[rKey] = breakdown.income.resources.detail[rKey] || { gold: 0, food: 0, wood: 0, count: 0 };
+          breakdown.income.resources.detail[rKey].food += HF.CFG.seasons.autumnWheatFood;
+        }
+      }
+    }
+
+    // Doctrinas que dan ingresos pasivos
+    if (has(f, 'CIV_TYPE_SEDENTARY') && (comp == null || comp === mainComp(g, f))) {
+      breakdown.income.doctrines.gold += C.sedentaryGold;
+      breakdown.income.doctrines.detail['CIV_TYPE_SEDENTARY'] = { gold: C.sedentaryGold, food: 0, wood: 0 };
+    }
+
+    // Caravanas (rutas comerciales) - ya se manejan en syncCaravans, aquí solo las contamos
+    const routes = HF.tradeRoutes(g, f);
+    const trL = routes.filter(r => r.kind === 'land').length;
+    const trS = routes.filter(r => r.kind === 'sea').length;
+    if (trL > 0 || trS > 0) {
+      breakdown.income.caravans.detail = { land: trL, sea: trS };
+      // Nota: el oro de caravanas se entrega al llegar, no es ingreso pasivo por turno
+    }
+
+    // Totales de ingresos
+    for (const k of ['gold', 'food', 'wood']) {
+      breakdown.income.total[k] = 
+        (breakdown.income.terrain[k] || 0) +
+        (breakdown.income.buildings[k] || 0) +
+        (breakdown.income.resources[k] || 0) +
+        (breakdown.income.doctrines[k] || 0);
+    }
+
+    // Gastos: mantenimiento de unidades
+    const pm = provMap(g, f);
+    for (const c of g.cells) {
+      if (!c || !c.u || c.u.owner !== f.id || (comp != null && pm[c.i] !== comp)) continue;
+      const u = c.u;
+      const typeKey = u.type + (u.tier > 1 ? ' N' + u.tier : '');
+      unitCounts[typeKey] = (unitCounts[typeKey] || 0) + 1;
+      
+      const upFood = unitUpkeep(f, u, 'up');
+      const upGold = unitUpkeep(f, u, 'upGold');
+      
+      breakdown.expenses.units.food += upFood;
+      breakdown.expenses.units.gold += upGold;
+      breakdown.expenses.units.detail[typeKey] = breakdown.expenses.units.detail[typeKey] || { gold: 0, food: 0, wood: 0, count: 0 };
+      breakdown.expenses.units.detail[typeKey].food += upFood;
+      breakdown.expenses.units.detail[typeKey].gold += upGold;
+      breakdown.expenses.units.detail[typeKey].count++;
+    }
+
+    // Préstamos
+    const loan = f.loan && f.loan.turns > 0 && (comp == null || f.loan.comp === comp) ? f.loan.perTurn : 0;
+    if (loan > 0) {
+      breakdown.expenses.loans.gold += loan;
+      breakdown.expenses.loans.detail['Préstamo'] = { gold: loan, food: 0, wood: 0, turns: f.loan.turns };
+    }
+
+    // Totales de gastos
+    for (const k of ['gold', 'food', 'wood']) {
+      breakdown.expenses.total[k] = 
+        (breakdown.expenses.units[k] || 0) +
+        (breakdown.expenses.loans[k] || 0);
+    }
+
+    // Netos
+    for (const k of ['gold', 'food', 'wood']) {
+      breakdown.net[k] = breakdown.income.total[k] - breakdown.expenses.total[k];
+    }
+
+    // Añadir contadores para la UI
+    breakdown.counts = {
+      terrain: terrainCounts,
+      resources: resourceCounts,
+      buildings: buildingCounts,
+      units: unitCounts
+    };
+
+    return breakdown;
   };
 
   // Deja una tumba recordando de quién era y qué unidad cayó: al pisarla su
@@ -642,6 +843,15 @@
   // cada provincia paga a sus unidades con su propio almacén; si no puede, las más caras bajan de nivel o desertan
   function settle(g, f) {
     if (!f.stock) HF.initStock(g);
+    if (HF.Diplomacy) HF.Diplomacy.ensureFaction(f, f.id);
+    // Los contadores de economía se reconstruyen en cada turno. Antes nunca se
+    // reiniciaban y el neto (usado por la IA para pedir préstamos y comerciar)
+    // se inflaba turno tras turno.
+    if (f.economy) {
+      for (const k of ['food', 'gold', 'wood', 'iron', 'population']) {
+        f.economy.income[k] = 0; f.economy.expenses[k] = 0;
+      }
+    }
     const provs = HF.provinces(g, f), pm = provMap(g, f), mart = [];
     const isoK = new Set(), isoUnsup = new Set();
     for (const c of g.cells) if (c && c.o === f.id && c.iso === g.turn && c.comp != null) {
@@ -657,6 +867,79 @@
       for (const c of g.cells) if (c && c.u && c.u.owner === f.id && pm[c.i] === k) { const v = cellUp(f, c, kind); if (v > wv) { wv = v; w = c; } }
       return w;
     };
+    // Fase previa: antes de degradar, cubrir el déficit con el superávit global.
+    // La capital principal no paga comisión; las capitales secundarias sí
+    // (CFG.deficit.commission). Solo se degrada lo que el superávit no cubra.
+    const main = mainComp(g, f);
+    const fee = (HF.CFG.deficit && +HF.CFG.deficit.commission) || 0.1;
+    const nets = new Map();
+    for (const k of provs) {
+      if (isoK.has(k)) continue;
+      const s = f.stock[k] || (f.stock[k] = { gold: 0, food: 0, wood: 0 });
+      const inc = HF.income(g, f, k);
+      const debt = (loanActive && k === loanK) ? f.loan.perTurn : 0;
+      const upFood = upk(k, 'up'), upGold = upk(k, 'upGold');
+      // Contabilidad real para la IA (comercio, préstamos) y para el panel
+      // económico: antes income/expenses solo reflejaban rutas y deudas, así
+      // que el neto era siempre 0 y la diplomacia nunca detectaba carencias.
+      if (f.economy) {
+        f.economy.income.food += inc.food || 0;
+        f.economy.income.gold += inc.gold || 0;
+        f.economy.income.wood += inc.wood || 0;
+        f.economy.expenses.food += upFood;
+        f.economy.expenses.gold += upGold + debt;
+      }
+      nets.set(k, {
+        s: s, inc: inc, debt: debt,
+        gold: s.gold + inc.gold - upGold - debt,
+        food: s.food + inc.food - upFood
+      });
+    }
+    const cover = (key, need, k, noFee) => {
+      let available = 0;
+      for (const donor of provs) {
+        if (donor === k || isoK.has(donor)) continue;
+        const d = nets.get(donor);
+        if (d && d[key] > 0) available += d[key];
+      }
+      if (available <= 0) return 0;
+      // Coste exacto: 10% + 1 de comisión, redondeado hacia arriba. La capital
+      // principal no paga comisión. Si no hay para el coste completo, NO se
+      // transfiere nada: no se pueden inventar recursos ni cubrir a medias.
+      const gross = noFee ? need : Math.ceil(need * (1 + fee) + 1);
+      if (available < gross) return 0;
+      const credit = need;
+      let left = gross;
+      for (const donor of provs) {
+        if (donor === k || isoK.has(donor)) continue;
+        const d = nets.get(donor);
+        if (!d || d[key] <= 0) continue;
+        const take = Math.min(d[key], left);
+        d.s[key] -= take;
+        d[key] -= take;
+        left -= take;
+        if (left <= 0) break;
+      }
+      const taken = gross - left;
+      const n = nets.get(k);
+      n.s[key] += credit;
+      n[key] += credit;
+      if (f.human) {
+        const label = key === 'gold' ? 'oro' : 'comida';
+        ev(g, null, 'Déficit de ' + label + ' cubierto: ' + credit + ' desde el superávit global (' +
+          (noFee ? 'sin comisión' : 'comisión ' + Math.round(fee * 100) + '% + 1') + ', se gastan ' + taken + ')', 'bad');
+      }
+      return credit;
+    };
+    // Solo las capitales SECUNDARIAS pueden cubrir su déficit con el superávit
+    // global. La capital principal NO se rescata: consume y degrada como dice
+    // la regla; si no hay, sus unidades bajan/desertan.
+    const order = provs.filter(k => k !== main && nets.has(k));
+    for (const k of order) {
+      const n = nets.get(k);
+      if (n.gold < 0) cover('gold', -n.gold, k, false);
+      if (n.food < 0) cover('food', -n.food, k, false);
+    }
     for (const k of provs) {
       const s = f.stock[k] || (f.stock[k] = { gold: 0, food: 0, wood: 0 });
       const inc = HF.income(g, f, k);
@@ -666,6 +949,13 @@
       // si sus recursos no cubren el mantenimiento, TODO el grupo pierde un nivel.
       if (isoK.has(k)) {
         const goldNeed = upk(k, 'upGold') + debt, foodNeed = upk(k, 'up');
+        if (f.economy) {
+          f.economy.income.food += inc.food || 0;
+          f.economy.income.gold += inc.gold || 0;
+          f.economy.income.wood += inc.wood || 0;
+          f.economy.expenses.food += foodNeed;
+          f.economy.expenses.gold += goldNeed;
+        }
         if (s.gold + inc.gold >= goldNeed && s.food + inc.food >= foodNeed) {
           s.gold = s.gold + inc.gold - goldNeed;
           s.food = s.food + inc.food - foodNeed;
@@ -701,27 +991,100 @@
       let net = s.food + inc.food - upk(k, 'up');
       if (net < 0) {
         anyDef = true;
-        if (has(f, 'ZEALOT_MARTYRDOM')) mart.push(k);
-        else if (has(f, 'INTEGRATION_PRESERVE')) {
-          for (const c of g.cells) if (c && c.o === f.id && c.comp === k && c.conq && !isSettle(c.b)) { c.o = -1; c.conq = false; c.u = null; c.wonder = 0; rebel = true; }
-          if (f.human) ev(g, null, 'Déficit: tierras conquistadas se rebelan', 'bad');
-        } else {
-          let guard = 60;
-          while (net < 0 && guard-- > 0) {
-            const worst = worstIn(k, 'up');
-            if (!worst) break;
-            const nm = HF.UNITS[worst.u.type].name, r = degradeUnit(g, worst, f);
-            if (r === 'deserta') creditStarvation(g, f.id, worst);
-            if (f.human) ev(g, worst.i, 'Hambruna: ' + nm + ' ' + r, 'bad');
-            net = s.food + inc.food - upk(k, 'up');
-          }
+        // Sin excepciones por doctrina: el déficit siempre consume y degrada.
+        // Consumo secuencial: mayor mantenimiento primero. En cuanto una
+        // unidad no puede pagar, la comida llega a 0, esa unidad baja un nivel
+        // y TODAS las siguientes también bajan un nivel (las N1 desaparecen).
+        // Las bajadas no devuelven comida para pagar a las siguientes.
+        const list = [];
+        for (const c of g.cells) if (c && c.u && c.u.owner === f.id && pm[c.i] === k) list.push(c);
+        list.sort((a, b) => cellUp(f, b, 'up') - cellUp(f, a, 'up'));
+        let food = s.food + inc.food, broke = false;
+        for (const c of list) {
+          if (!c.u) continue;
+          const cost = cellUp(f, c, 'up');
+          if (!broke && food >= cost) { food -= cost; continue; }
+          broke = true;
+          food = 0;
+          const nm = HF.UNITS[c.u.type].name, r = degradeUnit(g, c, f);
+          if (r === 'deserta') creditStarvation(g, f.id, c);
+          if (f.human) ev(g, c.i, 'Hambruna: ' + nm + ' ' + r, 'bad');
         }
-        net = Math.max(0, net);
+        net = Math.max(0, food);
       }
       s.food = net;
     }
+    // DIPLOMACIA: las rutas activas suman al neto UNA vez por turno. Antes este
+    // bloque vivía dentro del bucle de provincias y multiplicaba el valor de
+    // cada ruta por el número de provincias de la facción.
+    if (HF.Diplomacy && f.economy) {
+      try {
+        for (const treaty of HF.Diplomacy.getActiveTreaties(g, f.id, HF.TREATY_TYPES.TRADE)) {
+          if (!treaty.tradeTerms) continue;
+          for (const route of treaty.tradeTerms.routes) {
+            if (!route.active) continue;
+            const amount = (typeof route.lastTransfer === 'number' && route.lastTransfer >= 0)
+              ? route.lastTransfer : route.amountPerTurn;
+            if (!amount) continue;
+            if (route.toFaction === f.id) f.economy.income[route.resource] += amount;
+            else if (route.fromFaction === f.id) f.economy.expenses[route.resource] += amount;
+          }
+        }
+      } catch (e) {
+        if (HF.dipError) HF.dipError('settle.comercio', e);
+      }
+    }
     for (const k of isoUnsup) {
       if (massDegrade(g, f, k, 'AISLADO sin recursos')) anyDef = true;
+    }
+    // Unidades propias sen provincia (capital perdida ou fóra do territorio
+    // abastecido): séguense cobrando. Se non hai ouro/comida, desertan até
+    // desaparecer; antes quedaban sen pagar e sobrevivían. Inclúe as unidades
+    // cuxo `comp` xa non está na lista de provincias (capital illada ou
+    // provincias recalculadas), que antes non entraban en ningún cobro.
+    const provSet = new Set(provs);
+    const strays = [];
+    for (const c of g.cells) if (c && c.u && c.u.owner === f.id && (pm[c.i] < 0 || !provSet.has(pm[c.i]))) strays.push(c);
+    if (strays.length) {
+      let gold = 0, food = 0;
+      for (const k in f.stock) { gold += f.stock[k].gold || 0; food += f.stock[k].food || 0; }
+      const pay = (needG, needF) => {
+        if (gold < needG || food < needF) return false;
+        gold -= needG; food -= needF;
+        let ng = needG, nf = needF;
+        for (const k in f.stock) {
+          const s = f.stock[k];
+          const tg = Math.min(s.gold || 0, ng); s.gold -= tg; ng -= tg;
+          const tf = Math.min(s.food || 0, nf); s.food -= tf; nf -= tf;
+          if (!ng && !nf) break;
+        }
+        return true;
+      };
+      for (const c of strays) {
+        let guard = 12;
+        if (f.economy) {
+          f.economy.expenses.gold += cellUp(f, c, 'upGold');
+          f.economy.expenses.food += cellUp(f, c, 'up');
+        }
+        while (c.u && guard-- > 0) {
+          const ug = cellUp(f, c, 'upGold'), uf = cellUp(f, c, 'up');
+          if (pay(ug, uf)) break;
+          anyDef = true;
+          const nm = HF.UNITS[c.u.type].name, r = degradeUnit(g, c, f);
+          if (r === 'deserta') creditStarvation(g, f.id, c);
+          if (f.human) ev(g, c.i, 'Sin provincia: ' + nm + ' ' + r, 'bad');
+        }
+      }
+    }
+    // El pago real del préstamo diplomático se cobra en startTurn
+    // (processLoanPayments). Aquí solo se refleja en expenses: llamarlo otra vez
+    // cobraba DOS veces por turno al prestatario.
+    if (f.economy) {
+      const loanPayment = f.economy.lastLoanPayment || 0;
+      if (loanPayment > 0) {
+        f.economy.expenses.gold = (f.economy.expenses.gold || 0) + loanPayment;
+        f.economy.lastLoanPayment = 0;
+      }
     }
     if (loanActive) {
       f.loan.turns--;
@@ -736,6 +1099,12 @@
     } else if (!anyDef) f.grace = 0;
     f.deficit = anyDef;
     f.goodStreak = f.deficit ? 0 : f.goodStreak + 1;
+    // DIPLOMACIA: Calcular net = income - expenses por recurso
+    if (f.economy) {
+      for (const res of ['food','gold','wood','iron','population']) {
+        f.economy.net[res] = (f.economy.income[res] || 0) - (f.economy.expenses[res] || 0);
+      }
+    }
     syncTotals(f);
     if (rebel) HF.supply(g);
   }
@@ -743,12 +1112,35 @@
     // Recalcular aislamiento con el turno actual antes de cobrar/colapsar.
     // Sin esto, un corte hecho durante la fase anterior podía quedar marcado
     // con el turno viejo y no disparar el colapso al empezar la nueva fase.
+    const upBefore = HF.upkeepOf(g, f, 'up', null);
+    const foodBefore = f.food || 0;
+    const incBefore = (HF.income(g, f, null) || {}).food || 0;
     HF.supply(g);
+    
+    // DIPLOMACIA: Procesar pagos de préstamos, interdicción de rutas, actualizar mapa de amenazas.
+    // Aislado: un dato diplomático corrupto no puede impedir que la facción cobre y juegue.
+    if (HF.Diplomacy) {
+      try {
+        HF.Diplomacy.ensure(g);
+        HF.Diplomacy.processLoanPayments(g, f.id);
+        HF.Diplomacy.checkTradeRouteInterdiction(g);
+        HF.Diplomacy.updateThreatMap(g, f.id);
+      } catch (e) {
+        if (HF.dipError) HF.dipError('startTurn.diplomacia', e);
+      }
+    }
+    
     for (const c of g.cells) if (c && c.u && c.u.owner === f.id) {
       c.u.mv = 1; c.u.at = 1; c.u.retreat = 0;
       if (c.u.cargo) { c.u.cargo.mv = 1; c.u.cargo.at = 1; c.u.cargo.retreat = 0; }
     }
     settle(g, f);
+    if (f.human && f.deficit) {
+      // Diagnóstico visible: el HUD puede estar mostrando solo la provincia
+      // seleccionada; aquí va el total inicial real de la facción.
+      ev(g, null, 'Déficit: mantenimiento inicial ' + upBefore + ' · comida ' + foodBefore + ' + ' + incBefore +
+        ' · provincias ' + (HF.provinces(g, f) || []).length, 'bad');
+    }
   }
   HF.startTurn = startTurn;
 
@@ -982,7 +1374,16 @@
       let from = null, best = 0;
       for (const s of sources) {
         const sc = g.cells[s], r = tradeStrikeRange(g, u, sc);
-        if (seaTrade && !naval && r <= 1) continue;   // la infantería no alcanza el mar
+        // Permitir que infantería ataque caravanas marítimas si está en costa adyacente
+        // (r=1 desde casilla costera adyacente al mar)
+        if (seaTrade && !naval && r <= 1) {
+          // Verificar si la fuente está en costa (adyacente a mar)
+          const isCoastal = HF.nbs(g, s).some(j => {
+            const n = g.cells[j];
+            return n && isWater(n);
+          });
+          if (!isCoastal) continue;
+        }
         if (naval && !seaTrade) continue;             // un barco no sube a una calzada
         if (HF.hexDist(sc, t) > r) continue;
         if (r > best) { best = r; from = s; }
@@ -1238,7 +1639,17 @@
   function dirBetween(g, a, b) { return grid(g).nb[a].indexOf(b); }
 
   function snap(g) {
-    g.undo.push(JSON.stringify({ cells: g.cells.map(c => c && stripCell(c)), f: g.f, stat: g.stat, fogMap: g.fogMap ? Array.from(g.fogMap) : null, rl: g.replayLog ? g.replayLog.length : null }));
+    // Las facciones llevan Maps (threatMap/trustScores) que JSON convertiría en
+    // {} sin avisar: se guardan como objetos con claves numéricas y HF.undo los
+    // reconstruye con HF.Diplomacy.ensure. Sin esto, tras deshacer una acción
+    // la IA diplomática recibía objetos planos y lanzaba
+    // "enemy.diplomacy.threatMap?.get is not a function" al cerrar el turno.
+    const facs = (g.f || []).map(f => HF.Diplomacy && HF.Diplomacy.plainFaction
+      ? HF.Diplomacy.plainFaction(f) : f);
+    g.undo.push(JSON.stringify({
+      cells: g.cells.map(c => c && stripCell(c)), f: facs, stat: g.stat,
+      fogMap: g.fogMap ? Array.from(g.fogMap) : null, rl: g.replayLog ? g.replayLog.length : null
+    }));
     if (g.undo.length > 30) g.undo.shift();
   }
   function stripCell(c) { const o = Object.assign({}, c); return o; }
@@ -1247,6 +1658,10 @@
     if (!HF.canUndo(g)) return false;
     const s = JSON.parse(g.undo.pop());
     g.cells = s.cells; g.f = s.f; g.stat = s.stat;
+    if (HF.Diplomacy) {
+      HF.Diplomacy.ensure(g);
+      HF.Diplomacy.ensureCells(g);
+    }
     if (s.fogMap) g.fogMap = Int8Array.from(s.fogMap);
     if (s.rl != null && g.replayLog) g.replayLog.length = s.rl;
     HF.supply(g); HF.updateFog(g);
@@ -1478,6 +1893,25 @@
   }
   // Grabador determinista: solo las acciones exitosas entran al log.
   HF.act = function (g, from, to, kind) {
+    // DIPLOMACIA: Validar canAttack antes de cualquier acción militar
+    // kind puede ser 'atk' (ataque), 'move' (movimiento a casilla enemiga), etc.
+    if (kind === 'atk' || kind === 'move') {
+      const cFrom = g.cells[from];
+      const cTo = g.cells[to];
+      if (cFrom && cTo && cFrom.u) {
+        const attacker = cFrom.u.owner;
+        const defender = cTo.o;
+        // Verificar si es movimiento a casilla hostil (defensor diferente y no neutral)
+        const isHostileMove = kind === 'move' && defender !== attacker && defender >= 0;
+        const isAttack = kind === 'atk';
+        if (isAttack || isHostileMove) {
+          const check = HF.Diplomacy?.canAttack?.(g, attacker, defender, from, to);
+          if (check && !check.allowed) {
+            return { ok: false, reason: check.reason };
+          }
+        }
+      }
+    }
     const r = actRaw(g, from, to, kind);
     if (r && r.ok && g.replayLog && !g.noReplay) g.replayLog.push(kind ? [1, from, to, kind] : [1, from, to]);
     return r;
@@ -1634,6 +2068,9 @@
     if (f.human) snap(g);
     pay(f, g.cells[ci].comp, cost);
     const c = g.cells[ci]; c.b = b;
+    // Al fundar un pueblo o una ciudad recibe su nombre histórico (sin repetir
+    // dentro de la partida).
+    if ((b === B.PUEBLO || b === B.CIUDAD) && !c.city) c.city = HF.pickCityName(g);
     // A1.3.3 · FORTIFIED_ESTATE: el bastión queda operativo en el acto, sin esperar turno
     if (b === B.BASTION && has(f, 'FORTIFIED_ESTATE')) c.builtTurn = g.turn;
     if (f.human) g.stat.built++;
@@ -1666,6 +2103,43 @@
     const r = loanRaw(g, ci);
     if (r && r.ok && g.replayLog && !g.noReplay) g.replayLog.push([5, ci]);
     return r;
+  };
+
+  // Banca de la capital: compra cualquier recurso pagando oro.
+  // Precio por unidad = (producción de oro / producción del recurso) * fee.
+  // Ej.: 45 oro, 22 comida, 24 madera → 50 comida = 45/22 * 1.1 * 50 = 112.5 oro.
+  HF.bankQuote = function (g, f, target) {
+    if (!g || !f || ['gold', 'food', 'wood'].indexOf(target) < 0) return null;
+    const inc = HF.income(g, f, null) || { gold: 0, food: 0, wood: 0 };
+    const gold = +inc.gold || 0, prod = +inc[target] || 0;
+    if (gold <= 0 || prod <= 0) return null;
+    const fee = (HF.CFG && HF.CFG.bank && +HF.CFG.bank.fee) || 1.1;
+    return { rate: (gold / prod) * fee, gold: gold, prod: prod, inc: inc, fee: fee };
+  };
+  HF.bankExchange = function (g, ci, target, qty) {
+    if (!g || g.over) return { ok: false, msg: 'Partida terminada' };
+    const f = g.f[g.cur], c = g.cells[ci];
+    if (!f || !f.alive) return { ok: false, msg: 'Facción no válida' };
+    if (!c || c.o !== f.id || !c.cap || c.b !== B.CIUDAD) return { ok: false, msg: 'Solo en una ciudad capital' };
+    if (['gold', 'food', 'wood'].indexOf(target) < 0) return { ok: false, msg: 'Recurso no válido' };
+    qty = Math.floor(+qty || 0);
+    if (qty <= 0) return { ok: false, msg: 'Cantidad no válida' };
+    const q = HF.bankQuote(g, f, target);
+    if (!q) return { ok: false, msg: 'No produces ese recurso' };
+    const comp = HF.provOf(g, f, c), s = stockOf(f, comp);
+    if (!s) return { ok: false, msg: 'La capital no tiene tesorería conectada' };
+    const exact = Math.round(q.rate * qty * 1000) / 1000;
+    const cost = Math.ceil(exact);
+    if ((s.gold || 0) < cost) return { ok: false, msg: 'La capital no tiene oro suficiente' };
+    if (f.human && !g.noReplay) snap(g);
+    s.gold -= cost;
+    s[target] = (s[target] || 0) + qty;
+    syncTotals(f);
+    const RN = { gold: 'oro', food: 'comida', wood: 'madera' };
+    if (f.human) ev(g, ci, 'Banca: +' + qty + ' ' + RN[target] + ' por ' + cost + ' oro', 'good');
+    HF.updateFog(g);
+    if (g.replayLog && !g.noReplay) g.replayLog.push([10, target, qty, ci]);
+    return { ok: true, cost: cost, exact: exact, qty: qty, target: target, rate: q.rate };
   };
 
   // ---------- niebla ----------
@@ -1919,6 +2393,11 @@
     // Peligro ambiental: tormentas en alta mar (antes de cerrar la ronda, para
     // que los avisos queden en el turno que termina).
     HF.stormStep(g);
+    // DIPLOMACIA: entregar los recursos del comercio una vez por ronda.
+    if (HF.Diplomacy) {
+      try { HF.Diplomacy.processTradeTransfers(g); }
+      catch (e) { if (HF.dipError) HF.dipError('roundEnd.comercio', e); }
+    }
     g.turn++;
     // Caravanas: aparecen/avanzan/entregan al empezar la ronda nueva.
     HF.syncCaravans(g);
@@ -1941,27 +2420,52 @@
   };
   // Marca [4] con el estado RNG exacto. Así la repetición no depende de las
   // tiradas internas de la IA: al llegar a cada frontera de fase se restaura.
-  const markPhase = g => { if (g.replayLog && !g.noReplay) g.replayLog.push([4]); };
+  // Antes se guardaba solo [4] y, si el RNG divergía por árboles/tumbas/
+  // tormentas, la repetición se desincronizaba en pocos turnos.
+  const markPhase = g => {
+    if (!g.replayLog || g.noReplay) return;
+    save_rs(g);
+    g.replayLog.push([4, g.rs]);
+  };
   HF.endTurn = function (g, aiPlay) {
     if (g.over) return;
     clearDeg(g, 0);
     noUndo(g);
     markPhase(g);
+    if (HF.Diplomacy) {
+      try { HF.Diplomacy.ensure(g); HF.Diplomacy.updateAllThreatMaps(g); }
+      catch (e) { if (HF.dipError) HF.dipError('endTurn.amenazas', e); }
+    }
     for (let i = 1; i < g.f.length; i++) {
       const f = g.f[i];
       if (!f.alive || g.over) continue;
       g.cur = i;
-      startTurn(g, f);
-      if (aiPlay) aiPlay(g, i);
-      clearDeg(g, i);
-      checkElim(g);
-      HF.checkEnd(g);
+      // Cada fase se aísla: si una facción falla, el cierre de turno continúa.
+      // Antes una excepción en la IA diplomática detenía TODA la ronda.
+      try { startTurn(g, f); } catch (e) { aiFault(g, 'startTurn', e); }
+      try { if (aiPlay) aiPlay(g, i); } catch (e) { aiFault(g, 'aiPlay', e); }
+      try { clearDeg(g, i); checkElim(g); HF.checkEnd(g); } catch (e) { aiFault(g, 'endTurn', e); }
       if (aiPlay) markPhase(g);   // fase de IA ejecutada; sin IA no hace falta un límite extra
     }
     g.cur = 0;
     if (g.over) { save_rs(g); return; }
+    // DIPLOMACIA: expiraciones, mercado de préstamos y tratados pendientes.
+    if (HF.Diplomacy) {
+      try {
+        HF.Diplomacy.processExpirations(g);
+        HF.Diplomacy.processLoanMarket(g);
+      } catch (e) { aiFault(g, 'endTurn.diplomacia', e); }
+    }
     roundEnd(g);
   };
+  // Registra un fallo de fase sin detener la partida. La UI puede leer
+  // HF.dipFaults() para diagnóstico; el turno sigue su curso.
+  function aiFault(g, where, e) {
+    g.aiFaults = (g.aiFaults || 0) + 1;
+    if (g.aiFaults > 200) return;               // sin picos de log en bucles
+    if (HF.dipError) HF.dipError(where, e);
+    else if (typeof console !== 'undefined') console.error('[IA] ' + where + ':', e);
+  }
   // En reproducción no se ejecuta la IA: las acciones ya vienen en el log.
   // [4, rng] avanza exactamente una fase (jugador o rival) y restaura el RNG.
   HF.replayPhase = function (g, rngState) {
@@ -2013,6 +2517,7 @@
   HF.serialize = g => {
     const o = {};
     save_rs(g);
+    if (HF.Diplomacy) { try { HF.Diplomacy.ensure(g); } catch (e) { if (HF.dipError) HF.dipError('serialize', e); } }
     for (const k of Object.keys(g)) if (k[0] !== '_' && k !== 'undo' && k !== 'fogMap' && k !== 'isReplay' && k !== 'noReplay') o[k] = g[k];
     // La identidad del historial debe sobrevivir al guardar/reanudar.
     if (g.replayId) o.replayId = g.replayId;
@@ -2023,7 +2528,7 @@
       if (!c) return null;
       const d = { i: c.i, q: c.q, r: c.r };
       for (const k of ['t', 'res', 'b', 'o', 'cap', 'tomb', 'deg', 'sup', 'conq',
-        'burn', 'fire', 'wonder', 'wonderAt', 'lastStand', 'lastStandTurn', 'builtTurn', 'firedTurn', 'noCamp', 'iso', 'autoCampTurn']) if (c[k]) d[k] = c[k];
+        'burn', 'fire', 'wonder', 'wonderAt', 'lastStand', 'lastStandTurn', 'builtTurn', 'firedTurn', 'noCamp', 'iso', 'autoCampTurn', 'city']) if (c[k]) d[k] = c[k];
       // El dueño 0 es un valor válido: se guarda aparte de la lista anterior.
       if (c.tombOwner != null) d.tombOwner = c.tombOwner;
       if (c.tombUnit) d.tombUnit = c.tombUnit;
@@ -2031,12 +2536,51 @@
       if (c.degBy != null) d.degBy = c.degBy;         // el dueño 0 es un valor válido
       if (c.trap != null) d.trap = c.trap;           // el dueño 0 es un valor válido
       if (c.trapTurn != null) d.trapTurn = c.trapTurn;
+      // DIPLOMACIA: guardar borderControl y tradeRoutes
+      if (c.borderControl) d.borderControl = {...c.borderControl};
+      if (c.tradeRoutes) d.tradeRoutes = c.tradeRoutes.map(r => ({...r}));
       d.o = c.o; if (c.u) d.u = c.u;
       return d;
     });
+    // DIPLOMACIA: serializar tratados, mercado de préstamos y config.
+    // Versión 3: las facciones viajan como arrays (nunca como Set, que rompía
+    // `treaty.factions.includes` al reanudar la partida).
+    if (g.treaties instanceof Map) {
+      o.diplomacy = {
+        version: 3,
+        treaties: Array.from(g.treaties.entries()).map(([id, t]) => [id, {
+          ...t,
+          factions: Array.from(t.factions || []),
+          negotiationLog: Array.isArray(t.negotiationLog) ? t.negotiationLog.map(e => ({ ...e })) : [],
+          napTerms: t.napTerms ? { ...t.napTerms } : null,
+          tradeTerms: t.tradeTerms ? {
+            totalValuePerTurn: t.tradeTerms.totalValuePerTurn || 0,
+            routes: (t.tradeTerms.routes || []).map(r => ({ ...r, routeCells: Array.isArray(r.routeCells) ? r.routeCells.slice() : [] }))
+          } : null,
+          loanTerms: t.loanTerms ? { ...t.loanTerms, collateral: t.loanTerms.collateral ? { ...t.loanTerms.collateral } : null } : null
+        }]),
+        nextTreatyId: g.nextTreatyId,
+        loanMarket: {
+          offers: (g.loanMarket.offers || []).map(o => ({ ...o })),
+          requests: (g.loanMarket.requests || []).map(r => ({ ...r })),
+          nextOfferId: g.loanMarket.nextOfferId,
+          nextRequestId: g.loanMarket.nextRequestId
+        },
+        diplomacyConfig: { ...g.diplomacyConfig },
+        log: (g.diplomacyLog || []).slice(-40)
+      };
+    }
     return o;
   };
   HF.deserialize = o => {
+    // Acepta tanto el objeto ya parseado como el JSON en texto que llega por
+    // la nube/online, y falla con un mensaje claro si el guardado no sirve.
+    if (typeof o === 'string') {
+      try { o = JSON.parse(o); } catch (e) { throw new Error('Guardado ilegible'); }
+    }
+    if (!o || typeof o !== 'object' || !Array.isArray(o.f) || !Array.isArray(o.cells)) {
+      throw new Error('Guardado incompatible');
+    }
     const g = Object.assign({}, o); g.undo = []; g._resumed = true;
     for (const f of g.f) {
       if (f.starvationsInduced == null) f.starvationsInduced = 0;
@@ -2045,12 +2589,44 @@
       if (f.loan == null || !(f.loan.turns > 0)) f.loan = null;
     }
     g.cells = o.cells.map(c => c && Object.assign(HF.newCell(c), c));
+    // Partidas guardadas antes de los nombres de ciudad: se bautizan ahora.
+    for (const c of g.cells) if (c && (c.b === B.PUEBLO || c.b === B.CIUDAD) && !c.city) c.city = HF.pickCityName(g);
     for (const c of g.cells) if (c && c.u && c.u.pa !== undefined) { c.u.mv = c.u.at = c.u.pa; delete c.u.pa; }
     g.fogMap = o.fogMap ? Int8Array.from(o.fogMap) : null;
     g._customCells = o._customCells || null;
     g.supInit = false;
     HF.supply(g); g.supInit = true;
     HF.initStock(g);
+
+    // DIPLOMACIA: una sola vía de restauración para v2 y v3. `ensure` reconstruye
+    // los Maps con claves numéricas, normaliza `factions` a ARRAY (el bug del Set
+    // rompía `factions.includes`) y repara enlaces facción↔tratado.
+    const dip = o.diplomacy;
+    if (dip && (dip.version === 2 || dip.version === 3)) {
+      g.treaties = dip.treaties;
+      g.nextTreatyId = dip.nextTreatyId;
+      g.loanMarket = dip.loanMarket;
+      g.diplomacyConfig = dip.diplomacyConfig;
+      if (Array.isArray(dip.log)) g.diplomacyLog = dip.log.slice(-40);
+    } else {
+      // Savegame v1 (anterior a la diplomacia): estructuras vacías.
+      g.treaties = new Map();
+      g.nextTreatyId = 1;
+      g.loanMarket = { offers: [], requests: [], nextOfferId: 0, nextRequestId: 0 };
+      g.diplomacyConfig = {};
+      g.diplomacyLog = [];
+    }
+    if (HF.Diplomacy) {
+      HF.Diplomacy.ensure(g);
+      HF.Diplomacy.ensureCells(g);
+      if (dip && (dip.version === 2 || dip.version === 3)) {
+        // Reenganchar préstamos vivos a la economía de cada facción.
+        for (const t of g.treaties.values()) {
+          if (t.type !== 'loan_contract' || t.status !== 'active') continue;
+          HF.Diplomacy._activateLoan(g, t);
+        }
+      }
+    }
     return g;
   };
   HF.stars = g => {

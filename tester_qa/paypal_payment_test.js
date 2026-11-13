@@ -294,6 +294,9 @@ function reset() {
   ok(/\/v2\/checkout\/orders/.test(edge) && /\/capture/.test(edge), 'la función crea y captura órdenes de PayPal');
   ok(/fn_hf_paypal_grant/.test(edge), 'la función activa Premium con la RPC atómica');
   ok(/ORDER_ALREADY_CAPTURED/.test(edge), 'la función es idempotente ante una captura repetida');
+  ok(/RESEND_API_KEY/.test(edge) && /EMAIL_FROM/.test(edge), 'la función soporta el envío de credenciales por correo');
+  ok(/recover-request/.test(edge) && /fn_hf_recover_credentials/.test(edge), 'la función permite recuperar credenciales por correo');
+  ok(/email_sent/.test(edge), 'la captura informa de si el correo salió');
 
   const sql = fs.readFileSync(path.join(__dirname, '..', 'sql', 'paypal_payments.sql'), 'utf8');
   ok(/create table if not exists public\.hf_payments/i.test(sql), 'el SQL crea hf_payments');
@@ -301,6 +304,12 @@ function reset() {
   ok(/revoke all on public\.hf_payments from anon, authenticated/i.test(sql), 'hf_payments queda cerrada para anon/authenticated');
   ok(/security definer/i.test(sql) && /revoke all on function public\.fn_hf_paypal_grant/i.test(sql), 'la RPC es SECURITY DEFINER y no es pública');
   ok(/exception when unique_violation/i.test(sql), 'un correo de PayPal ya usado no bloquea la activación');
+
+  const extra = fs.readFileSync(path.join(__dirname, '..', 'sql', 'account_extra.sql'), 'utf8');
+  ok(/fn_hf_set_secret/.test(extra), 'el SQL permite editar la llave secreta');
+  ok(/fn_hf_delete_player/.test(extra), 'el SQL permite borrar la cuenta temporal');
+  ok(/fn_hf_recover_credentials/.test(extra), 'el SQL prepara la recuperación de credenciales');
+  ok(/grant execute on function public\.fn_hf_recover_credentials\(text\) to service_role/i.test(extra), 'la recuperación de credenciales es sólo para service_role');
 
   console.log(fail ? '\nCON FALLOS (' + fail + ')' : '\nTODO OK');
   process.exit(fail ? 1 : 0);

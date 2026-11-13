@@ -8,6 +8,11 @@
 <title>Federati</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
+<!-- Preload fuentes críticas para idiomas CJK/RTL -->
+<link rel="preload" as="font" type="font/woff2" crossorigin href="fonts/noto-sans-sc-latin.woff2">
+<link rel="preload" as="font" type="font/woff2" crossorigin href="fonts/noto-sans-jp-latin.woff2">
+<link rel="preload" as="font" type="font/woff2" crossorigin href="fonts/noto-sans-kr-latin.woff2">
+<link rel="preload" as="font" type="font/woff2" crossorigin href="fonts/noto-sans-arabic-latin.woff2">
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="js/ui/components/lore-screen/lore-screen.css">
 <style>
@@ -48,11 +53,27 @@
 <script src="js/banter.js"></script>
 <script src="js/mapgen.js"></script>
 <script src="js/engine.js"></script>
+<script src="js/diplomacy.js"></script>
+<script src="js/diplomacy_ai.js"></script>
+<script src="js/diplomacy_ui.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/board.js"></script>
 <script src="js/cloud.js"></script>
 <script src="js/progress.js"></script>
 <script src="js/i18n.js"></script>
+<script src="js/i18n/en-keys.js"></script>
+<script src="js/i18n/phrases.en.js"></script>
+<script src="js/i18n/phrases.fr.js"></script>
+<script src="js/i18n/phrases.de.js"></script>
+<script src="js/i18n/phrases.it.js"></script>
+<script src="js/i18n/phrases.pt.js"></script>
+<script src="js/i18n/phrases.ru.js"></script>
+<script src="js/i18n/phrases.zh.js"></script>
+<script src="js/i18n/phrases.ja.js"></script>
+<script src="js/i18n/phrases.ko.js"></script>
+<script src="js/i18n/phrases.ar.js"></script>
+<script src="js/i18n/phrases.hi.js"></script>
+<script src="js/i18n/phrases.bn.js"></script>
 <script src="js/names.js"></script>
 <script src="js/screens.js"></script>
 <script src="js/payment.js"></script>
@@ -69,6 +90,7 @@
 <script src="js/replays.js"></script>
 <script src="js/ui/components/lore-screen/lore-data.js"></script>
 <script src="js/ui/components/lore-screen/LoreScreen.js"></script>
+<script src="js/i18n/ui-layer.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

@@ -82,6 +82,7 @@
     else if (t[0] === 4) { HF.replayPhase(g, t[1]); }
     else if (t[0] === 5) r = HF.loan(g, t[1]);
     else if (t[0] === 9) r = HF.sendCargo(g, t[1], t[2], t[3], t[4]);
+    else if (t[0] === 10) r = HF.bankExchange(g, t[3], t[1], t[2]);
     if (r && !r.ok) throw new Error(r.msg || 'acción no válida');
     return r;
   };

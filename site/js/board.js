@@ -1,0 +1,1434 @@
+(function (G) {
+  const HF = G.HF, T = HF.T, B = HF.B;
+  const S3 = Math.sqrt(3);
+  // Paleta curada: oliva/musgo, piedra y azul pizarra nórdico.
+  const TCOL = ['#5C8247', '#776843', '#646A70', '#35647F', '#1E354B'];
+  const TCOL2 = ['#3E5A31', '#51452C', '#40464D', '#254C62', '#142637'];
+  // El editor conserva la paleta plana y legible original: no debe convertirse
+  // en una miniatura del diorama 2.5D del juego.
+  const ECOL = ['#7bbf5a', '#b59a52', '#7d7d86', '#5aa7d6', '#2c5f9e'];
+  const ECOL2 = ['#5e9a43', '#907a3d', '#5b5b63', '#3f86b8', '#1f4676'];
+  const INK = '#F4EFEA', VOID = '#0A0F1D';
+  // --- Constantes globales para renderizado 2.5D ---
+  const ZENITH_ANGLE = 300;
+  // Inclinación de la cámara sobre el plano del tablero (HF.CFG.view.tilt).
+  // 1 = vista cenital plana; el valor de juego vive en config.js (0.62).
+  // Solo afecta a la geometría del suelo: los sprites se dibujan verticales y
+  // la cámara conserva su zoom/pan en coordenadas de mundo.
+  const TILT = (HF.CFG && HF.CFG.view && HF.CFG.view.tilt) || 0.62;
+  // Las unidades se suben ~10% de la altura proyectada del hexagono para que la
+  // base quede dentro de la casilla y no se derrame hacia la fila delantera.
+  // Se expresa en fraccion de fs (radio del hexagono en pantalla).
+  const UNIT_RISE = 0.2 * 2 * TILT;
+  // Estiramiento vertical de los sprites: compensa el aplastado del suelo y les
+  // devuelve volumen. La base queda fija y el sprite crece hacia arriba.
+  const SPRITE_STRETCH = (HF.CFG && HF.CFG.view && HF.CFG.view.spriteStretch) || 1.15;
+  const ZENITH_GRADIENT_TOP = -0.86602540378 * TILT;
+  const ZENITH_GRADIENT_BOT = +0.86602540378 * TILT;
+  const JITTER_AMPLITUDE = 0.05;
+  const COASTAL_WALL_HEIGHT = 8;
+  const BEVEL_LIGHT_THRESHOLD = 0.3;
+  const BEVEL_DARK_THRESHOLD = -0.3;
+  // Mapeo de recursos a claves de arte
+  const RES_ART_KEY = { 1: 'resORO_ROCA', 2: 'resTRIGO', 3: 'resMADERA' };
+  // Escala del arte respecto al ancho de la casilla (fs): cada sprite se ajusta
+  // dentro de una caja de fs*BOX. Ajustables a ojo; no afectan a la lógica.
+  const UNIT_BOX = 2.5;    // diorama de la unidad
+  const BUILD_BOX = 1.8;   // asentamientos y caminos
+  // Recursos: pieza de diorama (no textura recortada), por debajo de edificios
+  // y unidades de su misma casilla.
+  const RES_BOX = 1.5;
+  // --- Helpers de color para renderizado 2.5D ---
+  function hexToHSL(hex) {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) {
+      h = 0; s = 0;
+    } else {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h *= 60;
+    }
+    return { h, s, l };
+  }
+
+  function HSLToHex(hsl) {
+    const { h, s, l } = hsl;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r, g, b;
+    if (h < 60) { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+    r = Math.round((r + m) * 255);
+    g = Math.round((g + m) * 255);
+    b = Math.round((b + m) * 255);
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+  }
+
+  function hexJitter(q, r, seed = 0x9E3779B9) {
+    let x = Math.imul(q, 0x3243F6A9) ^ Math.imul(r, 0x9E3779B9) ^ seed;
+    x = (x + 0x9E3779B9) | 0;
+    x = Math.imul(x ^ (x >>> 15), 0x21F0AAAD);
+    x = Math.imul(x ^ (x >>> 15), 0x735A2D97);
+    x = x ^ (x >>> 15);
+    return (x >>> 0) / 0x100000000;
+  }
+
+  function jitterFactor(q, r) {
+    const h = hexJitter(q, r);
+    return (h - 0.5) * JITTER_AMPLITUDE * 2;
+  }
+
+  // --- Caches para rendimiento 60fps ---
+    const _zenithGradCache = new Map(); // key: `${terrain}|${jitterQ}|${fs|0}` -> CanvasGradient
+    const _jitterColorCache = new Map(); // key: `${baseHex}|${jitterQ}` -> hex
+    const _coastalArr = []; // pool para extrusiones de costa
+    const _wallsArr = []; // pool para paredes internas
+    const _itemsArr = []; // pool para items de dibujo
+  const EDGES = [
+    { dq: 1, dr: 0, e: 0 }, { dq: 1, dr: -1, e: 1 }, { dq: 0, dr: -1, e: 2 },
+    { dq: -1, dr: 0, e: 3 }, { dq: -1, dr: 1, e: 4 }, { dq: 0, dr: 1, e: 5 }
+  ];
+  // EDGES indexa la DIRECCION del vecino (E, NE, NO, O, SO, SE), pero la arista
+  // k del hexagono va del vertice k al k+1. Esta tabla traduce direccion ->
+  // arista dibujada; sin ella los faldones y muros se pintaban en lados rotados
+  // (la costa aparecia en el norte y el agua parecia quedar por encima).
+  const EDGE_OF = [0, 5, 4, 3, 2, 1];
+
+  // Tablero hexagonal sobre canvas con zoom, pan y arrastre
+  // Tableros vivos: el puente de plataforma los pausa y reanuda en bloque
+  // cuando la app pasa a segundo plano (ver js/platform.js).
+  const LIVE = new Set();
+  HF.boards = LIVE;
+  function Board(canvas, h) {
+    this.cv = canvas; this.h = h; this.ctx = canvas.getContext('2d');
+    this.cam = { x: 0, y: 0, z: 1 }; this.size = 24;
+    this.R = 7; this.cells = null; this.fogMap = null; this.over = new Map(); this.sel = -1; this.drag = null;
+    this.mode = 'play'; this.viewMode = 'normal';
+    this.parts = null; this._raf = 0; this._animLast = 0; this._drawT = 0;
+    this.fx = []; this.pulses = []; this._fxRaf = 0; this._shakeUntil = 0; this._shakeAmp = 0; this.hop = null;
+    this._paused = false; this._dead = false; this._wasAnim = false;
+    LIVE.add(this);
+    this.ptrs = new Map(); this._bind();
+    this._zoomUI();
+    this.dpr = Math.min(2, G.devicePixelRatio || 1);
+    new ResizeObserver(() => { this.resize(); }).observe(canvas.parentElement);
+    this.resize();
+  }
+  const P = Board.prototype;
+  const ZMIN = .12, ZMAX = 3.5;
+  // zoom manteniendo fijo el punto de pantalla (sx, sy)
+  P.zoomAt = function (nz, sx, sy) {
+    nz = Math.max(ZMIN, Math.min(ZMAX, nz));
+    const [wx, wy] = this.fromScreen(sx, sy);
+    this.cam.z = nz;
+    this.cam.x = wx - (sx - this.W / 2) / nz; this.cam.y = wy - (sy - this.H / 2) / (nz * TILT);
+    this.draw();
+  };
+  P._zoomUI = function () {
+    const wrap = this.cv.parentElement, me = this;
+    if (!wrap || wrap.querySelector('.zoomctl')) return;
+    const d = document.createElement('div'); d.className = 'zoomctl';
+    d.innerHTML = '<button data-z="in" aria-label="Acercar">＋</button><button data-z="out" aria-label="Alejar">－</button><button data-z="fit" aria-label="Ver todo">⤢</button>';
+    d.addEventListener('pointerdown', e => e.stopPropagation());
+    d.querySelectorAll('button').forEach(b => b.onclick = () => {
+      const k = b.dataset.z;
+      if (k === 'fit') me.fit(); else me.zoomAt(me.cam.z * (k === 'in' ? 1.35 : 1 / 1.35), me.W / 2, me.H / 2);
+    });
+    wrap.appendChild(d);
+  };
+  P.resize = function () {
+    const p = this.cv.parentElement, w = p.clientWidth, hh = p.clientHeight;
+    this.cv.width = w * this.dpr; this.cv.height = hh * this.dpr; this.cv.style.width = w + 'px'; this.cv.style.height = hh + 'px';
+    this.W = w; this.H = hh; this.parts = null; this.draw();
+  };
+  // --- ambiente del tablero (agua, nubes, partículas) ---
+  P._initParts = function () {
+    const n = Math.max(0, Math.min(40, (HF.CFG.ambience && HF.CFG.ambience.maxParticles) || 25));
+    const winter = this.game && HF.season && HF.season(this.game) === 3;
+    this._partsWinter = winter;
+    const w = Math.max(1, this.W), h = Math.max(1, this.H);
+    this.parts = [];
+    for (let k = 0; k < n; k++) {
+      const bird = !winter && k % 6 === 0;
+      this.parts.push({
+        x: Math.random() * w, y: Math.random() * h,
+        vx: winter ? -6 - Math.random() * 10 : (bird ? 18 + Math.random() * 16 : 3 + Math.random() * 7),
+        vy: winter ? 14 + Math.random() * 20 : (bird ? -2 + Math.random() * 4 : -2 + Math.random() * 4),
+        s: bird ? 5 : (winter ? 1.4 : 1.1 + Math.random() * 1.4),
+        bird
+      });
+    }
+  };
+  P._updateParts = function (dt) {
+    if (!this.parts) return;
+    const w = Math.max(1, this.W), h = Math.max(1, this.H);
+    for (const p of this.parts) {
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.x < -20) p.x = w + 20; else if (p.x > w + 20) p.x = -20;
+      if (p.y < -20) p.y = h + 20; else if (p.y > h + 20) p.y = -20;
+    }
+  };
+  P.startAnim = function () {
+    if (this._raf || this._paused || this._dead || !G.requestAnimationFrame) return;
+    if (!this.parts) this._initParts();
+    const me = this;
+    const tick = t => {
+      if (!me._raf) return;
+      me._raf = G.requestAnimationFrame(tick);
+      if (G.document && G.document.hidden) return;
+      const fps = Math.max(6, Math.min(30, (HF.CFG.ambience && HF.CFG.ambience.fps) || 15));
+      if (t - me._drawT < 1000 / fps) return;
+      const dt = me._animLast ? Math.min(.12, (t - me._animLast) / 1000) : .016;
+      me._animLast = t; me._drawT = t;
+      const winterNow = me.game && HF.season && HF.season(me.game) === 3;
+      if (!me.parts || me._partsWinter !== winterNow) me._initParts();
+      me._updateParts(dt);
+      me.draw();
+    };
+    this._raf = G.requestAnimationFrame(tick);
+  };
+  P.stopAnim = function () {
+    if (this._raf && G.cancelAnimationFrame) G.cancelAnimationFrame(this._raf);
+    if (this._fxRaf && G.cancelAnimationFrame) G.cancelAnimationFrame(this._fxRaf);
+    this._raf = 0; this._fxRaf = 0;
+  };
+  // Pausa real del bucle: cancela los RAF y recuerda si estaban activos para
+  // reanudarlos tal cual cuando la app vuelva al frente.
+  P.pause = function () {
+    if (this._paused || this._dead) return;
+    this._paused = true;
+    this._wasAnim = !!this._raf;
+    this._wasFx = !!this._fxRaf;
+    this.stopAnim();
+  };
+  P.resume = function () {
+    if (!this._paused || this._dead) return;
+    this._paused = false;
+    if (G.document && G.document.hidden) return;
+    if (this._wasAnim) this.startAnim();
+    this._wasAnim = this._wasFx = false;
+    if (this.fx.length || this.pulses.length || this.hop) this._startFx();
+    try { this.draw(); } catch (e) { }
+  };
+  // Al cerrar la pantalla de juego el tablero deja de interesar al puente.
+  P.dispose = function () {
+    this._dead = true;
+    this.stopAnim();
+    LIVE.delete(this);
+  };
+  HF.pauseBoards = function () { for (const b of LIVE) b.pause(); };
+  HF.resumeBoards = function () { for (const b of LIVE) b.resume(); };
+  P.setMap = function (R, cells) { this.R = R; this.cells = cells; this.cam.z = 1; this.parts = null; this.fit(); };
+  P.fit = function () {
+    const rw = (2 * this.R + 1) * this.size * S3, rh = (2 * this.R + 1) * this.size * 1.5 * TILT;
+    this.cam.z = Math.max(ZMIN, Math.min(2, Math.min(this.W / rw, this.H / rh) * 1.05));
+    this.cam.x = 0; this.cam.y = 0; this.draw();
+  };
+  // Vista inicial de partida: encaja el mapa y acerca un poco para que la
+  // capital y su comarca se lean desde el primer turno. El boton de "ver todo"
+  // sigue usando fit() sin este acercamiento.
+  P.startView = function () {
+    this.fit();
+    const k = (HF.CFG && HF.CFG.view && HF.CFG.view.startZoom) || 1.2;
+    this.cam.z = Math.max(ZMIN, Math.min(ZMAX, Math.max(this.cam.z, 1.2) * k));
+    this.draw();
+  };
+  P.pos = function (c) { return [this.size * S3 * (c.q + c.r / 2), this.size * 1.5 * c.r]; };
+  // Altura relativa del diorama. El agua es la base; el llano ya está
+  // ligeramente elevado y las colinas/montañas escalonan el relieve.
+  P._level = function (c) {
+    return c.t === T.MONTANA ? 12 : c.t === T.COLINA ? 6 : (c.t === T.MAR || c.t === T.RIO) ? 0 : 2;
+  };
+  P._lift = function (c) { return (this.mode === 'paint' || this.mapEditor) ? 0 : this._level(c); };
+  P.toScreen = function (x, y) { return [(x - this.cam.x) * this.cam.z + this.W / 2, (y - this.cam.y) * TILT * this.cam.z + this.H / 2]; };
+  P.fromScreen = function (sx, sy) { return [(sx - this.W / 2) / this.cam.z + this.cam.x, (sy - this.H / 2) / (this.cam.z * TILT) + this.cam.y]; };
+  P.hit = function (sx, sy) {
+    const [x, y] = this.fromScreen(sx, sy), s = this.size;
+    const qf = (S3 / 3 * x - y / 3) / s, rf = (2 / 3 * y) / s;
+    let q = Math.round(qf), r = Math.round(rf), sg = Math.round(-qf - rf);
+    const dq = Math.abs(q - qf), dr = Math.abs(r - rf), ds = Math.abs(sg - (-qf - rf));
+    if (dq > dr && dq > ds) q = -r - sg; else if (dr > ds) r = -q - sg;
+    if (Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) > this.R) return -1;
+    return (q + this.R) * (2 * this.R + 1) + (r + this.R);
+  };
+  P.centerOn = function (i) { const c = this.cells[i]; const [x, y] = this.pos(c); this.cam.x = x; this.cam.y = y; this.draw(); };
+
+  P._bind = function () {
+    const cv = this.cv, me = this;
+    cv.style.touchAction = 'none';
+    cv.addEventListener('pointerdown', e => {
+      cv.setPointerCapture(e.pointerId);
+      me.ptrs.set(e.pointerId, { x: e.offsetX, y: e.offsetY, sx: e.offsetX, sy: e.offsetY });
+      if (me.ptrs.size === 1) {
+        const i = me.hit(e.offsetX, e.offsetY);
+        me.st = { i, moved: false, mode: null, cx: me.cam.x, cy: me.cam.y };
+      } else if (me.ptrs.size === 2) { me.st.mode = 'pinch'; me.drag = null; me.pd = me._pd(); me.pz = me.cam.z; me.pm = me._pm(); me.pc = { x: me.cam.x, y: me.cam.y }; }
+    });
+    cv.addEventListener('pointermove', e => {
+      const p = me.ptrs.get(e.pointerId); if (!p) return;
+      p.x = e.offsetX; p.y = e.offsetY;
+      const st = me.st; if (!st) return;
+      if (me.ptrs.size >= 2) {
+        const m = me._pm(), nz = Math.max(ZMIN, Math.min(ZMAX, me.pz * me._pd() / me.pd));
+        // el punto bajo el centro del pellizco sigue al dedo (zoom + desplazamiento)
+        me.cam.z = me.pz; me.cam.x = me.pc.x; me.cam.y = me.pc.y;
+        const [wx, wy] = me.fromScreen(me.pm.x, me.pm.y);
+        me.cam.z = nz;
+        me.cam.x = wx - (m.x - me.W / 2) / nz; me.cam.y = wy - (m.y - me.H / 2) / (nz * TILT);
+        me.draw(); return;
+      }
+      const dx = p.x - p.sx, dy = p.y - p.sy;
+      if (!st.moved && Math.hypot(dx, dy) > 8) {
+        st.moved = true;
+        if (st.mode == null) {
+          if (me.h.onDragStart && st.i >= 0 && me.h.onDragStart(st.i)) st.mode = 'drag'; else st.mode = me.mode === 'paint' ? 'paint' : 'pan';
+        }
+      }
+      if (st.mode === 'pan') { me.cam.x = st.cx - dx / me.cam.z; me.cam.y = st.cy - dy / (me.cam.z * TILT); me.draw(); }
+      else if (st.mode === 'drag') { me.drag = { from: st.i, x: p.x, y: p.y, to: me.hit(p.x, p.y) }; me.draw(); }
+      else if (st.mode === 'paint') { const i = me.hit(p.x, p.y); if (i >= 0 && me.h.onPaint) me.h.onPaint(i); }
+    });
+    const up = e => {
+      const p = me.ptrs.get(e.pointerId); if (!p) return;
+      me.ptrs.delete(e.pointerId);
+      const st = me.st;
+      if (st && me.ptrs.size === 0) {
+        if (st.mode === 'drag') { const to = me.hit(p.x, p.y); me.drag = null; me.draw(); if (to >= 0 && to !== st.i && me.h.onDrop) me.h.onDrop(st.i, to); }
+        else if (!st.moved && st.mode !== 'pinch' && e.type === 'pointerup') { if (st.i >= 0 && me.h.onTap) me.h.onTap(st.i); }
+        me.st = null; me.drag = null; me.draw();
+      }
+    };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', e => {
+      e.preventDefault();
+      me.zoomAt(me.cam.z * (e.deltaY < 0 ? 1.12 : 1 / 1.12), e.offsetX, e.offsetY);
+    }, { passive: false });
+  };
+  P._pm = function () { const a = [...this.ptrs.values()]; return { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2 }; };
+  P._pd = function () { const a = [...this.ptrs.values()]; return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) || 1; };
+
+  function hexPath(ctx, x, y, s) {
+    ctx.beginPath();
+    const sy = s * TILT;
+    for (let k = 0; k < 6; k++) { const a = Math.PI / 180 * (60 * k - 30); const px = x + s * Math.cos(a), py = y + sy * Math.sin(a); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+    ctx.closePath();
+  }
+
+  P._nbs = function (c) {
+    if (!this.game || !c) return [];
+    try { return HF.nbs(this.game, c.i) || []; } catch (e) { return []; }
+  };
+  P._coast = function (c) {
+    if (!c || c.t === T.MAR) return false;
+    const nbs = this._nbs(c);
+    return nbs.length < 6 || nbs.some(j => { const n = this.game.cells[j]; return !n || n.t === T.MAR; });
+  };
+  P._shore = function (c) {
+    if (!c || c.t !== T.MAR) return false;
+    return this._nbs(c).some(j => { const n = this.game.cells[j]; return n && n.t !== T.MAR && n.t !== T.RIO; });
+  };
+  // Vecino exacto al otro lado de uno de los dos lados visibles.
+  P._neighbor = function (c, dq, dr) {
+    if (!c) return null;
+    const cells = (this.game && this.game.cells) || this.cells || [];
+    for (const j of this._nbs(c)) {
+      const n = cells[j];
+      if (n && n.q === c.q + dq && n.r === c.r + dr) return n;
+    }
+    return null;
+  };
+  // Vértice k del hexágono (k = 0..5). Se usa para las seis aristas.
+  P._vert = function (x, fy, fs, k) {
+    const a = Math.PI / 180 * (60 * k - 30);
+    return [x + fs * Math.cos(a), fy + fs * TILT * Math.sin(a)];
+  };
+  P._sideWall = function (ctx, x, y0, fs, level, edge, depth, deep, t) {
+    if (depth <= 0) return;
+    const fy = y0 - level;
+    const k = EDGE_OF[edge.e];
+    const [x1, y1] = this._vert(x, fy, fs, k);
+    const [x2, y2] = this._vert(x, fy, fs, (k + 1) % 6);
+    const mx = (x1 + x2) / 2 - x, my = (y1 + y2) / 2 - fy;
+    const ml = Math.hypot(mx, my) || 1;
+    // Un pequeño bisel hacia fuera permite ver también las aristas que
+    // miran al norte; el recorte posterior impide que invadan la cara.
+    const bevel = Math.max(4, depth * .55);
+    const nx = mx / ml * bevel, ny = my / ml * bevel;
+    const bx1 = x1 + nx, by1 = y1 + ny + depth;
+    const bx2 = x2 + nx, by2 = y2 + ny + depth;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(bx2, by2); ctx.lineTo(bx1, by1); ctx.closePath();
+    if (deep) {
+      const grd = ctx.createLinearGradient(0, Math.min(y1, y2), 0, Math.max(by1, by2));
+      grd.addColorStop(0, '#343A46'); grd.addColorStop(.55, '#1D2530'); grd.addColorStop(1, VOID);
+      ctx.fillStyle = grd;
+    } else {
+      ctx.fillStyle = TCOL2[t] || '#3E5A31';
+    }
+    ctx.fill();
+    ctx.fillStyle = nx > 1 ? 'rgba(244,239,234,.065)' : 'rgba(10,15,29,.16)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(244,239,234,.1)'; ctx.lineWidth = Math.max(1, fs * .028);
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  };
+  P._wallGroup = function (ctx, group) {
+    const { x, y0, fs, lift, t, edges } = group;
+    if (!edges.length) return;
+    const fy = y0 - lift;
+    // Se recorta el interior de la cara: los seis prismas quedan fuera y
+    // ninguno pinta una banda oscura sobre el propio terreno.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-20, -20, this.W + 40, this.H + 40);
+    for (let k = 0; k < 6; k++) {
+      const [vx, vy] = this._vert(x, fy, fs, k);
+      k ? ctx.lineTo(vx, vy) : ctx.moveTo(vx, vy);
+    }
+    ctx.closePath(); ctx.clip('evenodd');
+    for (const e of edges) this._sideWall(ctx, x, y0, fs, lift, e.edge, e.depth, e.deep, t);
+    ctx.restore();
+  };
+  // Extrusión de costa (faldón hacia agua/borde)
+  // Solo se extruye en las aristas que miran al sur (SO y SE), creando un
+  // faldón/skirt que hace que el agua parezca una cuenca respecto a la tierra.
+  P._drawCoastalExtrusion = function (ctx, c, x, y0, fs, lift) {
+    const yTop = y0 - lift;
+    const H = COASTAL_WALL_HEIGHT; // px pantalla, no escalado
+    // Direcciones SO (4) y SE (5) -> aristas 2 y 1 del hexagono.
+    for (const eIdx of [4, 5]) {
+      const e = EDGES[eIdx];
+      const n = this._neighbor(c, e.dq, e.dr);
+      const isCoast = !n || n.t === T.MAR || n.t === T.RIO;
+      if (!isCoast) continue;
+      const k = EDGE_OF[eIdx];
+      // Vértices A (k) y B (k+1) en la cara superior
+      const [Ax, Ay] = this._vert(x, yTop, fs, k);
+      const [Bx, By] = this._vert(x, yTop, fs, (k + 1) % 6);
+      // Vértices C, D desplazados hacia abajo H px (faldón hacia afuera)
+      const Cx = Bx, Cy = By + H;
+      const Dx = Ax, Dy = Ay + H;
+      // Gradiente vertical 3 stops para el faldón
+      const grd = ctx.createLinearGradient(0, yTop, 0, yTop + H);
+      grd.addColorStop(0.00, '#3A4150');
+      grd.addColorStop(0.55, '#222A38');
+      grd.addColorStop(1.00, VOID);
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.moveTo(Ax, Ay);
+      ctx.lineTo(Bx, By);
+      ctx.lineTo(Cx, Cy);
+      ctx.lineTo(Dx, Dy);
+      ctx.closePath();
+      ctx.fill();
+      // Highlight superior (borde A-B) - línea suave simulando borde pulido
+      ctx.strokeStyle = 'rgba(244,239,234,0.12)';
+      ctx.lineWidth = Math.max(1, fs * 0.015);
+      ctx.beginPath();
+      ctx.moveTo(Ax, Ay);
+      ctx.lineTo(Bx, By);
+      ctx.stroke();
+    }
+  };
+  P._hasFx = function (now) {
+    return this.fx.length > 0 || this.pulses.length > 0 || now < this._shakeUntil || !!this.hop;
+  };
+  P._startFx = function () {
+    if (this._fxRaf || this._paused || this._dead || !G.requestAnimationFrame) return;
+    const me = this;
+    const tick = t => {
+      if (!me._fxRaf) return;
+      me.draw();
+      if (me._hasFx(t)) me._fxRaf = G.requestAnimationFrame(tick);
+      else me._fxRaf = 0;
+    };
+    this._fxRaf = G.requestAnimationFrame(tick);
+  };
+  P.burst = function (kind, i, n) {
+    const c = this.cells && this.cells[i]; if (!c) return;
+    const [x, y0] = this.toScreen(...this.pos(c));
+    const y = y0 - this._lift(c);
+    const wood = ['#8B5A2B', '#A97142', '#6B4423'];
+    const stone = ['#A7ADB7', '#7D8590', '#5D6570'];
+    const ember = ['#F5B942', '#D98432', '#B85C3A'];
+    const cols = kind === 'wood' ? wood : kind === 'ember' ? ember : stone;
+    const count = n || (kind === 'wood' ? 4 : 7);
+    const now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
+    for (let k = 0; k < count; k++) {
+      this.fx.push({
+        kind, x, y,
+        vx: (Math.random() - .5) * 110,
+        vy: -35 - Math.random() * 75,
+        g: kind === 'ember' ? 80 : 260,
+        size: kind === 'wood' ? 2 + Math.random() * 2 : 1.4 + Math.random() * 2.2,
+        rot: Math.random() * 6.28, spin: (Math.random() - .5) * 10,
+        life: .5 + Math.random() * .35, born: now,
+        col: cols[Math.floor(Math.random() * cols.length)]
+      });
+    }
+    this._startFx();
+  };
+  P.pulseCells = function (ids) {
+    if (!ids || !ids.length) return;
+    const now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
+    for (const i of ids) this.pulses.push({ i, born: now });
+    this._startFx();
+  };
+  P.shake = function (ms, amp) {
+    const now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
+    this._shakeUntil = Math.max(this._shakeUntil, now + (ms || 80));
+    this._shakeAmp = amp || 2;
+    this._startFx();
+  };
+  P.hopTo = function (from, to, u) {
+    if (!u) return;
+    // En modo OTAN el movimiento es instantáneo: la ficha no tiene animación
+    // de salto (evitaría dibujar un sprite suelto sobre el mapa táctico).
+    if (this.viewMode === 'nato') { this.hop = null; return; }
+    const now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
+    this.hop = { from, to, type: u.type, tier: u.tier, owner: u.owner, t0: now, dur: 340 };
+    this._startFx();
+  };
+  P._roundRect = function (ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  };
+  // Vista Combate: anillo + las dos etiquetas DENTRO del círculo y pegadas al
+  // borde inferior (nivel a la izquierda, defensa efectiva a la derecha).
+  // Antes el nivel flotaba por encima de la unidad —se perdía al apilar— y la
+  // defensa caía en el lateral, donde el propio sprite la tapaba.
+  // Devuelve la geometría usada (útil para las pruebas).
+  // Vista Combate: anillo pegado a la base de la unidad.
+  P.drawCombatRing = function (ctx, c, u, x, y, fs) {
+    const cy = y + fs * .05, R = fs * .63;
+    ctx.strokeStyle = 'rgba(244,239,234,.65)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, cy, R, 0, 7); ctx.stroke();
+    return { cx: x, cy, R };
+  };
+  // Etiquetas de la vista Combate: placa oscura en la banda inferior del
+  // círculo, nivel a la izquierda y defensa efectiva a la derecha. Se pintan
+  // en una pasada final (después de todas las unidades y del anillo) y SIN
+  // recortar, para que se lean enteras y nada las tape.
+  P.drawCombatLabels = function (ctx, c, u, x, y, fs) {
+    const g = this.game;
+    const cy = y + fs * .05, R = fs * .63;
+    const def = g ? HF.defenseAt(g, c.i) : 0;
+    const tl = 'N' + u.tier, dl = '🛡' + def;
+    const pad = fs * .07, gap = fs * .09, maxW = fs * 1.08;
+    let lab = Math.max(7, fs * .3);
+    const setFont = () => { ctx.font = '700 ' + lab + 'px "Plus Jakarta Sans", sans-serif'; };
+    setFont();
+    let tw = ctx.measureText(tl).width, dw = ctx.measureText(dl).width;
+    const fixed = gap + pad * 2;
+    // Si el texto (defensas de dos cifras) no cabe, se encoge hasta 7 px.
+    if (tw + dw + fixed > maxW) {
+      const avail = Math.max(1, maxW - fixed);
+      lab = Math.max(7, lab * avail / (tw + dw));
+      setFont();
+      tw = ctx.measureText(tl).width; dw = ctx.measureText(dl).width;
+    }
+    const bw = Math.min(maxW, tw + dw + fixed);
+    const bh = Math.max(12, fs * .32);
+    const bx = x - bw / 2, by = cy + R - bh - fs * .03;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
+    ctx.fillStyle = 'rgba(8,14,28,.88)';
+    this._roundRect(ctx, bx, by, bw, bh, bh * .45); ctx.fill();
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = 'rgba(244,239,234,.28)'; ctx.lineWidth = 1; ctx.stroke();
+    const ty = by + bh / 2;
+    ctx.textAlign = 'left'; ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, bx + pad, ty);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#bae6fd'; ctx.fillText(dl, bx + bw - pad, ty);
+    ctx.restore();
+    ctx.textAlign = 'center';
+    return { cx: x, cy, R, bx, by, bw, bh, font: lab, level: tl, def: dl };
+  };
+  P._drawHop = function (ctx, now, fs) {
+    const h = this.hop; if (!h) return;
+    const t = Math.min(1, (now - h.t0) / h.dur);
+    if (t >= 1) { this.hop = null; return; }
+    const a = this.cells[h.from], b = this.cells[h.to];
+    if (!a || !b) { this.hop = null; return; }
+    const [sx, sy0] = this.toScreen(...this.pos(a));
+    const [tx, ty0] = this.toScreen(...this.pos(b));
+    const sy = sy0 - this._lift(a), ty = ty0 - this._lift(b);
+    const e = t * t * (3 - 2 * t);
+    const x = sx + (tx - sx) * e;
+    const y = sy + (ty - sy) * e - Math.sin(Math.PI * t) * fs * .95;
+    const syScale = t < .18 ? 1.1 : t > .82 ? .9 : 1;
+    const sxScale = 1 + (1 - syScale) * .65;
+    ctx.save();
+    ctx.translate(x, y - fs * UNIT_RISE); ctx.scale(sxScale, syScale);
+    ctx.globalAlpha = .9;
+    ctx.fillStyle = this.colors[h.owner] || '#F5B942';
+    ctx.beginPath(); ctx.arc(0, fs * .05, fs * .55, 0, 7); ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.stroke();
+    if (!HF.art.drawStretched(ctx, 'unit', h.type, 0, 0, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) {
+      ctx.fillStyle = INK; ctx.font = fs * .75 + 'px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(HF.UNITS[h.type].icon, 0, fs * .05);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  };
+  P._drawCaravans = function (ctx, fs) {
+    const g = this.game;
+    if (!g || !g.caravans || !g.caravans.length) return;
+    for (const car of g.caravans) {
+      const c = g.cells[car.path[car.pos]];
+      if (!c) continue;
+      // Las caravanas enemigas solo se ven en casillas visibles.
+      if (car.owner !== ((this.game && this.game.mySeat) || 0) && HF.visible && !HF.visible(g, c.i)) continue;
+      const [x, y0] = this.toScreen(...this.pos(c));
+      const y = y0 - this._lift(c);
+      const s = fs * 1.2;
+      const art = car.kind === 'land' ? 'cart' : 'ship';
+      if (this.viewMode === 'nato') this.drawTradeCounter(ctx, car, x, y - fs * .14, fs);
+      else if (!HF.art.draw(ctx, 'trade', art, x, y - fs * .14, s, s)) continue;
+      const badge = car.kind === 'cargo'
+        ? (({ gold: '💰', food: '🌾', wood: '🪵' }[car.cargo.res] || '📦') + car.cargo.qty)
+        : (car.gold > 0 ? '💰' + car.gold : '');
+      if (badge) {
+        ctx.font = '700 ' + Math.max(9, fs * .42) + 'px "Plus Jakarta Sans", sans-serif';
+        const w = ctx.measureText(badge).width;
+        ctx.fillStyle = 'rgba(8,14,28,.82)';
+        this._roundRect(ctx, x - w / 2 - 4, y - fs * .8, w + 8, fs * .42, 6); ctx.fill();
+        ctx.fillStyle = '#ffd34d'; ctx.fillText(badge, x, y - fs * .59);
+      }
+    }
+  };
+  // ---------- Simbología militar (APP-6 / MIL-STD-2525) ----------
+  // Fichas 100% procedurales: sin imágenes externas. El fondo es el color de la
+  // facción y los trazos usan el color de mayor contraste. El escalón va en la
+  // franja superior y el ataque/defensa efectivos en la inferior.
+  const natoLum = hex => {
+    const h = String(hex || '').replace('#', '');
+    if (h.length < 6) return .5;
+    const r = parseInt(h.slice(0, 2), 16) / 255;
+    const g2 = parseInt(h.slice(2, 4), 16) / 255;
+    const b = parseInt(h.slice(4, 6), 16) / 255;
+    return .2126 * r + .7152 * g2 + .0722 * b;
+  };
+  const NATO_TIER = t => (t >= 4 ? 'X' : t === 3 ? 'III' : t === 2 ? 'II' : 'I');
+  P._natoAura = function (g, c) {
+    if (!g || c.o < 0) return false;
+    for (const j of HF.nbs(g, c.i)) {
+      const n = g.cells[j];
+      if (n && n.b === B.BASTION && n.o === c.o) return true;
+    }
+    return false;
+  };
+  P._natoTerrain = function (c, u) {
+    return (u.type === 'INF' || u.type === 'ENG') && (c.t === T.COLINA || c.t === T.MONTANA);
+  };
+  P.drawNatoCounter = function (ctx, c, u, x, y, fs) {
+    const g = this.game;
+    const W = fs * 1.1, H = fs * 0.72;
+    const left = x - W / 2, top = y - H / 2, right = left + W, bottom = top + H;
+    const fill = (this.colors && this.colors[u.owner]) || '#3b82f6';
+    const ink = natoLum(fill) > .58 ? '#0b1220' : '#ffffff';
+    const ready = HF.ready ? HF.ready(u) : (u.mv > 0 || u.at > 0);
+
+    ctx.fillStyle = fill; ctx.fillRect(left, top, W, H);
+    ctx.fillStyle = 'rgba(8,14,28,.35)'; ctx.fillRect(left, top, W, H * .22);
+
+    const x0 = left + W * .17, x1 = right - W * .17;
+    const y0 = top + H * .30, y1 = bottom - H * .22;
+    const cx = x, cy = (y0 + y1) / 2;
+    ctx.strokeStyle = ink; ctx.fillStyle = ink;
+    ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+
+    if (u.type === 'INF') {
+      // Aspa de infantería.
+      ctx.beginPath();
+      ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+      ctx.moveTo(x1, y0); ctx.lineTo(x0, y1);
+      ctx.stroke();
+    } else if (u.type === 'CAB') {
+      // Diagonal de caballería.
+      ctx.beginPath(); ctx.moveTo(x0, y1); ctx.lineTo(x1, y0); ctx.stroke();
+    } else if (u.type === 'SIE') {
+      // Punto de artillería.
+      ctx.beginPath(); ctx.arc(cx, cy, fs * .16, 0, Math.PI * 2); ctx.fill();
+    } else if (u.type === 'ENG') {
+      // Puente de zapadores |--|.
+      ctx.beginPath();
+      ctx.moveTo(x0, cy); ctx.lineTo(x1, cy);
+      ctx.moveTo(x0, cy); ctx.lineTo(x0, y1);
+      ctx.moveTo(x1, cy); ctx.lineTo(x1, y1);
+      ctx.stroke();
+    } else if (u.type === 'ARC') {
+      // Flecha de proyectil.
+      ctx.beginPath();
+      ctx.moveTo(cx, y1); ctx.lineTo(cx, y0);
+      ctx.moveTo(cx, y0); ctx.lineTo(cx - W * .12, y0 + H * .12);
+      ctx.moveTo(cx, y0); ctx.lineTo(cx + W * .12, y0 + H * .12);
+      ctx.stroke();
+    } else if (u.type === 'BAR') {
+      // Ondulación de superficie naval.
+      const ym = cy + H * .05, amp = H * .12;
+      ctx.beginPath();
+      ctx.moveTo(x0, ym);
+      ctx.quadraticCurveTo(cx - W * .17, ym - amp, cx, ym);
+      ctx.quadraticCurveTo(cx + W * .17, ym + amp, x1, ym);
+      ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(x0, cy); ctx.lineTo(x1, cy); ctx.stroke();
+    }
+
+    // Escalón de veteranía.
+    ctx.font = '700 ' + Math.max(7, fs * .30) + 'px ui-monospace, monospace';
+    ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(NATO_TIER(u.tier || 1), x, top + H * .12);
+
+    // Ataque (izq.) y defensa dinámica (der.).
+    const atk = g ? HF.attackOf(g, u, false, c) : (u.tier || 1);
+    const def = g ? HF.defenseAt(g, c.i) : 0;
+    let defColor = '#ffffff', mark = '';
+    if (c.deg > 0) { defColor = '#f87171'; mark = '▼'; }
+    else if (this._natoAura(g, c)) defColor = '#38bdf8';
+    else if (this._natoTerrain(c, u)) { defColor = '#4ade80'; mark = '▲'; }
+    ctx.font = '700 ' + Math.max(7, fs * .30) + 'px ui-monospace, monospace';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = ink;
+    ctx.fillText('⚔' + atk, left + W * .07, bottom - H * .06);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = defColor;
+    ctx.fillText('🛡' + def + mark, right - W * .07, bottom - H * .06);
+
+    // Carga transportada (barco): punto del color de la unidad embarcada.
+    if (u.cargo) {
+      ctx.beginPath();
+      ctx.fillStyle = (this.colors && this.colors[u.cargo.owner]) || ink;
+      ctx.arc(right - W * .12, top + H * .11, Math.max(2, fs * .09), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    // Marco: blanco si la unidad aún puede actuar; negro si está agotada.
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = ready ? '#ffffff' : '#000000';
+    ctx.strokeRect(left, top, W, H);
+
+    // Restituir el estilo de texto que usa el resto del tablero.
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  };
+  // Vista OTAN: en una casilla LIBRE, muestra lo que aporta a la defensa.
+  //   🛡N → defensa actual de la posición (edificio, aura de bastión o zona de
+  //         control de una unidad adyacente del mismo dueño).
+  //   +T  → bonus de terreno para infantería/ingenieros (colina +1, montaña +2).
+  // Va en la banda inferior de la casilla, atenuado, para no competir con las
+  // fichas de las unidades.
+  P.drawNatoTileDefense = function (ctx, c, x, y, fs) {
+    if (c.u) return null;                       // con guarnición ya lo dice su ficha
+    const g = this.game;
+    const def = g && HF.defenseAt ? HF.defenseAt(g, c.i) : 0;
+    const ter = c.t === T.COLINA ? 1 : c.t === T.MONTANA ? 2 : 0;
+    if (!def && !ter) return null;
+    const parts = [];
+    if (def) parts.push({ t: '🛡' + def, c: c.deg > 0 ? '#f87171' : (this._natoAura(g, c) ? '#38bdf8' : '#f4efea') });
+    if (ter) parts.push({ t: '+' + ter, c: '#4ade80' });
+    const pad = fs * .055, gap = fs * .06;
+    let lab = Math.max(7, fs * .26);
+    const setFont = () => { ctx.font = '700 ' + lab + 'px "Plus Jakarta Sans", sans-serif'; };
+    setFont();
+    let ws = parts.map(p => ctx.measureText(p.t).width);
+    const fixed = pad * 2 + gap * (parts.length - 1);
+    const maxW = fs * .96;
+    let bw = ws.reduce((a, b) => a + b, 0) + fixed;
+    if (bw > maxW) {
+      const avail = Math.max(1, maxW - fixed);
+      lab = Math.max(7, lab * avail / (bw - fixed));
+      setFont();
+      ws = parts.map(p => ctx.measureText(p.t).width);
+      bw = Math.min(maxW, ws.reduce((a, b) => a + b, 0) + fixed);
+    }
+    const bh = Math.max(10, fs * .27);
+    const bx = x - bw / 2, by = y + fs * .4 - bh / 2;
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,14,28,.78)';
+    this._roundRect(ctx, bx, by, bw, bh, bh * .45); ctx.fill();
+    ctx.strokeStyle = 'rgba(244,239,234,.16)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    let cx = bx + pad;
+    parts.forEach((p, i) => { ctx.fillStyle = p.c; ctx.fillText(p.t, cx, by + bh / 2); cx += ws[i] + gap; });
+    ctx.restore();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    return { def, ter, bx, by, bw, bh, font: lab, texts: parts.map(p => p.t) };
+  };
+  // Semáforo de la unidad propia: un punto dentro de SU casilla, en la parte
+  // superior (sobre la unidad o sobre la ficha OTAN), para que al apilar
+  // unidades se sepa a cuál pertenece y no lo tape la de delante.
+  //   verde → puede mover Y atacar (lista para actuar)
+  //   cian  → solo puede mover
+  //   rojo  → solo puede atacar
+  //   sin punto → ya agotó sus acciones este turno
+  P.drawUnitStatus = function (ctx, u, x, y, fs) {
+    const mv = u.mv > 0 || !!(u.cargo && u.cargo.mv > 0);
+    const at = u.at > 0;
+    if (!mv && !at) return null;
+    const nato = this.viewMode === 'nato';
+    const full = mv && at;
+    const col = full ? '#4ade80' : mv ? '#38bdf8' : '#f87171';
+    // OTAN: justo encima del marco de la ficha (no la tapa). Resto de vistas:
+    // sobre el cuerpo de la unidad, nunca por debajo de su dibujo.
+    const cx = x;
+    const cy = nato ? y - fs * .42 : y - fs * .06;
+    // Punto pequeño: no debe competir con el arte ni con la ficha OTAN.
+    const r = Math.max(2.0, fs * (nato ? .075 : .095));
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = 'rgba(8,14,28,.92)'; ctx.lineWidth = Math.max(1, fs * .02); ctx.stroke();
+    ctx.restore();
+    return { cx, cy, r, full, color: col, mv, at, nato };
+  };
+  // Unidades comerciales (carretas/urcas): chit simplificado 'T' / '≈' / '▣'.
+  P.drawTradeCounter = function (ctx, car, x, y, fs) {
+    const W = fs * 1.0, H = fs * .62, left = x - W / 2, top = y - H / 2;
+    const fill = (this.colors && this.colors[car.owner]) || '#eab308';
+    const ink = natoLum(fill) > .58 ? '#0b1220' : '#ffffff';
+    ctx.fillStyle = fill; ctx.fillRect(left, top, W, H);
+    ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.strokeRect(left, top, W, H);
+    ctx.fillStyle = ink;
+    ctx.font = '700 ' + Math.max(8, fs * .36) + 'px ui-monospace, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(car.kind === 'cargo' ? '▣' : car.kind === 'sea' ? '≈' : 'T', x, y);
+  };
+  P._drawFx = function (ctx, now) {
+    if (!this.fx.length && !this.pulses.length) return;
+    const fs = this.size * this.cam.z;
+    for (const p of this.pulses) {
+      const age = (now - p.born) / 1000;
+      if (age > .8) continue;
+      const c = this.cells[p.i]; if (!c) continue;
+      const [x, y0] = this.toScreen(...this.pos(c));
+      const y = y0 - this._lift(c);
+      ctx.globalAlpha = Math.max(0, 1 - age / .8) * .8;
+      ctx.strokeStyle = '#E05C5C'; ctx.lineWidth = Math.max(2, fs * .08);
+      hexPath(ctx, x, y, fs * (.55 + age * 1.35)); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    for (const p of this.fx) {
+      const age = (now - p.born) / 1000;
+      if (age > p.life) continue;
+      const x = p.x + p.vx * age, y = p.y + p.vy * age + .5 * p.g * age * age;
+      ctx.globalAlpha = Math.max(0, 1 - age / p.life);
+      ctx.fillStyle = p.col;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(p.rot + p.spin * age);
+      if (p.kind === 'wood') ctx.fillRect(-p.size, -p.size * .45, p.size * 2, p.size * .9);
+      else { ctx.beginPath(); ctx.arc(0, 0, p.size, 0, Math.PI * 2); ctx.fill(); }
+      ctx.restore();
+    }
+    this.fx = this.fx.filter(p => (now - p.born) / 1000 <= p.life);
+    this.pulses = this.pulses.filter(p => (now - p.born) / 1000 <= .8);
+    ctx.globalAlpha = 1;
+  };
+  // ---------- tormentas marinas ----------
+  // El arte es una ficha hexagonal (art/tormenta.png): se recorta con la misma
+  // silueta de la casilla para que no se vea el fondo cuadrado.
+  let stormSprite = null, stormTried = false;
+  function stormImage() {
+    if (stormTried || typeof Image !== 'function') return stormSprite;
+    stormTried = true;
+    try { const im = new Image(); im.src = 'art/tormenta.png'; stormSprite = im; } catch (e) { stormSprite = null; }
+    return stormSprite;
+  }
+
+  P._drawStorms = function (ctx, fs, now) {
+    const g = this.game, cells = this.cells, fog = this.fogMap;
+    if (!g || !g.storms || !g.storms.length) return;
+    const t = now / 1000;
+    const img = stormImage();
+    const ready = !!(img && img.complete && img.naturalWidth);
+
+    for (const s of g.storms) {
+      const c = cells[s.i];
+      if (!c) continue;
+      if (fog && !fog[c.i]) continue;                  // no se revela en niebla total
+      const [x, y0] = this.toScreen.apply(this, this.pos(c));
+      const y = y0 - this._level(c);
+
+      // 1. Mar encrespado bajo la tormenta
+      ctx.save();
+      hexPath(ctx, x, y, fs * .99);
+      const grad = ctx.createRadialGradient(x, y, fs * .08, x, y, fs);
+      grad.addColorStop(0, 'rgba(16,26,44,.92)');
+      grad.addColorStop(.6, 'rgba(10,18,32,.72)');
+      grad.addColorStop(1, 'rgba(6,10,20,.35)');
+      ctx.fillStyle = grad; ctx.fill();
+      ctx.restore();
+
+      // 2. La ficha de tormenta (recortada a la silueta del hexágono)
+      ctx.save();
+      hexPath(ctx, x, y, fs * .99);
+      ctx.clip();
+      if (ready) {
+        // El hexágono dibujado ocupa ~89% del alto de la imagen.
+        const h = fs * 2.24, w = h * (img.naturalWidth / img.naturalHeight);
+        const sway = Math.sin(t * 1.7 + (s.id || 0)) * fs * .035;
+        ctx.globalAlpha = .97;
+        ctx.drawImage(img, x - w / 2 + sway, y - h / 2, w, h);
+      } else {
+        // Respaldo procedural (mientras carga o si falta el archivo)
+        const g2 = ctx.createRadialGradient(x, y, fs * .1, x, y, fs);
+        g2.addColorStop(0, 'rgba(120,170,220,.55)');
+        g2.addColorStop(.5, 'rgba(40,70,110,.75)');
+        g2.addColorStop(1, 'rgba(8,14,26,.85)');
+        ctx.fillStyle = g2; ctx.fill();
+        ctx.strokeStyle = 'rgba(200,225,255,.55)';
+        ctx.lineWidth = Math.max(1, fs * .05);
+        for (let k = 0; k < 3; k++) {
+          const rr = fs * (.35 + k * .2), a0 = t * 1.8 + k * 2.1;
+          ctx.beginPath(); ctx.arc(x, y, rr, a0, a0 + 1.9); ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      // 3. Pips de vida restante
+      const pips = Math.max(0, Math.min(6, s.life || 0));
+      for (let k = 0; k < pips; k++) {
+        ctx.beginPath();
+        ctx.arc(x + (k - (pips - 1) / 2) * fs * .22, y + fs * .62, fs * .055, 0, 7);
+        ctx.fillStyle = 'rgba(226,238,255,.9)'; ctx.fill();
+      }
+
+      // 4. Vector de desplazamiento: hacia dónde irá el próximo turno
+      const d = HF.DIRS[s.dir] || HF.DIRS[0];
+      const nc = this._neighbor ? this._neighbor(c, d[0], d[1]) : null;
+      if (nc) {
+        const [tx0, ty0] = this.toScreen.apply(this, this.pos(nc));
+        const ty = ty0 - this._level(nc);
+        const ang = Math.atan2(ty - y, tx0 - x);
+        const rr = fs * .92;                            // desde el borde de la casilla
+        const sx = x + Math.cos(ang) * rr, sy = y + Math.sin(ang) * rr;
+        const ex = x + Math.cos(ang) * (fs * 1.62), ey = y + Math.sin(ang) * (fs * 1.62);
+
+        ctx.save();
+        ctx.setLineDash([Math.max(3, fs * .16), fs * .12]);
+        ctx.lineDashOffset = -t * fs * .5;
+        ctx.strokeStyle = 'rgba(255,214,120,.92)';
+        ctx.lineWidth = Math.max(2, fs * .085);
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.setLineDash([]);
+        // punta de flecha
+        const ah = Math.max(6, fs * .28);
+        ctx.fillStyle = 'rgba(255,214,120,.95)';
+        ctx.beginPath();
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - Math.cos(ang - .42) * ah, ey - Math.sin(ang - .42) * ah);
+        ctx.lineTo(ex - Math.cos(ang + .42) * ah, ey - Math.sin(ang + .42) * ah);
+        ctx.closePath(); ctx.fill();
+        // casilla de destino: aviso de peligro
+        const pulse = .5 + .5 * Math.sin(t * 3.1);
+        ctx.globalAlpha = .35 + pulse * .35;
+        ctx.strokeStyle = 'rgba(255,150,120,.95)';
+        ctx.lineWidth = Math.max(1.5, fs * .05);
+        hexPath(ctx, tx0, ty, fs * .92); ctx.stroke();
+        ctx.restore();
+      }
+    }
+  };
+
+  P.draw = function () {
+    const ctx = this.ctx; if (!ctx || !this.cells) return;
+    const d = this.dpr, z = this.cam.z, s = this.size;
+    const now = (G.performance && G.performance.now) ? G.performance.now() : Date.now();
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+    const bg = ctx.createRadialGradient(this.W * .5, this.H * .42, 20, this.W * .5, this.H * .42, Math.max(this.W, this.H) * .82);
+    bg.addColorStop(0, '#111A29'); bg.addColorStop(1, VOID);
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, this.W, this.H);
+    ctx.save();
+    if (now < this._shakeUntil) {
+      ctx.translate(Math.sin(now * .11) * this._shakeAmp, Math.cos(now * .13) * this._shakeAmp);
+    }
+    const g = this.game, fog = this.fogMap, grid = HF.settings().grid;
+    const me = (g && g.mySeat) || 0;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const fs = s * z;
+    if (this.hop && now - this.hop.t0 > this.hop.dur) this.hop = null;
+    const season = g && HF.season ? HF.season(g) : 0;
+    const winter = season === 3;
+    const view = this.viewMode || 'normal';
+    const politic = view === 'politic', resource = view === 'resource', combat = view === 'combat', nato = view === 'nato';
+    // El modo OTAN comparte el fondo limpio de la vista de combate.
+    const tactical = combat || nato;
+    const editor = this.mode === 'paint' || !!this.mapEditor;
+    const fogPat = fog ? HF.art.fogPattern(ctx, this.cam, this.W, this.H, .6, TILT) : null;
+    const items = [], walls = [], combatLabels = [], unitStatus = [];
+    // Se pintan las casillas de norte a sur (y = 1.5*size*r). Una casilla
+    // elevada (tierra) invade la de arriba, asi que debe dibujarse despues:
+    // de lo contrario el agua del norte tapaba el borde realzado del llano.
+    if (this._orderRef !== this.cells || this._orderLen !== this.cells.length) {
+      this._orderRef = this.cells;
+      this._orderLen = this.cells.length;
+      this._order = this.cells.filter(Boolean).slice().sort((a, b) => (a.r - b.r) || (a.q - b.q));
+    }
+    // DIPLOMACIA: el overlay de fronteras del Pacto Sagrado se pinta DESPUÉS del
+    // terreno y ANTES de unidades/caravanas. Antes se llamaba al principio del
+    // draw y el terreno lo tapaba por completo.
+    const drawNAP = () => {
+      if (!g || !HF.DiplomacyUI || editor) return;
+      try { HF.DiplomacyUI.drawNAPBorderOverlay(g, ctx, this); }
+      catch (e) { if (HF.dipError) HF.dipError('drawNAP', e); }
+    };
+    for (const c of this._order) {
+      if (!c) continue;
+      const [wx, wy] = this.pos(c), [x, y0] = this.toScreen(wx, wy);
+      if (x < -fs * 2 || y0 < -fs * 2 || x > this.W + fs * 2 || y0 > this.H + fs * 2) continue;
+      const f = fog ? fog[c.i] : 2;
+      // Relieve relativo: la cara solo se eleva respecto a lo que tiene al lado.
+      const lift = f === 0 || editor ? 0 : this._level(c);
+      const y = y0 - lift;
+      // El agua es la base del diorama: no proyecta faldón contra sí misma
+      // ni contra el borde del mapa. Solo la tierra muestra el prisma.
+      if (!editor && f > 0 && c.t !== T.MAR && c.t !== T.RIO) {
+        const egs = [];
+        for (const e of EDGES) {
+          const n = this._neighbor(c, e.dq, e.dr);
+          const depth = n ? lift - this._level(n) : lift + 20;
+          if (depth > 0) egs.push({ edge: e, depth, deep: !n });
+        }
+        if (egs.length) walls.push({ x, y0, fs, lift, t: c.t, edges: egs });
+      }
+      hexPath(ctx, x, y, fs * 1.0);
+      if (f === 0) {
+        ctx.fillStyle = '#0D1624'; ctx.fill();
+        if (fogPat) { ctx.globalAlpha = .55; ctx.fillStyle = fogPat; ctx.fill(); ctx.globalAlpha = 1; }
+        continue;
+      }
+      ctx.globalAlpha = politic ? .2 : tactical ? .4 : 1;
+      
+      // Color base con jitter determinista (excepto editor)
+      let baseHex = editor ? ECOL[c.t] : (this._shore(c) ? '#35647F' : TCOL[c.t]);
+      let jitterQ = 0;
+      if (!editor && c.t !== T.MAR && c.t !== T.RIO) {
+        const jitter = jitterFactor(c.q, c.r);
+        jitterQ = Math.round(jitter * 100); // cuantificar para cache
+        const jitterKey = `${baseHex}|${jitterQ}`;
+        let jitteredHex = _jitterColorCache.get(jitterKey);
+        if (!jitteredHex) {
+          const hsl = hexToHSL(baseHex);
+          hsl.s = Math.max(0, Math.min(1, hsl.s * (1 + jitter)));
+          hsl.l = Math.max(0, Math.min(1, hsl.l * (1 + jitter)));
+          jitteredHex = HSLToHex(hsl);
+          _jitterColorCache.set(jitterKey, jitteredHex);
+        }
+        baseHex = jitteredHex;
+      }
+      
+      // Gradiente cenital (excepto editor y agua) - con cache
+      if (!editor && c.t !== T.MAR && c.t !== T.RIO) {
+        const hsl = hexToHSL(baseHex);
+        const h = hsl.h, s = hsl.s, l = hsl.l;
+        const l0 = Math.min(1.0, l * 1.25);
+        const s0 = s * 0.85;
+        const l2 = Math.max(0.0, l * 0.70);
+        const s2 = s * 0.95;
+        const fsKey = fs | 0;
+        const gradKey = `${c.t}|${jitterQ}|${fsKey}`;
+        let grd = _zenithGradCache.get(gradKey);
+        if (!grd) {
+          const rgb0 = HSLToHex({ h, s: s * 0.85, l: Math.min(1.0, l * 1.25) });
+          const rgb1 = baseHex;
+          const rgb2 = HSLToHex({ h, s: s * 0.95, l: Math.max(0.0, l * 0.70) });
+          grd = ctx.createLinearGradient(0, ZENITH_GRADIENT_TOP * fs, 0, ZENITH_GRADIENT_BOT * fs);
+          grd.addColorStop(0, rgb0);
+          grd.addColorStop(0.5, rgb1);
+          grd.addColorStop(1, rgb2);
+          _zenithGradCache.set(gradKey, grd);
+        }
+        // Aplicar gradiente con translate
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = grd;
+        hexPath(ctx, 0, 0, fs * 1.0);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.fillStyle = baseHex;
+        ctx.fill();
+      }
+
+      // El recurso se dibuja mas abajo, como pieza de diorama dentro del paso
+      // ordenado por profundidad: asi conserva volumen y sigue quedando por
+      // debajo de asentamientos y unidades de su misma casilla.
+
+      // antes del relleno/base: aristas direccionales de luz/sombra (reemplaza el stroke perimetral de 1px)
+      // Aristas iluminadas (Noroeste=N, Norte=NO, Suroeste=S): línea blanca translúcida
+      // Aristas en sombra (Noreste=NE, Sureste=SE, Sur=S): línea de oclusión oscura
+      if (!editor && c.t !== T.MAR && c.t !== T.RIO) {
+        for (let e = 0; e < 6; e++) {
+          const theta = 60 * e - 30;
+          let strokeStyle, lineWidth;
+          // Aristas: 4->5->0->1 son las iluminadas (NW, N, SW)
+          // y 1->2->3->4 son las en sombra (NE, SE, S)
+          if (e === 4 || e === 5 || e === 0) {
+            strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            lineWidth = Math.max(1, fs * 0.015);
+          } else {
+            strokeStyle = 'rgba(10, 15, 29, 0.30)';
+            lineWidth = Math.max(1, fs * 0.015);
+          }
+          const [x1, y1] = this._vert(x, y, fs, e);
+          const [x2, y2] = this._vert(x, y, fs, (e + 1) % 6);
+          ctx.strokeStyle = strokeStyle;
+          ctx.lineWidth = lineWidth;
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        }
+      }
+      
+      // brillo de agua procedural (se omite en las vistas analíticas)
+      if (!politic && !tactical && (c.t === T.MAR || c.t === T.RIO)) {
+        const wave = (Math.sin(now * .002 + c.q * .9 + c.r * .5) + 1) * .5;
+        ctx.globalAlpha = (winter ? .08 : .03) + wave * (winter ? .12 : .09);
+        ctx.fillStyle = winter ? '#D8E4E8' : '#B9D2DD';
+        hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
+      }
+      if (winter && !politic && !tactical) {
+        ctx.globalAlpha = .12; ctx.fillStyle = '#A9C6D3'; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
+        if (c.t === T.RIO) {
+          ctx.globalAlpha = .34; ctx.fillStyle = '#E8F1F2'; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
+          ctx.strokeStyle = 'rgba(244,239,234,.72)'; ctx.lineWidth = Math.max(1, fs * .05);
+          ctx.beginPath(); ctx.moveTo(x - fs * .42, y + fs * .08); ctx.lineTo(x - fs * .1, y - fs * .06); ctx.lineTo(x + fs * .18, y + fs * .1); ctx.stroke();
+        }
+      }
+      if (c.t === T.COLINA || c.t === T.MONTANA) {
+        ctx.fillStyle = (editor ? ECOL2 : TCOL2)[c.t]; ctx.beginPath(); ctx.moveTo(x - fs * .5, y + fs * .35); ctx.lineTo(x, y - fs * (c.t === T.MONTANA ? .6 : .35)); ctx.lineTo(x + fs * .5, y + fs * .35); ctx.closePath(); ctx.fill();
+        if (c.t === T.MONTANA && winter && !politic && !tactical) {
+          ctx.fillStyle = 'rgba(244,239,234,.52)';
+          ctx.beginPath(); ctx.moveTo(x - fs * .18, y - fs * .2); ctx.lineTo(x, y - fs * .6); ctx.lineTo(x + fs * .18, y - fs * .2); ctx.closePath(); ctx.fill();
+        }
+      }
+      if (c.t === T.RIO) { ctx.strokeStyle = editor ? '#a5d8f5' : (winter ? '#E8F1F2' : '#A8CCD9'); ctx.lineWidth = fs * .25; ctx.beginPath(); ctx.moveTo(x - fs * .6, y - fs * .2); ctx.quadraticCurveTo(x, y + fs * .5, x + fs * .6, y - fs * .1); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+      if (c.o >= 0) {
+        const col = this.colors[c.o];
+        // político: soberanía a máxima saturación; recursos: facción atenuada
+        ctx.globalAlpha = resource ? .15 : politic ? .8 : tactical ? .3 : (c.sup ? .38 : .2);
+        ctx.fillStyle = col; hexPath(ctx, x, y, fs); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, fs * (politic ? .2 : tactical ? .14 : .12)); hexPath(ctx, x, y, fs * .92); ctx.stroke();
+        if (!c.sup) { ctx.strokeStyle = 'rgba(10,15,29,.55)'; ctx.lineWidth = 1; for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(x - fs * .5 + k * fs * .3, y - fs * .6); ctx.lineTo(x - fs * .9 + k * fs * .3, y + fs * .5); ctx.stroke(); } }
+      }
+      // AISLADO: pulso rojo para que el corte de suministro sea inequívoco.
+      // También se marca el turno en que un campamento automático aún no ha
+      // resuelto su colapso de recursos.
+      if (g && c.o >= 0 && (!c.sup || c.iso === g.turn)) {
+        const pulse = (Math.sin(now * .006) + 1) * .5;
+        ctx.globalAlpha = .08 + pulse * .16; ctx.fillStyle = '#ef4444';
+        hexPath(ctx, x, y, fs); ctx.fill();
+        ctx.globalAlpha = .35 + pulse * .55; ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = Math.max(2, fs * .09); hexPath(ctx, x, y, fs * .9); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      if (politic && c.b >= B.CAMPAMENTO) {
+        ctx.globalAlpha = .12; ctx.fillStyle = INK; hexPath(ctx, x, y, fs * .9); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.strokeStyle = 'rgba(244,239,234,.92)'; ctx.lineWidth = Math.max(2, fs * .1);
+        hexPath(ctx, x, y, fs * .84); ctx.stroke();
+      }
+      if (resource && c.res) {
+        const rc = ['', 'rgba(245,185,66,', 'rgba(74,222,128,', 'rgba(181,122,74,'][c.res] || 'rgba(245,185,66,';
+        const grd = ctx.createRadialGradient(x, y, fs * .1, x, y, fs * .95);
+        grd.addColorStop(0, rc + '.42)'); grd.addColorStop(1, rc + '0)');
+        ctx.fillStyle = grd; hexPath(ctx, x, y, fs); ctx.fill();
+        ctx.strokeStyle = rc + '.9)'; ctx.lineWidth = Math.max(1.5, fs * .08);
+        hexPath(ctx, x, y, fs * .9); ctx.stroke();
+      }
+      // borde superior iluminado: grosor de ficha física (editor mantiene stroke único)
+      if (editor) {
+        ctx.strokeStyle = 'rgba(244,239,234,.12)'; ctx.lineWidth = 1;
+        hexPath(ctx, x, y, fs * .97); ctx.stroke();
+      }
+      if (c.fire > 0) { ctx.fillStyle = 'rgba(239,68,68,.32)'; hexPath(ctx, x, y, fs); ctx.fill(); }
+      else if (c.burn > 0) { ctx.fillStyle = 'rgba(30,25,20,.42)'; hexPath(ctx, x, y, fs); ctx.fill(); }
+      if (grid) { ctx.strokeStyle = editor ? 'rgba(10,15,29,.22)' : 'rgba(244,239,234,.055)'; ctx.lineWidth = 1; hexPath(ctx, x, y, fs); ctx.stroke(); }
+      items.push([c, x, y, f]);
+    }
+    // NUEVO: extrusiones de costa (ordenadas por y0 ascendente = más al norte primero)
+    if (!editor) {
+      _coastalArr.length = 0;
+      for (const c of this.cells) {
+        if (!c || c.t === T.MAR || c.t === T.RIO) continue;
+        const [wx, wy] = this.pos(c), [x, y0] = this.toScreen(wx, wy);
+        if (x < -fs * 2 || y0 < -fs * 2 || x > this.W + fs * 2 || y0 > this.H + fs * 2) continue;
+        const lift = this._level(c);
+        _coastalArr.push({ c, x, y0, fs, lift });
+      }
+      _coastalArr.sort((a, b) => a.y0 - b.y0);
+      for (const co of _coastalArr) {
+        this._drawCoastalExtrusion(ctx, co.c, co.x, co.y0, co.fs, co.lift);
+      }
+    }
+    // Los faldones se dibujan después de todas las caras. Antes, la cara
+    // superior de un vecino posterior podía tapar el prisma del terreno alto.
+    _wallsArr.length = 0;
+    for (const w of walls) _wallsArr.push(w);
+    _wallsArr.sort((a, b) => a.y0 - b.y0);
+    for (const w of _wallsArr) this._wallGroup(ctx, w);
+    _itemsArr.length = 0;
+    for (const it of items) _itemsArr.push(it);
+    // Fronteras diplomáticas: sobre el terreno, bajo caravanas y unidades.
+    drawNAP();
+    // Las caravanas van sobre el suelo pero por debajo de las unidades.
+    this._drawCaravans(ctx, fs);
+    // Orden por profundidad: las casillas del sur se dibujan después, así una
+    // unidad alta tapa correctamente a la de detrás y no al revés.
+    _itemsArr.sort((a, b) => (a[2] - b[2]) || (a[0].i - b[0].i));
+    for (const [c, x, y, f] of _itemsArr) {
+      const em = Math.max(8, fs * .85);
+      ctx.font = em + 'px sans-serif';
+      // En el editor se mantiene la paleta plana: el recurso se marca con un
+      // icono pequeno en vez del suelo fotografico del juego.
+      if (editor && c.res) {
+        const rk = RES_ART_KEY[c.res];
+        const rw = fs * .6;
+        if (!rk || !HF.art.draw(ctx, 'resource', rk, x, y + fs * .4, rw, rw)) {
+          ctx.font = fs * .6 + 'px sans-serif';
+          ctx.fillText(['', '💰', '🌾', '🧱'][c.res], x, y + fs * .4);
+          ctx.font = em + 'px sans-serif';
+        }
+      }
+      // Recurso como pieza de diorama: ocupa la casilla y conserva el volumen
+      // del arte. Se dibuja antes que el edificio y la unidad de esa casilla.
+      if (!editor && c.res && !politic && !tactical) {
+        const rk = RES_ART_KEY[c.res];
+        if (rk) HF.art.drawStretched(ctx, 'resource', rk, x, y - fs * .08, fs * RES_BOX, fs * RES_BOX, SPRITE_STRETCH);
+      }
+      if (c.b) {
+        const treeDim = (politic || tactical) && c.b === B.ARBOL;
+        if (treeDim) ctx.globalAlpha = politic ? .2 : .4;
+        const bw = fs * BUILD_BOX;
+        // Los caminos van tumbados en el suelo: no se estiran. Edificios y
+        // arboles si, para recuperar volumen frente al plano inclinado.
+        const bsy = c.b === B.CAMINO ? 1 : SPRITE_STRETCH;
+        if (!HF.art.drawStretched(ctx, 'build', c.b, x, y - (c.b === B.CAMINO ? 0 : fs * .08), bw, bw, bsy)) {
+          if (c.b === B.CAMINO) { ctx.font = fs * .6 + 'px sans-serif'; ctx.globalAlpha = treeDim ? .4 : .8; }
+          ctx.fillText(HF.BICON[c.b], x, y + (c.b === B.CAMINO ? fs * .35 : 0)); ctx.globalAlpha = 1; ctx.font = em + 'px sans-serif';
+        }
+        if (treeDim) ctx.globalAlpha = 1;
+        if (c.cap) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('⭐', x + fs * .55, y - fs * .55); ctx.font = em + 'px sans-serif'; }
+      }
+      if (c.tomb) {
+        ctx.globalAlpha = .6 + .1 * c.tomb;
+        const drawn = HF.art.draw(ctx, 'misc', 'tomb', x, y, fs * 0.7, fs * 0.7);
+        if (!drawn) { ctx.fillText('⚰️', x, y); }
+        ctx.globalAlpha = 1;
+      }
+      if (c.u && (f === 2 || c.u.owner === me)) {
+        const u = c.u, hide = this.drag && this.drag.from === c.i;
+        const hopping = this.hop && this.hop.to === c.i;
+        if (!hide && !hopping) {
+          if (nato) {
+            this.drawNatoCounter(ctx, c, u, x, y, fs);
+          } else {
+            if (resource) ctx.globalAlpha = .15;
+            if (!HF.art.drawStretched(ctx, 'unit', u.type, x, y - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.fillStyle = INK; ctx.font = fs * .75 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.type].icon, x, y + fs * .05); }
+            if (combat) {
+              // Anillo de combate pegado a la unidad; las etiquetas (nivel y
+              // defensa) se acumulan y se pintan en una pasada final, por
+              // encima de todas las unidades y del propio anillo.
+              this.drawCombatRing(ctx, c, u, x, y, fs);
+              combatLabels.push({ c, u, x, y });
+              ctx.font = em + 'px sans-serif';
+            } else if (this.mode === 'paint') {
+              const tl = 'N' + u.tier;
+              ctx.font = '700 ' + Math.max(8, fs * .42) + 'px "Plus Jakarta Sans", sans-serif';
+              const tw2 = ctx.measureText(tl).width;
+              ctx.fillStyle = 'rgba(8,14,28,.85)';
+              ctx.fillRect(x - fs * .95, y + fs * .56, tw2 + 5, fs * .44);
+              ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x - fs * .95 + (tw2 + 5) / 2, y + fs * .78);
+              ctx.font = em + 'px sans-serif';
+            } else if (u.tier > 1) {
+              ctx.font = '700 ' + fs * .5 + 'px "Plus Jakarta Sans", sans-serif'; ctx.fillStyle = VOID; ctx.fillText(u.tier, x + fs * .55, y + fs * .55); ctx.fillStyle = '#ffd34d'; ctx.fillText(u.tier, x + fs * .53, y + fs * .53);
+              ctx.font = em + 'px sans-serif';
+            }
+            if (u.cargo) {
+              const kx = x + fs * .5, ky = y - fs * .5;
+              ctx.fillStyle = this.colors[u.cargo.owner]; ctx.beginPath(); ctx.arc(kx, ky, fs * .3, 0, 7); ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 1.5; ctx.stroke();
+              if (!HF.art.draw(ctx, 'unit', u.cargo.type, kx, ky, fs * .6, fs * .6)) { ctx.fillStyle = INK; ctx.font = fs * .4 + 'px sans-serif'; ctx.fillText(HF.UNITS[u.cargo.type].icon, kx, ky); }
+            }
+            if (resource) ctx.globalAlpha = 1;
+          }
+          // Semáforo de la unidad propia: se acumula y se pinta en una pasada
+          // final, dentro de su casilla y por encima de todo (incluida la ficha
+          // OTAN), para que al apilar unidades se sepa a cuál pertenece.
+          if (u.owner === me) unitStatus.push({ u, x, y });
+        }
+      }
+      // Vista OTAN: en las casillas libres se ve el valor de defensa de la
+      // posición (edificio/aura/zona de control) y el bonus de terreno.
+      if (nato && !c.u && f === 2) this.drawNatoTileDefense(ctx, c, x, y, fs);
+      if (c.deg && !nato) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('💔', x - fs * .5, y - fs * .5); }
+      // estados de doctrina visibles en el tablero
+      ctx.fillStyle = INK; ctx.font = fs * .45 + 'px sans-serif';
+      if (c.wonder) { ctx.globalAlpha = .95; ctx.fillText('🏛', x, y - fs * .55); ctx.globalAlpha = 1; }
+      if (c.fire > 0) ctx.fillText('🔥', x + fs * .55, y - fs * .5);
+      else if (c.burn > 0) { ctx.globalAlpha = .8; ctx.fillText('🕳', x + fs * .55, y + fs * .5); ctx.globalAlpha = 1; }
+      if (c.trap === me && f === 2) { ctx.globalAlpha = .8; ctx.fillText('🪤', x - fs * .55, y + fs * .5); ctx.globalAlpha = 1; }
+      ctx.font = em + 'px sans-serif';
+      if (f === 1) {
+        hexPath(ctx, x, y, fs); ctx.fillStyle = 'rgba(8,14,28,.35)'; ctx.fill();
+        if (fogPat) { ctx.globalAlpha = .5; ctx.fillStyle = fogPat; ctx.fill(); ctx.globalAlpha = 1; }
+      }
+    }
+    if (this.hop) this._drawHop(ctx, now, fs);
+    if (view === 'normal' && !editor) {
+    this._drawClouds(ctx, now);
+    if (this.mode === 'play' && this.parts) this._drawParts(ctx, winter);
+    if (this.mode === 'play' && this.game && this.game.f && this.game.f[0] && HF.tradeRoutes) {
+      const routes = HF.tradeRoutes(this.game, this.game.f[0]);
+      if (routes.length) {
+        ctx.save(); ctx.strokeStyle = 'rgba(245,185,66,.38)'; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+        for (const r of routes) {
+          const a = this.cells[r.a], b = this.cells[r.b];
+          if (!a || !b) continue;
+          const [ax, ay0] = this.toScreen(...this.pos(a)), [bx, by0] = this.toScreen(...this.pos(b));
+          const ay = ay0 - this._lift(a, fs), by = by0 - this._lift(b, fs);
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 - fs * .8, bx, by); ctx.stroke();
+        }
+        ctx.setLineDash([]); ctx.restore();
+      }
+    }
+    }
+    // Niebla del vacío en los bordes: la isla no termina en un marco cuadrado.
+    if (!editor) {
+      const vg = ctx.createRadialGradient(this.W * .5, this.H * .48, Math.min(this.W, this.H) * .28, this.W * .5, this.H * .48, Math.max(this.W, this.H) * .78);
+      vg.addColorStop(0, 'rgba(10,15,29,0)'); vg.addColorStop(.7, 'rgba(10,15,29,.18)'); vg.addColorStop(1, 'rgba(10,15,29,.68)');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, this.W, this.H);
+    }
+    // Peligro ambiental por encima del terreno y las unidades.
+    if (this.mode === 'play' && !editor) this._drawStorms(ctx, fs, now);
+    for (const [i, o] of this.over) {
+      const c = this.cells[i]; if (!c) continue;
+      const [x, y0] = this.toScreen(...this.pos(c));
+      const y = y0 - this._lift(c, fs);
+      hexPath(ctx, x, y, fs * .96); ctx.fillStyle = o.fill; ctx.fill();
+      ctx.strokeStyle = o.stroke || o.fill; ctx.lineWidth = 2; ctx.stroke();
+      if (o.label) { ctx.fillStyle = INK; ctx.font = '700 ' + Math.max(9, fs * .45) + 'px "Plus Jakarta Sans", sans-serif'; ctx.fillText(o.label, x, y - fs * .62); }
+    }
+    if (this.sel >= 0) {
+      const c = this.cells[this.sel]; const [x, y0] = this.toScreen(...this.pos(c));
+      const y = y0 - this._lift(c, fs);
+      ctx.strokeStyle = INK; ctx.lineWidth = 3; hexPath(ctx, x, y, fs); ctx.stroke();
+    }
+    // Etiquetas de combate: pasada final, encima de todas las unidades, del
+    // anillo, de la niebla de borde y de los resaltados. Así ninguna unidad
+    // apilada delante las tapa.
+    for (const L of combatLabels) this.drawCombatLabels(ctx, L.c, L.u, L.x, L.y, fs);
+    // Semáforo de acciones de las unidades propias: pasada final, encima de
+    // todas las unidades, y dentro de su propia casilla.
+    for (const S of unitStatus) this.drawUnitStatus(ctx, S.u, S.x, S.y, fs);
+    if (this.drag) {
+      const u = this.cells[this.drag.from].u;
+      if (u) { ctx.globalAlpha = .85; ctx.fillStyle = this.colors[u.owner]; ctx.beginPath(); ctx.arc(this.drag.x, this.drag.y - 20, fs * .6, 0, 7); ctx.fill(); if (!HF.art.drawStretched(ctx, 'unit', u.type, this.drag.x, this.drag.y - 20 - fs * UNIT_RISE, fs * UNIT_BOX, fs * UNIT_BOX, SPRITE_STRETCH)) { ctx.font = fs * .8 + 'px sans-serif'; ctx.fillStyle = INK; ctx.fillText(HF.UNITS[u.type].icon, this.drag.x, this.drag.y - 20); } ctx.globalAlpha = 1; }
+    }
+    // Burbujas de diálogo: texto envuelto, colores por bando y apilado por
+    // casilla para que dos frases simultáneas no se pisen.
+    const bubbleStack = {};
+    if (this.bubbles) for (const b of this.bubbles) {
+      const c = this.cells[b.i]; if (!c) continue;
+      const [x, y0] = this.toScreen(...this.pos(c));
+      const born = b.born || (now - 80);
+      const age = Math.max(0, (now - born) / 1000);
+      const popT = Math.min(1, age / .22);
+      const pop = popT < 1 ? 1 + 2.70158 * Math.pow(popT - 1, 3) + 1.70158 * Math.pow(popT - 1, 2) : 1;
+      const isEnemy = b.kind === 'enemy', isAlly = b.kind === 'ally', isInt = b.kind === 'interrupt';
+      ctx.font = (isInt ? 'italic 700 12px' : '700 12px') + ' "Plus Jakarta Sans", sans-serif';
+      const maxW = Math.min(250, Math.max(150, fs * 7));
+      const words = String(b.txt || '').split(' ');
+      const lines = []; let line = '';
+      for (const w of words) {
+        const test = line ? line + ' ' + w : w;
+        if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = w; } else line = test;
+      }
+      if (line) lines.push(line);
+      if (!lines.length) continue;
+      const tw = Math.max(...lines.map(l => ctx.measureText(l).width)) + 16;
+      const lh = 15, h = lines.length * lh + 10;
+      const stack = bubbleStack[b.i] || 0;
+      bubbleStack[b.i] = stack + 1;
+      const y = y0 - this._lift(c) - fs * 1.9 - stack * (h + 6);
+      const fill = isEnemy ? 'rgba(127,29,29,.95)'
+        : isAlly ? 'rgba(30,41,59,.96)'
+        : isInt ? 'rgba(58,46,16,.96)'
+        : b.kind === 'bad' ? 'rgba(94,36,42,.94)'
+        : b.kind === 'good' ? 'rgba(31,75,56,.94)' : 'rgba(22,34,54,.94)';
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, Math.max(0, b.life / .45));
+      ctx.translate(x, y); ctx.scale(pop, pop);
+      ctx.shadowColor = 'rgba(10,15,29,.45)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
+      this._roundRect(ctx, -tw / 2, -h, tw, h, 9); ctx.fillStyle = fill; ctx.fill();
+      ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+      ctx.strokeStyle = isEnemy ? '#b91c1c' : isAlly ? '#3b82f6' : isInt ? '#f5b942' : 'rgba(244,239,234,.18)';
+      ctx.lineWidth = isInt ? 1.5 : 1; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(5, 0); ctx.lineTo(0, 8); ctx.closePath();
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.fillStyle = isInt ? '#f5d67a' : INK;
+      lines.forEach((l, k) => ctx.fillText(l, 0, -h + 7 + lh / 2 + k * lh));
+      ctx.restore();
+    }
+    this._drawFx(ctx, now);
+    // Limpiar caches para evitar memory leaks (mantener tamaño razonable)
+    if (_zenithGradCache.size > 500) _zenithGradCache.clear();
+    if (_jitterColorCache.size > 500) _jitterColorCache.clear();
+    ctx.restore();
+  };
+  P._drawClouds = function (ctx, now) {
+    const n = Math.max(0, Math.min(4, (HF.CFG.ambience && HF.CFG.ambience.clouds) || 3));
+    if (!n) return;
+    const seed = (this.game && this.game.seed) || 1;
+    const cw = Math.max(160, this.W * .32), ch = cw * .28, span = this.W + cw * 2;
+    ctx.save();
+    for (let k = 0; k < n; k++) {
+      const x = ((now * .006 * (1 + k * .25) + (seed % 997) * .7 + k * this.W * .36) % span) - cw;
+      const y = this.H * (.2 + .27 * k) + Math.sin(now * .00025 + k * 1.7) * 18;
+      const grd = ctx.createRadialGradient(x, y, 4, x, y, cw * .62);
+      grd.addColorStop(0, 'rgba(10,15,29,.09)'); grd.addColorStop(1, 'rgba(10,15,29,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath(); ctx.ellipse(x, y, cw * .65, ch, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  };
+  P._drawParts = function (ctx, winter) {
+    if (!this.parts || !this.parts.length) return;
+    ctx.save();
+    for (const p of this.parts) {
+      if (p.bird) {
+        ctx.strokeStyle = 'rgba(240,245,255,.38)'; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(p.x - 4, p.y); ctx.lineTo(p.x, p.y - 3); ctx.lineTo(p.x + 4, p.y); ctx.stroke();
+      } else if (winter) {
+        ctx.fillStyle = 'rgba(244,239,234,.58)'; ctx.fillRect(p.x, p.y, p.s, p.s);
+      } else {
+        ctx.fillStyle = 'rgba(245,220,140,.45)';
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
+  };
+  P.colors = HF.COLORS;
+  HF.Board = Board;
+  HF.art.onLoad(() => { const c = HF.cur && HF.cur(); if (c && c.board && c.board.W) { try { c.board.draw(); } catch (e) { } } });
+  HF.art.preload();
+})(window);

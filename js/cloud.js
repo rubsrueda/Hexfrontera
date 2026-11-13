@@ -45,6 +45,21 @@
     return 'HF-' + t + r;
   }
   function makeKey() { return 'K-' + Math.random().toString(36).substring(2, 8).toUpperCase(); }
+
+  // Llave nueva para el jugador (8 caracteres aleatorios, sin ambigüedades).
+  function generateSecretKey() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bytes = new Uint8Array(8);
+    try {
+      if (G.crypto && G.crypto.getRandomValues) G.crypto.getRandomValues(bytes);
+      else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    } catch (e) {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    let out = 'K-';
+    for (let i = 0; i < bytes.length; i++) out += alphabet[bytes[i] % alphabet.length];
+    return out;
+  }
   function playerId() {
     let id = get('player_id', null);
     if (!id) {
@@ -267,10 +282,15 @@
     const pkey = String(targetKey || '').trim();
     if (!pid || !pkey) return { ok: false, msg: 'ID o clave incorrecta' };
 
+    // Guardamos la identidad temporal antes de restaurar: si era una cuenta
+    // creada automáticamente en este teléfono, se borrará del servidor.
+    const oldId = playerId(), oldKey = secretKey();
+
     // El servidor devuelve el perfil SIN la clave; la clave la aporta el jugador.
     const r = await rpcCheck('fn_hf_profile', { p_player: pid, p_secret: pkey });
     if (r.ok && r.player_id) {
       restoreFromRow(Object.assign({ secret_key: pkey }, r), true);
+      discardOldIdentity(oldId, oldKey, pid).catch(() => { });
       return { ok: true };
     }
     if (!r.missing) return { ok: false, offline: !!r.offline, msg: r.offline ? 'Modo sin conexión' : 'ID o clave incorrecta' };
@@ -281,7 +301,24 @@
     const row = Array.isArray(legacy.data) ? legacy.data[0] : legacy.data;
     if (!row) return { ok: false, msg: 'ID o clave incorrecta' };
     restoreFromRow(Object.assign({ secret_key: pkey }, row), true);
+    discardOldIdentity(oldId, oldKey, pid).catch(() => { });
     return { ok: true };
+  }
+
+  // Borra la cuenta temporal de este dispositivo tras vincular otra. El
+  // servidor no borra cuentas con licencia, pagos ni datos vinculados.
+  async function discardOldIdentity(oldId, oldKey, targetId) {
+    if (!oldId || !oldKey || oldId === targetId) return { ok: false, skipped: true };
+    try {
+      // Las solicitudes locales pertenecían a la cuenta temporal; la nueva
+      // cuenta no debe heredarlas.
+      HF.store.del('license_request');
+      HF.store.del('paypal_pending_order');
+      const r = await rpcCheck('fn_hf_delete_player', { p_player: oldId, p_secret: oldKey });
+      return r.ok ? { ok: true } : { ok: false, msg: r.msg || '' };
+    } catch (e) {
+      return { ok: false, msg: 'No se pudo limpiar la cuenta temporal' };
+    }
   }
 
   async function refreshProfile() {
@@ -313,24 +350,48 @@
     return legacy;
   }
 
-  // Recuperación: se pide al servidor y NUNCA se recibe la clave secreta.
-  // Sin el SQL aplicado, esta función queda deshabilitada a propósito: la ruta
-  // antigua (SELECT por correo) permitía quedarse con la cuenta de otro.
+  // Cambiar la llave secreta (la actual viaja como prueba de identidad).
+  async function setSecretKey(newKey) {
+    const id = playerId(), key = secretKey();
+    const value = String(newKey || '').trim();
+    if (!/^[A-Za-z0-9_-]{6,40}$/.test(value)) return { ok: false, msg: 'llave invalida' };
+    if (value === key) return { ok: false, msg: 'llave sin cambios' };
+
+    const r = await rpcCheck('fn_hf_set_secret', { p_player: id, p_secret: key, p_new_secret: value });
+    if (r.ok) { set('secret_key', value); return { ok: true }; }
+    if (r.missing) return { ok: false, msg: 'Falta aplicar sql/account_extra.sql' };
+    return { ok: false, offline: !!r.offline, msg: r.msg || 'No se pudo cambiar la llave' };
+  }
+
+  // Recuperación por correo: la Edge Function `paypal` envía el ID y la llave
+  // al correo de respaldo. El cliente nunca recibe la llave por esta vía.
   async function recoverByEmail(email) {
     const value = String(email || '').trim();
-    const r = await rpcCheck('fn_hf_recover_request', { p_email: value });
-    if (r.ok) {
-      return {
-        ok: false,
-        pending: true,
-        playerId: r.player_id || '',
-        msg: 'Solicitud registrada. Necesitas el código de rescate enviado a tu correo.'
-      };
+
+    const r = await callFunction('paypal', { action: 'recover-request', email: value }, 25000);
+    if (r && r.ok && r.data && r.data.sent) {
+      return { ok: true, sent: true, msg: 'Si el correo existe, recibirás tus credenciales.' };
     }
-    if (r.missing) {
-      return { ok: false, msg: 'Recuperación no disponible: falta aplicar sql/security_hardening.sql' };
+    if (r && r.data && r.data.error === 'email_no_configurado') {
+      return { ok: false, msg: 'El envío de correo no está configurado. El administrador debe añadir RESEND_API_KEY y EMAIL_FROM en Supabase.' };
     }
-    return { ok: false, offline: !!r.offline, msg: r.offline ? 'Modo sin conexión' : (r.msg || 'No se encontró la cuenta') };
+    if (r && r.data && r.data.error === 'correo_invalido') {
+      return { ok: false, msg: 'Escribe un correo válido.' };
+    }
+    if (r && r.data && r.data.error === 'accion_desconocida') {
+      return { ok: false, msg: 'La recuperación por correo requiere volver a desplegar la función `paypal`.' };
+    }
+    if (r && r.status === 429) {
+      return { ok: false, msg: 'Demasiados intentos. Espera un rato antes de volver a probar.' };
+    }
+    if (r && r.status === 404) {
+      return { ok: false, msg: 'La recuperación por correo no está disponible. Revisa que la función `paypal` esté desplegada.' };
+    }
+    if (r && r.offline) {
+      return { ok: false, offline: true, msg: 'No se pudo contactar con el servidor de correo.' };
+    }
+    // La función existe pero devolvió un error (por ejemplo, proveedor caído).
+    return { ok: false, msg: (r && (r.msg || (r.data && r.data.error))) || 'No se pudo enviar el correo' };
   }
 
   // ---------- desafío diario ----------
@@ -530,10 +591,24 @@
       const cur = +row.score || 0, curTurns = +row.turns || 0, next = +payload.score || 0, nextTurns = +payload.turns || 0;
       if (!(next > cur || (next === cur && nextTurns < curTurns))) return { ok: true, skipped: true, data: row };
     }
+    // Ruta antiga: a táboa só ten estas columnas. kills/lost/deserts son
+    // hechos para o RPC endurecido; envialos aquí provoca HTTP 400
+    // («Could not find the 'deserts' column»).
+    const rowBody = {
+      map_key: payload.map_key,
+      player_id: payload.player_id,
+      tribe_name: payload.tribe_name,
+      crest: payload.crest,
+      color_hex: payload.color_hex,
+      turns: payload.turns,
+      score: payload.score,
+      surplus: payload.surplus,
+      won: payload.won
+    };
     const out = await request('/hf_map_scores?on_conflict=map_key,player_id', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-      body: payload
+      body: rowBody
     });
     if (out.ok) return out;
     return { ok: false, offline: !!out.offline, status: out.status, msg: d3msg(out.data) || httpMsg(out.status) };
@@ -642,6 +717,7 @@
     request, ping, initIdentity, ensureRegistered,
     playerId, secretKey, isPremium, recoveryEmail, verifyLicense,
     profileData, saveProfileCloud, saveProfileSoon, refreshProfile, linkDevice, restoreFromRow, setRecoveryEmail, recoverByEmail,
+    generateSecretKey, setSecretKey,
     submitDailyScore, flushQueue, getDailyLeaderboard,
     getMapKey, submitMapScore, getMapLeaderboard, getMapRank, getGlobalTop, getPlayerStanding, getMapReplay, submitReplayCode,
     mapKeyLabel,

@@ -20,9 +20,18 @@
  *   { action: "create-order",  player_id: "HF-..." }
  *      -> { ok, id, status }                 id = order id de PayPal
  *   { action: "capture-order", order_id: "ORDER-ID", player_id: "HF-..." }
- *      -> { ok, payment_id, payer_email, amount, currency, is_premium, already }
+ *      -> { ok, payment_id, payer_email, amount, currency, is_premium, already,
+ *           email_sent, email_error? }
+ *   { action: "recover-request", email: "jugador@ejemplo.com" }
+ *      -> { ok, sent }   (envía ID + llave al correo de respaldo)
  *   { action: "health" }
- *      -> { ok, configured, sandbox }
+ *      -> { ok, configured, sandbox, email, email_mode, email_missing }
+ *
+ * Secretos de correo (uno de los dos modos):
+ *   SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS   (Porkbun: smtp.porkbun.com:50587)
+ *   RESEND_API_KEY                                  (alternativa HTTP)
+ *   EMAIL_FROM       Remitente, ej. "Federati <no-reply@tudominio>"
+ *   EMAIL_REPLY_TO   Opcional
  *
  * Seguridad:
  *   · El importe (4.99 USD) lo pone el servidor; el cliente no lo envía.
@@ -32,6 +41,8 @@
  *     idempotente y sólo puede ejecutar la service_role.
  * ============================================================================
  */
+
+import nodemailer from "npm:nodemailer@^9";
 
 const AMOUNT = "4.99";
 const CURRENCY = "USD";
@@ -83,6 +94,185 @@ function timeoutSignal(ms: number): AbortSignal {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms);
   return controller.signal;
+}
+
+// ---------------------------------------------------------------------------
+// Correo transaccional: SMTP (Porkbun u otro) o Resend
+// ---------------------------------------------------------------------------
+// SMTP:   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM
+// Resend: RESEND_API_KEY, EMAIL_FROM
+// Se usa SMTP si SMTP_HOST está definido; si no, Resend.
+//
+// Importante: Supabase/Deno bloquea los puertos salientes 25 y 587. Para
+// Porkbun usa el puerto alternativo 50587 (STARTTLS) o 465 (TLS implícito).
+
+const RESEND_ENDPOINT = "https://api.resend.com/emails";
+
+type EmailMode = "smtp" | "resend" | "none";
+type EmailInput = { to: string; subject: string; text: string; html: string };
+type EmailResult = { ok: boolean; error?: string };
+
+function emailMode(): EmailMode {
+  if ((Deno.env.get("SMTP_HOST") || "").trim()) return "smtp";
+  if ((Deno.env.get("RESEND_API_KEY") || "").trim()) return "resend";
+  return "none";
+}
+
+function emailMissing(): string[] {
+  const mode = emailMode();
+  const missing: string[] = [];
+  const has = (name: string) => !!(Deno.env.get(name) || "").trim();
+
+  if (!has("EMAIL_FROM")) missing.push("EMAIL_FROM");
+  if (mode === "smtp") {
+    if (!has("SMTP_USER")) missing.push("SMTP_USER");
+    if (!has("SMTP_PASS")) missing.push("SMTP_PASS");
+  } else if (mode === "none") {
+    missing.push("SMTP_HOST (+SMTP_USER/SMTP_PASS) o RESEND_API_KEY");
+  }
+  return missing;
+}
+
+function emailConfigured(): boolean {
+  return emailMissing().length === 0;
+}
+
+function escapeHtml(value: string): string {
+  const map: Record<string, string> = {
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  };
+  return String(value).replace(/[&<>"']/g, (c) => map[c] || c);
+}
+
+async function sendResendEmail(input: EmailInput): Promise<EmailResult> {
+  const apiKey = (Deno.env.get("RESEND_API_KEY") || "").trim();
+  const from = (Deno.env.get("EMAIL_FROM") || "").trim();
+  if (!apiKey || !from) return { ok: false, error: "email_no_configurado" };
+
+  const payload: Json = {
+    from,
+    to: [input.to],
+    subject: input.subject,
+    text: input.text,
+    html: input.html,
+  };
+  const replyTo = (Deno.env.get("EMAIL_REPLY_TO") || "").trim();
+  if (replyTo) payload.reply_to = replyTo;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: timeoutSignal(20000),
+    });
+    const data = await res.json().catch(() => ({})) as Json;
+    if (!res.ok) {
+      return { ok: false, error: String(data.message || data.name || "email_error") };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String((error as Error)?.message || "email_error") };
+  }
+}
+
+async function sendSmtpEmail(input: EmailInput): Promise<EmailResult> {
+  const host = (Deno.env.get("SMTP_HOST") || "").trim();
+  const port = Number(Deno.env.get("SMTP_PORT") || 50587);
+  const user = (Deno.env.get("SMTP_USER") || "").trim();
+  const pass = Deno.env.get("SMTP_PASS") || "";
+  const from = (Deno.env.get("EMAIL_FROM") || "").trim();
+  if (!host || !user || !pass || !from) return { ok: false, error: "email_no_configurado" };
+
+  try {
+    const transport = nodemailer.createTransport({
+      host,
+      port,
+      // 465 = TLS implícito. 50587/587 = STARTTLS (requireTLS).
+      secure: port === 465,
+      requireTLS: port !== 465,
+      auth: { user, pass },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
+    });
+
+    try {
+      const replyTo = (Deno.env.get("EMAIL_REPLY_TO") || "").trim();
+      await transport.sendMail({
+        from,
+        to: input.to,
+        subject: input.subject,
+        text: input.text,
+        html: input.html,
+        ...(replyTo ? { replyTo } : {}),
+      });
+      return { ok: true };
+    } finally {
+      transport.close();
+    }
+  } catch (error) {
+    return { ok: false, error: String((error as Error)?.message || "smtp_error") };
+  }
+}
+
+async function sendEmail(input: EmailInput): Promise<EmailResult> {
+  const mode = emailMode();
+  if (mode === "smtp") return sendSmtpEmail(input);
+  if (mode === "resend") return sendResendEmail(input);
+  return { ok: false, error: "email_no_configurado" };
+}
+
+function credentialsEmail(input: {
+  playerId: string;
+  secretKey: string;
+  kind: "purchase" | "recovery";
+}): { subject: string; text: string; html: string } {
+  const isPurchase = input.kind === "purchase";
+  const subject = isPurchase
+    ? "Tu licencia Premium de Federati — credenciales"
+    : "Tus credenciales de Federati";
+  const intro = isPurchase
+    ? "Gracias por tu compra. Tu licencia Premium ya está activa."
+    : "Has solicitado recuperar el acceso a tu cuenta de Federati.";
+
+  const player = input.playerId;
+  const key = input.secretKey;
+  const text = [
+    intro,
+    "",
+    "ID de jugador: " + player,
+    "Llave secreta: " + key,
+    "",
+    "Guarda estos datos. Para jugar en otro dispositivo:",
+    "Ajustes → Cuenta y licencia → Restaurar compra, e introduce tu ID y tu llave.",
+    "",
+    "También puedes cambiar la llave desde Ajustes → Cuenta y licencia.",
+    "No compartas tu llave: quien la tenga puede usar tu cuenta.",
+    "",
+    "— Federati",
+  ].join("\n");
+
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;line-height:1.55;color:#1b2436;max-width:560px;margin:0 auto">
+    <h2 style="color:#b7791f;margin:0 0 8px">Federati</h2>
+    <p>${escapeHtml(intro)}</p>
+    <table style="border-collapse:collapse;margin:14px 0;width:100%">
+      <tr><td style="padding:8px 10px;background:#faf3e3;border:1px solid #eadfc6"><b>ID de jugador</b></td>
+          <td style="padding:8px 10px;border:1px solid #eadfc6;font-family:monospace">${escapeHtml(player)}</td></tr>
+      <tr><td style="padding:8px 10px;background:#faf3e3;border:1px solid #eadfc6"><b>Llave secreta</b></td>
+          <td style="padding:8px 10px;border:1px solid #eadfc6;font-family:monospace">${escapeHtml(key)}</td></tr>
+    </table>
+    <p><b>Guarda estos datos.</b> Para jugar en otro dispositivo entra en
+    <b>Ajustes → Cuenta y licencia → Restaurar compra</b> e introduce tu ID y tu llave.</p>
+    <p>También puedes cambiar la llave desde <b>Ajustes → Cuenta y licencia</b>.</p>
+    <p style="color:#8a4b08"><b>No compartas tu llave:</b> quien la tenga puede usar tu cuenta.</p>
+    <p style="color:#6b7280;font-size:13px">— Federati</p>
+  </div>`;
+
+  return { subject, text, html };
 }
 
 function paypalBase(): string {
@@ -281,6 +471,20 @@ async function playerExists(playerId: string): Promise<boolean> {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+async function getPlayerRow(playerId: string): Promise<{ secret_key?: string; recovery_email?: string }> {
+  const url = `${supabaseUrl()}/rest/v1/hf_players` +
+    `?player_id=eq.${encodeURIComponent(playerId)}&select=secret_key,recovery_email&limit=1`;
+  const res = await fetch(url, {
+    headers: serviceHeaders(),
+    signal: timeoutSignal(10000),
+  });
+  if (!res.ok) {
+    throw new HttpError(502, "supabase_consulta", { status: res.status });
+  }
+  const rows = await res.json().catch(() => []);
+  return Array.isArray(rows) ? (rows[0] || {}) : {};
+}
+
 async function grantPremium(input: {
   playerId: string;
   paymentId: string;
@@ -378,6 +582,30 @@ async function handleCaptureOrder(orderId: string, playerId: string): Promise<Js
     });
   }
 
+  // Correo de bienvenida con el ID y la llave. Si falla, la compra sigue
+  // siendo válida: nunca se pierde la licencia por un problema de correo.
+  let emailSent = false;
+  let emailError = "";
+  try {
+    const player = await getPlayerRow(playerId);
+    const secretKey = String(player.secret_key || "");
+    const to = payerEmail || String(player.recovery_email || "");
+    if (!secretKey) {
+      emailError = "sin_llave";
+    } else if (!to) {
+      emailError = "sin_correo";
+    } else {
+      const mail = credentialsEmail({ playerId, secretKey, kind: "purchase" });
+      const sent = await sendEmail({ to, ...mail });
+      emailSent = sent.ok;
+      if (!sent.ok) emailError = sent.error || "email_error";
+    }
+  } catch (error) {
+    emailError = "email_error";
+    console.warn("[paypal] no se pudo preparar el correo:", (error as Error)?.message);
+  }
+  if (!emailSent) console.warn("[paypal] correo no enviado:", emailError);
+
   return {
     ok: true,
     payment_id: captureId,
@@ -386,7 +614,51 @@ async function handleCaptureOrder(orderId: string, playerId: string): Promise<Js
     currency,
     is_premium: true,
     already: !!granted.already,
+    email_sent: emailSent,
+    email_error: emailSent ? undefined : emailError,
   };
+}
+
+async function handleRecoverRequest(email: string): Promise<Json> {
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    throw new HttpError(400, "correo_invalido");
+  }
+  if (!emailConfigured()) {
+    throw new HttpError(503, "email_no_configurado", { missing: emailMissing() });
+  }
+
+  const res = await fetch(`${supabaseUrl()}/rest/v1/rpc/fn_hf_recover_credentials`, {
+    method: "POST",
+    headers: serviceHeaders(),
+    body: JSON.stringify({ p_email: email }),
+    signal: timeoutSignal(15000),
+  });
+  const data = await res.json().catch(() => ({})) as Json;
+  if (!res.ok) {
+    throw new HttpError(502, "supabase_consulta", { status: res.status });
+  }
+
+  if (data.ok !== true) {
+    if (String(data.msg || "").includes("demasiados")) {
+      throw new HttpError(429, "demasiados_intentos");
+    }
+    // No se revela si el correo existe: misma respuesta para todos.
+    return { ok: true, sent: true };
+  }
+
+  const playerId = String(data.player_id || "");
+  const secretKey = String(data.secret_key || "");
+  const to = String(data.recovery_email || email);
+  if (!playerId || !secretKey) {
+    throw new HttpError(500, "credenciales_incompletas");
+  }
+
+  const mail = credentialsEmail({ playerId, secretKey, kind: "recovery" });
+  const sent = await sendEmail({ to, ...mail });
+  if (!sent.ok) {
+    throw new HttpError(502, "email_error", { error: sent.error });
+  }
+  return { ok: true, sent: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +689,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
         ok: true,
         configured,
         sandbox: paypalBase().includes("sandbox"),
+        email: emailConfigured(),
+        email_mode: emailMode(),
+        email_missing: emailMissing(),
       });
+    }
+
+    if (action === "recover-request") {
+      const email = String(body.email || "").trim();
+      return json(req, await handleRecoverRequest(email));
     }
 
     const playerId = validPlayerId(body.player_id);

@@ -61,27 +61,40 @@
       LICENSE_LINK: 'Vincular dispositivo',
       LICENSE_SYNC: 'Sincronizar',
       LICENSE_SYNC_OK: 'Perfil sincronizado',
-      LICENSE_ID: 'ID público',
+      LICENSE_ID: 'ID de jugador',
       LICENSE_KEY: 'Llave secreta',
       LICENSE_SHOW_KEY: 'Ver/Copiar',
       LICENSE_HIDE_KEY: 'Ocultar',
       LICENSE_KEY_COPIED: 'Llave secreta copiada',
       LICENSE_COPY_FAIL: 'No se pudo copiar automáticamente',
+      LICENSE_EDIT_KEY: 'Editar llave',
+      LICENSE_EDIT_KEY_DESC: 'La llave secreta es tu contraseña. Si la cambias, la anterior dejará de funcionar en otros dispositivos.',
+      LICENSE_KEY_CURRENT: 'Llave actual',
+      LICENSE_KEY_NEW: 'Nueva llave',
+      LICENSE_KEY_GENERATE: 'Generar otra',
+      LICENSE_EDIT_KEY_WARN: 'Guarda la nueva llave en un lugar seguro. No la compartas con nadie.',
+      LICENSE_KEY_OK: 'Llave actualizada. Guárdala en un lugar seguro.',
+      LICENSE_KEY_BAD: 'La llave debe tener entre 6 y 40 caracteres (letras, números, - o _).',
+      LICENSE_KEY_SAME: 'La nueva llave es igual a la actual.',
+      LICENSE_KEY_ERR: 'No se pudo cambiar la llave.',
+      LICENSE_KEY_AUTH: 'La llave actual no es válida. Vuelve a iniciar sesión con tu ID y llave.',
+      LICENSE_TOO_MANY: 'Demasiados intentos. Espera un rato antes de volver a probar.',
       LICENSE_CHECKING: 'Comprobando licencia…',
       LICENSE_ACTIVE: 'Licencia completa activa',
       LICENSE_NOT_FOUND: 'La licencia aún no está activa',
       LICENSE_OFFLINE: 'Sin conexión: no se pudo comprobar la licencia',
-      LICENSE_LINK_DESC: 'Introduce el ID y la llave secreta del dispositivo donde compraste el juego.',
+      LICENSE_LINK_DESC: 'Introduce el ID y la llave secreta del dispositivo donde compraste el juego. La cuenta temporal de este teléfono se eliminará si no tiene licencia ni pagos.',
       LICENSE_LINKED: 'Dispositivo vinculado',
       LICENSE_ERR_CREDENTIALS: 'ID o llave incorrectos',
       LICENSE_RESTORE: 'Restaurar compra',
       LICENSE_RESTORE_PURCHASE: '¿Ya compraste en otro dispositivo? Restaurar compra',
-      LICENSE_RECOVER_DESC: 'Si registraste un correo de respaldo, pide un código de recuperación. También puedes restaurar con el ID y la llave de tu otro dispositivo.',
-      LICENSE_RECOVER_GO: 'Enviar código',
+      LICENSE_RECOVER_DESC: 'Escribe el correo de respaldo de tu cuenta. Si existe, te enviaremos tu ID de jugador y tu llave secreta. También puedes restaurar con el ID y la llave de tu otro dispositivo.',
+      LICENSE_RECOVER_GO: 'Enviar credenciales',
       LICENSE_RECOVER_ALT: '¿Tienes otro dispositivo con la licencia?',
-      LICENSE_RECOVER_PENDING: 'Solicitud registrada. Revisa tu correo para continuar.',
+      LICENSE_RECOVER_PENDING: 'Solicitud registrada. Revisa tu correo.',
       LICENSE_RECOVER_OK: 'Cuenta recuperada',
-      LICENSE_RECOVER_NOT_FOUND: 'No se encontró una cuenta con ese correo',
+      LICENSE_RECOVER_SENT: 'Si el correo existe, recibirás tu ID y tu llave en unos minutos. Revisa también el spam.',
+      LICENSE_RECOVER_NOT_FOUND: 'No se pudo enviar el correo',
       LICENSE_SAVE: 'Guardar',
       PAY_TITLE: 'Licencia completa',
       PAY_INTRO: 'Un solo pago, para siempre. Sin suscripciones ni anuncios.',
@@ -114,6 +127,9 @@
       PAY_ERR_SEND: 'No se pudo registrar la solicitud',
       PAY_PAYPAL_LOADING: 'Cargando PayPal…',
       PAY_PAYPAL_SECURE: 'Pago único procesado por PayPal. No almacenamos los datos de tu tarjeta.',
+      PAY_PAYPAL_EMAIL_NOTE: 'Te enviaremos tu ID de jugador y tu llave secreta al correo de tu cuenta PayPal.',
+      PAY_PAYPAL_EMAIL_SENT: 'También te enviamos tus credenciales por correo.',
+      PAY_PAYPAL_EMAIL_FAILED: 'No pudimos enviar el correo con tus credenciales; puedes verlas en Ajustes.',
       PAY_PAYPAL_CREATING: 'Creando la orden de pago…',
       PAY_PAYPAL_APPROVE: 'Completa el pago en la ventana de PayPal.',
       PAY_PAYPAL_CAPTURING: 'Confirmando el pago…',
@@ -180,7 +196,559 @@
       NO: 'No',
       CLOSE: 'Cerrar',
       COMING_SOON: 'próximamente',
-      NO_MULTIPLAYER: 'sin multijugador'
+      NO_MULTIPLAYER: 'sin multijugador',
+      // Resource detail screen
+      RES_GOLD: 'Oro',
+      RES_FOOD: 'Comida',
+      RES_WOOD: 'Madera',
+      RES_ORO: 'Oro',
+      RES_TRIGO: 'Trigo',
+      RES_MADERA: 'Madera',
+      TOTAL_FACTION: '(Total Facción)',
+      PROVINCE: 'Provincia',
+      CONCEPT: 'Concepto',
+      TOTAL: 'Total',
+      INCOME_TERRAIN: '🗺️ Terreno Base',
+      INCOME_RESOURCES: '💎 Recursos Naturales',
+      INCOME_BUILDINGS: '🏗️ Edificios',
+      INCOME_DOCTRINES: '📜 Doctrinas',
+      INCOME_TRADE: '🛣️ Rutas Comerciales',
+      TRADE_LAND: 'Terrestres',
+      TRADE_SEA: 'Marítimas',
+      TRADE_NOTE: 'El oro se entrega al llegar destino',
+      TOTAL_INCOME: 'INGRESOS TOTALES/turno',
+      EXPENSE_UNITS: '⚔️ Mantenimiento de Unidades',
+      EXPENSE_LOANS: '💳 Préstamos',
+      LOAN_PAYMENT: 'Pago préstamo',
+      TURNS_LEFT: 'turnos restantes',
+      TOTAL_EXPENSES: 'GASTOS TOTALES/turno',
+      NET_BALANCE: 'Balance Neto / Turno',
+      DEFICIT_WARNING: 'Déficit: se producirán deserciones al final del turno',
+      SURPLUS_OK: 'Superávit: tu economía es sostenible',
+      RESOURCE_DETAIL: 'Detalle de',
+
+      // === NUEVAS CLAVES PARA TRADUCCIÓN COMPLETA ===
+      // Editor
+      TOAST_TERRAIN_IMPASSABLE: 'Terreno intransitable',
+      TOAST_SHIPS_ON_WATER_ONLY: 'Los barcos se colocan en agua',
+      TOAST_UNIT_LAND_ONLY: 'Esa unidad es terrestre',
+      TOAST_HEX_OWNED_BY_OTHER: 'Ese hexágono pertenece a otra facción',
+      TOAST_COPIED: 'Copiado',
+      TOAST_PUBLISHING_UNAVAILABLE: 'Publicación no disponible',
+      EDITOR_TERRAIN_PLAIN: 'Llano',
+      EDITOR_TERRAIN_HILL: 'Colina',
+      EDITOR_TERRAIN_MOUNTAIN: 'Montaña',
+      EDITOR_TERRAIN_RIVER: 'Río',
+      EDITOR_TERRAIN_SEA: 'Mar',
+      EDITOR_RESOURCE_GOLD: 'Oro',
+      EDITOR_RESOURCE_FOOD: 'Trigo',
+      EDITOR_RESOURCE_WOOD: 'Madera',
+      EDITOR_BUILDING_TREE: 'Árbol',
+      EDITOR_BUILDING_ROAD: 'Camino',
+      EDITOR_BUILDING_CAMP: 'Campamento',
+      EDITOR_BUILDING_VILLAGE: 'Pueblo',
+      EDITOR_BUILDING_CITY: 'Ciudad',
+      EDITOR_BUILDING_BASTION: 'Bastión',
+      EDITOR_CAPITAL_PLAYER: 'Capital jugador',
+      EDITOR_CAPITAL_RIVAL_1: 'Capital rival 1',
+      EDITOR_CAPITAL_RIVAL_2: 'Capital rival 2',
+      EDITOR_CAPITAL_RIVAL_3: 'Capital rival 3',
+      EDITOR_REMOVE_BUILDING: 'Quitar edificio',
+      EDITOR_UNIT_PLAYER_0: 'Unidades J0',
+      EDITOR_UNIT_PLAYER_1: 'Unidades R1',
+      EDITOR_UNIT_PLAYER_2: 'Unidades R2',
+      EDITOR_UNIT_PLAYER_3: 'Unidades R3',
+      EDITOR_UNIT_INF_N1: 'Infantería N1',
+      EDITOR_UNIT_INF_N2: 'Infantería N2',
+      EDITOR_UNIT_INF_N3: 'Infantería N3',
+      EDITOR_UNIT_ENG_N1: 'Ingeniero N1',
+      EDITOR_UNIT_ENG_N2: 'Ingeniero N2',
+      EDITOR_UNIT_ENG_N3: 'Ingeniero N3',
+      EDITOR_UNIT_CAV_N1: 'Caballería N1',
+      EDITOR_UNIT_CAV_N2: 'Caballería N2',
+      EDITOR_UNIT_CAV_N3: 'Caballería N3',
+      EDITOR_UNIT_ARC_N1: 'Arqueros N1',
+      EDITOR_UNIT_ARC_N2: 'Arqueros N2',
+      EDITOR_UNIT_ARC_N3: 'Arqueros N3',
+      EDITOR_UNIT_SIE_N1: 'Asedio N1',
+      EDITOR_UNIT_SIE_N2: 'Asedio N2',
+      EDITOR_UNIT_SIE_N3: 'Asedio N3',
+      EDITOR_UNIT_SHIP_N1: 'Barco N1',
+      EDITOR_UNIT_SHIP_N2: 'Barco N2',
+      EDITOR_UNIT_SHIP_N3: 'Barco N3',
+      EDITOR_CLEAR_ALL: 'Borrar todo',
+      EDITOR_INFO_PAINT: 'Toca o arrastra para pintar',
+      EDITOR_SAVE_MAP_NAME: 'Mapa {num}',
+
+      // Diplomacy UI
+      TOAST_NO_FACTIONS_AVAILABLE: 'No hay facciones disponibles para tratar',
+      TOAST_NAP_PROPOSED: 'PNA propuesto a {name}',
+      TOAST_TRADE_PROPOSED: 'Acuerdo comercial propuesto a {name}',
+      TOAST_LOAN_REQUEST_PUBLISHED: 'Solicitud de préstamo publicada',
+      TOAST_LOAN_OFFER_PUBLISHED: 'Oferta de préstamo publicada',
+      DIPLOMACY_TREATY_BORDER_SEALED: 'Sellada',
+      DIPLOMACY_TREATY_BORDER_OPEN: 'Abierta',
+      DIPLOMACY_TREATY_VISION_SHARED: 'Compartida',
+      DIPLOMACY_TREATY_VISION_NOT: 'No',
+      DIPLOMACY_TREATY_SACRED: 'Pacto Sagrado',
+      DIPLOMACY_TREATY_BREAKABLE: 'Rompible',
+      DIPLOMACY_PROPOSE_NAP_TITLE: '🕊️ Proponer PNA',
+      DIPLOMACY_PROPOSE_TRADE_TITLE: '🤝 Proponer Acuerdo Comercial',
+      DIPLOMACY_DURATION_LABEL: 'Duración (turnos)',
+      DIPLOMACY_BORDER_LOCK_LABEL: 'Cierre fronterizo (Pacto Sagrado)',
+      DIPLOMACY_VISION_SHARING_LABEL: 'Visión compartida',
+      DIPLOMACY_SACRED_WARNING: '⚠️ Con cierre fronterizo activado, el tratado es INQUEBRANTABLE (Pacto Sagrado). Solo termina por expiración natural.',
+      DIPLOMACY_GIVE_RESOURCE_LABEL: 'Recurso a enviar',
+      DIPLOMACY_GIVE_AMOUNT_LABEL: 'Cantidad por turno',
+      DIPLOMACY_TAKE_RESOURCE_LABEL: 'Recurso a recibir',
+      DIPLOMACY_TAKE_AMOUNT_LABEL: 'Cantidad por turno',
+      DIPLOMACY_LOAN_REQUEST_TITLE: '💰 Solicitar Préstamo',
+      DIPLOMACY_LOAN_OFFER_TITLE: '🏦 Ofrecer Préstamo',
+      DIPLOMACY_LOAN_AMOUNT_LABEL: 'Cantidad',
+      DIPLOMACY_LOAN_MAX_RATE_LABEL: 'Tasa máxima (%)',
+      DIPLOMACY_LOAN_PURPOSE_LABEL: 'Propósito',
+      DIPLOMACY_LOAN_PURPOSE_EMERGENCY: 'Emergencia',
+      DIPLOMACY_LOAN_PURPOSE_DEVELOPMENT: 'Desarrollo',
+      DIPLOMACY_LOAN_PURPOSE_MILITARY: 'Militar',
+      DIPLOMACY_LOAN_LENDER_LABEL: 'Prestamista preferido (opcional)',
+      DIPLOMACY_LOAN_LENDER_ANY: 'Cualquiera',
+      DIPLOMACY_LOAN_MAX_AMOUNT_LABEL: 'Cantidad máxima',
+      DIPLOMACY_LOAN_RATE_LABEL: 'Tasa base (%)',
+      DIPLOMACY_LOAN_MIN_SCORE_LABEL: 'Score mínimo',
+      DIPLOMACY_BUTTON_PROPOSE: 'Proponer',
+      DIPLOMACY_BUTTON_REQUEST: 'Solicitar',
+      DIPLOMACY_BUTTON_OFFER: 'Ofrecer',
+      DIPLOMACY_BUTTON_CANCEL: 'Cancelar',
+      DIPLOMACY_TOOLTIP_UNKNOWN: 'Desconocido',
+      DIPLOMACY_TREATY_TYPE_NAP: 'PNA',
+      DIPLOMACY_TREATY_TYPE_TRADE: 'COMERCIO',
+      DIPLOMACY_TREATY_TYPE_LOAN: 'PRÉSTAMO',
+      DIPLOMACY_EXPIRES_IN: 'Expira en: {countdown} turnos',
+      DIPLOMACY_EXPIRED: 'Expirado',
+
+      // Game - mensajes de toast
+      TOAST_NO_UNITS_BOTH_ACTIONS: 'No hay unidades con las dos acciones libres',
+      TOAST_NO_SEA_ROUTE: 'No hay otro puerto conectado por mar',
+      TOAST_NOT_YOUR_TURN: 'No es tu turno',
+      TOAST_ACTION_SENT: 'Acción enviada',
+      TOAST_LOOT: 'Botín: +{loot} {res}',
+      TOAST_WAIT_YOUR_TURN: 'Espera tu turno',
+      TOAST_TURN_ENDED: 'Turno entregado',
+      TOAST_READY_WAITING: '✅ Listo — esperando a los demás',
+      TOAST_RIVALS_TURN: '⏳ Turno de los rivales…',
+      TOAST_AI_ERROR: 'Error de IA: {error}',
+      TOAST_RANKING_SENT: 'Ranking: {msg}',
+      TOAST_RANKING_FAILED: 'Ranking: no se pudo enviar la marca',
+      TOAST_REPLAY_GEN_FAILED: 'No se pudo generar la repetición',
+      TOAST_LINKS_UNAVAILABLE: 'Enlaces no disponibles',
+      TOAST_CONFIGURE_PUBLIC_URL: 'Configura la dirección pública para compartir enlaces',
+      TOAST_LINK_COPIED: 'Enlace copiado',
+      TOAST_COPY_LINK_FROM_BOX: 'Copia el enlace del cuadro',
+      TOAST_INSUFFICIENT_RESOURCES: 'Recursos insuficientes',
+      TOAST_NO_VALID_PROVINCE: 'Ninguna provincia con casillas válidas puede pagarlo',
+      TOAST_TAP_GREEN_CELL: 'Toca una casilla verde',
+      TOAST_DOCTRINE_SAVED: 'Doctrina guardada',
+      TOAST_MULTIPLAYER_UNAVAILABLE: 'Multijugador no disponible',
+      TOAST_CORRUPTED_SAVE: 'Guardado dañado',
+
+      // Game - scoreboard y otros
+      SCOREBOARD_ELIMINATED: 'Eliminado',
+      SCOREBOARD_NO_CAPITAL: 'Sin capital',
+      SCOREBOARD_CAPITAL_THREATENED: 'En peligro',
+      SCOREBOARD_CAPITAL_SAFE: 'Segura',
+      SCOREBOARD_NO_TROOPS: 'Sin tropas',
+      GAME_GOAL_CONQUER: 'Conquista: elimina todas las ciudades rivales',
+      GAME_GOAL_SURVIVE: 'Sobrevive hasta el turno {n}',
+      GAME_GOAL_GOLD: 'Reúne {n} de oro',
+      GAME_GOAL_TERRITORY: 'Controla {n} casillas',
+      GAME_GOAL_CITY: 'Ten {n} ciudades',
+      GAME_GOAL_MAX_TURNS: 'Gana antes del turno {n}',
+      UNIT_TIP_ENG_CROSS: 'Cruza ríos y montañas sin camino',
+      UNIT_TIP_SIE_SIEGE: 'Asedia edificios y degrada defensas a distancia',
+      UNIT_TIP_BAR_NAVAL: 'Naval: transporta 1 unidad de tierra',
+      BANK_TITLE: '🏦 Banca',
+      BANK_EXCHANGE_LABEL: 'Cambiar recursos',
+      BANK_RECEIVE_LABEL: 'Recibir:',
+      BANK_AMOUNT_LABEL: 'Cantidad:',
+      BANK_QUOTE_PREFIX: 'Fórmula: {gold}/{prod} × {fee} = {rate} oro por {target} · {qty} = {exact} oro (se cobran <b>{cost}</b>)',
+      BANK_CANNOT_BUY: 'No produces ese recurso: no se puede comprar.',
+      BANK_TREASURY: 'Tesorería de la capital: 💰{gold} · 🌾{food} · 🪵{wood}',
+      BANK_BUTTON_EXCHANGE: 'Cambiar',
+      BANK_BUTTON_LOAN: 'Solicitar préstamo',
+      BANK_LOAN_ACTIVE: 'Préstamo activo: {turns} turnos · {perTurn}/turno',
+      BANK_CLOSE: 'Cerrar',
+      CARGO_TITLE: '⛵ Enviar carga',
+      CARGO_ORIGIN_INFO: 'Origen ({q},{r}) · disponible: 💰{gold} 🌾{food} 🪵{wood}',
+      CARGO_DEST_LABEL: 'Puerto de destino',
+      CARGO_RESOURCE_LABEL: 'Recurso',
+      CARGO_AMOUNT_LABEL: 'Cantidad (máx. 50)',
+      CARGO_BUTTON_SEND: 'Zarpar',
+      CARGO_BUTTON_CANCEL: 'Cancelar',
+      CARGO_NO_ROUTE: 'No hay otro puerto conectado por mar',
+      CARGO_SENT: '⛵ {qty} rumbo a {dest}',
+
+      // Replay
+      REPLAY_INVALID: 'Repetición no válida',
+      REPLAY_OPENING: 'Abriendo repetición…',
+      REPLAY_SHORT_LINKS_UNAVAILABLE: 'Enlaces cortos no disponibles',
+      REPLAY_OPEN_FAILED: 'No se pudo abrir el enlace',
+      REPLAY_CANNOT_OPEN_MAP: 'No se pudo abrir el mapa',
+      REPLAY_RECONSTRUCT_FAILED: 'No se pudo reconstruir la repetición',
+      REPLAY_STOPPED: 'Repetición detenida: {error}',
+      REPLAY_PLAYBACK_FINISHED: 'Partida Concluida',
+      REPLAY_ENDED_AT_TURN: 'La repetición terminó en el turno {turn}{won}',
+      REPLAY_WON: ' · Victoria de {name}',
+      REPLAY_LOST: ' · Derrota',
+      REPLAY_BUTTON_RESTART: '🔄 Repetir',
+      REPLAY_BUTTON_PLAY_MAP: '⚔️ ¿Puedes superarlo? Jugar este mapa',
+      REPLAY_BUTTON_MENU: '🏠 Menú',
+
+      // Replays
+      REPLAYS_CREATING_SHORT_LINK: 'Creando enlace corto…',
+      REPLAYS_NO_REPLAY_SAVED: 'No hay repetición guardada',
+      REPLAYS_CODE_GEN_FAILED: 'No se pudo generar el código',
+      REPLAYS_SHARE_REPLAY: '🎬 Código de la partida',
+      REPLAYS_LINK_LABEL: 'Enlace',
+      REPLAYS_SHORT_LINK_LABEL: 'Enlace corto de la repetición',
+      REPLAYS_CODE_LABEL: 'Código',
+      REPLAYS_URL_TOO_LONG: 'El enlace es muy largo y algunos chats lo truncan. También puedes compartir el código.',
+      REPLAYS_NO_PUBLIC_URL: 'Esta copia del juego no tiene una dirección pública, así que un enlace apuntaría a tu equipo y solo se abriría ahí. No tiene que ver con tu conexión a internet: es la dirección desde la que se abre el juego.',
+      REPLAYS_CONFIGURE_PUBLIC_URL: 'Configurar dirección pública',
+      REPLAYS_COPY_LINK: 'Copiar enlace',
+      REPLAYS_COPY_CODE: 'Copiar código',
+      REPLAYS_LINK_COPIED: 'Enlace copiado',
+      REPLAYS_CODE_COPIED: 'Código copiado',
+      REPLAYS_COPY_FROM_BOX: 'Copia el enlace del cuadro',
+
+      // Screens
+      TOAST_OFFLINE_MODE: 'Modo sin conexión',
+      TOAST_LOADING_REPLAY: 'Cargando repetición…',
+      TOAST_REPLAY_NOT_CONFIGURED: 'Repeticiones no configuradas: ejecuta el SQL de replay_code',
+      TOAST_PLAYER_NO_REPLAY: 'Este jugador no compartió su repetición',
+      TOAST_LOAD_REPLAY_FAILED: 'No se pudo cargar la repetición',
+      TOAST_LORE_UNAVAILABLE: 'Introducción no disponible',
+      TOAST_SURVEY_MODULE_UNAVAILABLE: 'Módulo de encuestas no disponible',
+
+      // Main.js
+      TOAST_OPENING_REPLAY: 'Abriendo repetición compartida…',
+      TOAST_OPENING_MAP: 'Abriendo mapa compartido…',
+      TOAST_INVALID_MAP_LINK: 'Enlace de mapa no válido',
+
+      // Event Feedback
+      TOAST_DIAG_UNAVAILABLE: 'Diagnóstico no disponible',
+      TOAST_NOT_SHOWN: 'No se mostró: {reason}',
+      TOAST_SURVEY_CLEARED: 'Marcas locales de encuesta limpiadas',
+      DIAG_ACTIVE_CAMPAIGN: 'Campaña activa',
+      DIAG_PLAYER_LANG: 'Idioma del jugador',
+      DIAG_RPC_LOCALE: 'Locale de la RPC',
+      DIAG_QUESTIONS: 'Preguntas',
+      DIAG_PENDING_SEND: 'Pendiente de envío',
+      DIAG_SESSION_SHOWN: 'Mostrada en esta sesión',
+
+      // Engine - errores
+      ERR_NOT_YOUR_UNIT: 'No es tu unidad',
+      ERR_NO_ATTACK_LEFT: 'Sin ataque disponible',
+      ERR_INVALID_TARGET: 'Destino no válido',
+      ERR_NO_TRADE_THERE: 'No hay comercio en esa casilla',
+      ERR_SHIP_CANT_RAID_CART: 'Un barco no puede asaltar una carreta',
+      ERR_ENEMY_PROTECTS_TRADE: 'Una unidad enemiga protege el comercio',
+      ERR_TRADE_OUT_OF_RANGE: 'El comercio queda fuera de alcance',
+      ERR_ORIGIN_OCCUPIED: 'La posición de asalto está ocupada',
+      ERR_CANNOT_ATTACK_ALLY: 'No puedes asaltar una casilla ocupada por un aliado',
+      ERR_DEFENSE_TOO_HIGH: 'Defensa {D} ≥ ataque {A}',
+      ERR_INSUFFICIENT_GOLD_PROV: 'Oro insuficiente en la provincia',
+      ERR_INSUFFICIENT_GOLD_CONNECTED: 'Oro insuficiente en la provincia conectada',
+      ERR_NO_CAMP_TO_PACK: 'No hay campamento que empacar',
+      ERR_GAME_OVER: 'Partida terminada',
+      ERR_INVALID_CELL_PROVINCE: 'Casilla no válida o provincia sin recursos',
+      ERR_ONLY_CAPITAL_CITY: 'Solo en una ciudad capital',
+      ERR_LOAN_ALREADY_ACTIVE: 'Ya tienes un préstamo activo',
+      ERR_CAPITAL_NO_TREASURY: 'La capital no tiene tesorería conectada',
+      ERR_INVALID_RESOURCE: 'Recurso no válido',
+      ERR_INVALID_AMOUNT: 'Cantidad no válida',
+      ERR_NOT_PRODUCING_RESOURCE: 'No produces ese recurso',
+      ERR_CAPITAL_NO_GOLD: 'La capital no tiene oro suficiente',
+      ERR_YOUR_CIV_FELL: 'Tu civilización ha caído',
+      ERR_TOTAL_DOMINATION: 'Dominación total',
+      ERR_SURVIVED_TURNS: 'Has sobrevivido {n} turnos',
+      ERR_ACCUMULATED_GOLD: 'Has acumulado {n} de oro',
+      ERR_TERRITORY_CONTROL: 'Territorio de {n} casillas',
+      ERR_ENOUGH_CITIES: 'Ciudades suficientes',
+      ERR_TIME_UP: 'Se acabó el tiempo',
+      ERR_SURVIVAL_WIN: 'Has resistido {n} turnos',
+      ERR_HEGEMONY_WIN: 'Hegemonía territorial',
+
+      // Cloud
+      CLOUD_OFFLINE: 'Modo sin conexión',
+      CLOUD_INVALID_CREDENTIALS: 'ID o clave incorrecta',
+      CLOUD_CANT_CLEAR_TEMP: 'No se pudo limpiar la cuenta temporal',
+      CLOUD_CANT_SAVE_EMAIL: 'No se pudo guardar el correo',
+      CLOUD_CANT_CHANGE_KEY: 'No se pudo cambiar la llave',
+      CLOUD_CANT_SEND_EMAIL: 'No se pudo enviar el correo',
+      CLOUD_PRACTICE_ATTEMPT: 'Intento de práctica',
+      CLOUD_SCORE_REJECTED: 'No se aceptó la marca',
+      CLOUD_ALREADY_VOTED: 'Ya votaste este mapa',
+      CLOUD_VOTE_FAILED: 'No se pudo votar',
+      CLOUD_MAP_NOT_FOUND: 'Mapa no encontrado',
+      CLOUD_INVALID_CODE: 'Código no válido',
+      CLOUD_CREATE_LINK_FAILED: 'No se pudo crear el enlace',
+      CLOUD_INVALID_SHORT_CODE: 'Código no válido',
+      CLOUD_RESOLVE_FAILED: 'Sin conexión: no se pudo resolver el enlace',
+      CLOUD_INCOMPLETE_SCORE: 'Puntuación incompleta',
+      MAP_LABEL_DAILY: 'Diario {num}',
+      MAP_LABEL_COMMUNITY: 'Mapa de la comunidad',
+      MAP_LABEL_SKIRMISH: 'Escaramuza {seed}',
+
+      // Data.js - nombres de unidades, terrenos, edificios
+      UNIT_INFANTRY: 'Infantería',
+      UNIT_ENGINEER: 'Ingeniero',
+      UNIT_ARCHER: 'Arquero',
+      UNIT_CAVALRY: 'Caballería',
+      UNIT_SIEGE: 'Asedio',
+      UNIT_SHIP: 'Barco',
+      SIZE_SMALL: 'Pequeño',
+      SIZE_MEDIUM: 'Mediano',
+      SIZE_LARGE: 'Enorme',
+      BIOME_PLAINS: 'Llanuras',
+      BIOME_FOREST: 'Bosques',
+      BIOME_ARCHIPELAGO: 'Archipiélago',
+      BIOME_MOUNTAINS: 'Montañas',
+      CREST_NAMES: ['Águila', 'Lobo', 'Oso', 'León', 'Dragón', 'Escorpión', 'Jabalí', 'Ciervo', 'Ancla', 'Sol', 'Luna', 'Calavera'],
+      CREST_NAME: 'Blasón',
+      AI_NAMES: ['Rojos', 'Verdes', 'Dorados', 'Violetas', 'Naranjas'],
+      TERRAIN_NAMES: ['Llano', 'Colina', 'Montaña', 'Río', 'Mar'],
+      BUILDING_NAMES: ['', 'Árbol', 'Camino', 'Campamento', 'Pueblo', 'Ciudad', 'Bastión'],
+
+      // Diplomatía
+      ERR_CANT_PROPOSE_SELF: 'No puedes proponer un tratado a ti mismo',
+      ERR_INVALID_FACTION: 'Facción inválida o eliminada',
+      ERR_INVALID_BORROWER: 'Prestatario inválido',
+      ERR_LOAN_REQUEST_PUBLISHED: 'Solicitud de préstamo publicada en el mercado',
+      ERR_INVALID_LENDER: 'Prestamista inválido',
+      ERR_LENDER_INSUFFICIENT_GOLD: 'Oro insuficiente',
+      ERR_LOAN_OFFER_PUBLISHED: 'Oferta de préstamo publicada',
+      ERR_NOT_TRADE_TREATY: 'No es un acuerdo comercial',
+      ERR_TREATY_NOT_ACTIVE: 'Tratado no activo',
+      ERR_NO_VIABLE_ROUTE: 'No hay ruta viable',
+      ERR_TREATY_NOT_FOUND: 'Tratado inexistente',
+
+      // Board.js - zoom buttons
+      BOARD_ZOOM_IN: 'Acercar',
+      BOARD_ZOOM_OUT: 'Alejar',
+      BOARD_ZOOM_FIT: 'Ver todo',
+
+      // New game screen
+      NEWGAME_FOG_FULL: 'Completa',
+      NEWGAME_FOG_EXPLORED: 'Explorada',
+      NEWGAME_FOG_NONE: 'Sin niebla',
+      NEWGAME_DIFF_EASY: 'Fácil',
+      NEWGAME_DIFF_NORMAL: 'Normal',
+      NEWGAME_DIFF_HARD: 'Difícil',
+      NEWGAME_SEED_LABEL: 'Semilla (vacío = aleatoria)',
+      NEWGAME_SHIP_NOTE: 'Los barcos se reclutan en agua junto a un campamento o edificio superior.',
+      NEWGAME_ONLINE_CREATE: '🌐 Crear sala en línea',
+      NEWGAME_ONLINE_JOIN: 'Unirse a una sala',
+      NEWGAME_ONLINE_DESC: 'Crea una sala con esta configuración: {size} · {biome} · niebla {fog}, hasta {n} jugadores.',
+      NEWGAME_PLAY_SAVED_MAP: '📂 Jugar un mapa guardado',
+      NEWGAME_COMMUNITY_MAPS: '🌍 Mapas de la Comunidad',
+
+      // Campaign
+      CAMPAIGN_LEVEL_STARS: '★ Ganar · ★ En ≤ {par} turnos · ★ {challenge}',
+      CAMPAIGN_PLAY_BUTTON: 'Jugar',
+      CAMPAIGN_BACK_BUTTON: 'Volver',
+
+      // Daily
+      DAILY_CHALLENGE_TITLE: 'Reto {key}',
+      DAILY_ATTEMPTS: 'Intentos hoy: {attempts}',
+      DAILY_OFFICIAL_RESULT: 'Resultado oficial: T{turn} {medal}',
+      DAILY_NO_OFFICIAL: 'Aún sin resultado oficial',
+      DAILY_STREAK: '🔥 Racha: {streak}',
+      DAILY_FIRST_OFFICIAL: 'El primer intento del día es el oficial; los siguientes son práctica.',
+      DAILY_MEDALS: 'Medallas: 🥇 ≤12 turnos · 🥈 ≤18 · 🥉 más.',
+      DAILY_PLAY_PRACTICE: 'Jugar (práctica)',
+      DAILY_PLAY: 'Jugar',
+      DAILY_TOP_TITLE: '🌍 Top 20 mundial del Diario',
+      DAILY_TOP_DESC: 'Solo victorias del primer intento oficial de hoy. Los mapas se rankean en la Comunidad.',
+      DAILY_TOP_OFFLINE: 'Modo sin conexión · historial local',
+      DAILY_TOP_LOADING: 'Consultando ranking mundial…',
+      DAILY_TOP_NO_SCORES_OFFLINE: 'Modo sin conexión · historial local',
+      DAILY_TOP_NO_SCORES: 'Aún no hay puntuaciones oficiales hoy. Juega el Desafío Diario para aparecer aquí.',
+      DAILY_TOP_TABLE_HEADERS: '#,Blasón,Tribu,Turnos,Superávit',
+      DAILY_HISTORY_TITLE: 'Historial',
+      DAILY_HISTORY_EMPTY: 'Sin victorias aún',
+      DAILY_COMMUNITY_MAPS: '🌍 Ver Top de Mapas de la Comunidad',
+
+      // Stats
+      STATS_PASSPORT: 'Pasaporte de Estratega',
+      STATS_MEDALS: '🥇 {gold} · 🥈 {silver} · 🥉 {bronze}',
+      STATS_KPI_WINS: 'Victorias',
+      STATS_KPI_LOSSES: 'Derrotas',
+      STATS_KPI_GAMES: 'Partidas',
+      STATS_KPI_STREAK: 'Racha actual',
+      STATS_KPI_BEST_STREAK: 'mejor {best}',
+      STATS_KPI_BEST_WIN: 'Victoria rápida',
+      STATS_KPI_TURNS: 'Turnos jugados',
+      STATS_KPI_KILLS: 'Unidades eliminadas',
+      STATS_KPI_CAPTURED: 'Casillas conquistadas',
+      STATS_KPI_BUILT: 'Edificios construidos',
+      STATS_RECENT_WON: '🏆 {mode} · T{turn} · {date}',
+      STATS_RECENT_LOST: '💀 {mode} · T{turn} · {date}',
+      STATS_RECENT_EMPTY: 'Sin partidas',
+      STATS_RETRY_BUTTON: 'Reintentar envío',
+      STATS_HISTORY_BUTTON: '📜 Historial de partidas',
+
+      // Settings - adicionales
+      SETTINGS_NATO_VIEW: '🎖️ Vista táctica OTAN',
+      SETTINGS_CRAWL_LABEL: '📜 Introducción cinematográfica',
+      SETTINGS_LORE_INTRO_LABEL: '📖 Introducción',
+      SETTINGS_LORE_INTRO_DESC: 'Páginas de lore que explican el juego. Se muestran al abrir el juego, antes del menú, mientras no las desactives.',
+      SETTINGS_LORE_PREVIEW: '▶ Ver la introducción ahora',
+      SETTINGS_EF_DIAG_LABEL: '🔎 Diagnóstico de encuesta',
+      SETTINGS_EF_DIAG_DESC: 'Comprueba si hay campaña activa, preguntas y bloqueos locales sin abrir DevTools.',
+      SETTINGS_EF_DIAG_BUTTON: 'Abrir diagnóstico',
+      SETTINGS_VERSION: 'Federati v1.2 · build 208 · IA 2026-11-13-6 · 🌐 Multijugador en línea',
+
+      // Online screen
+      ONLINE_JOIN_TITLE: 'Unirse a una sala',
+      ONLINE_JOIN_DESC: 'Pide el código al anfitrión; él elige el mapa, el bioma y la niebla.',
+      ONLINE_CODE_LABEL: 'Código',
+      ONLINE_JOIN_BUTTON: 'Entrar',
+      ONLINE_CREATE_INFO: 'Para crear una sala, elige la configuración en <b>Nueva partida</b> y pulsa "🌐 Crear sala en línea".',
+      ONLINE_CONFIG_BUTTON: '⚙️ Configurar partida',
+      ONLINE_TEST_BUTTON: '🔌 Probar conexión',
+      ONLINE_ROOM_CODE: 'Sala',
+      ONLINE_ROOM_STATUS: '{status}{turn}',
+      ONLINE_PLAYERS_TITLE: 'Jugadores ({current}/{max})',
+      ONLINE_PLAYER_READY: '✔ listo',
+      ONLINE_PLAYER_WAITING: '…',
+      ONLINE_PLAYER_YOUR_TURN: '▶ turno',
+      ONLINE_PLAYER_BOT: 'bot',
+      ONLINE_PLAYER_YOU: 'Tú',
+      ONLINE_TIME_BANK: '⏱ Tu banco: {time}',
+      ONLINE_ENTER_BOARD: '⚔️ Entrar al tablero',
+      ONLINE_START_GAME: 'Iniciar partida',
+      ONLINE_READY_BUTTON: 'Estoy listo',
+      ONLINE_LEAVE_BUTTON: 'Salir de la sala',
+      ONLINE_FOG_INFO: 'Niebla por jugador. La partida empieza en turnos simultáneos y pasa a turnos individuales con reloj cuando dos facciones se ven.',
+      ONLINE_COPY_CODE: 'Copiar',
+      ONLINE_CODE_COPIED: 'Código copiado: {code}',
+      ONLINE_JOIN_MSG: 'Entrando…',
+      ONLINE_START_MSG: '',
+      ONLINE_TEST_MSG: 'Probando conexión…',
+      ONLINE_TEST_SUCCESS: '✅ Conexión correcta · funciones del multijugador instaladas',
+      ONLINE_TEST_FAILED: '❌ {msg}',
+      ONLINE_WAITING_PLAYERS: 'Esperando jugadores',
+      ONLINE_GAME_FINISHED: 'Partida terminada',
+      ONLINE_SIMULTANEOUS: 'Turnos simultáneos',
+      ONLINE_TURN_BASED: 'Turnos individuales',
+      ONLINE_NEED_2_PLAYERS: 'Comparte el código con otro jugador. Cada pestaña o ventana cuenta como un jugador distinto.',
+
+      // Maps screen
+      MAPS_TITLE: '🗺️ Mapas',
+      MAPS_MY_MAPS: 'Mis mapas · {count}',
+      MAPS_COMMUNITY: 'Comunidad · {count}',
+      MAPS_MY_MAPS_HINT: 'Toca un mapa para jugar, editar o compartir.',
+      MAPS_COMMUNITY_HINT: 'Mapas publicados por la comunidad · toca uno para jugar, editar o compartir.',
+      MAPS_LOADING: 'Cargando mapas de la comunidad…',
+      MAPS_NO_COMMUNITY_OFFLINE: 'Modo sin conexión.',
+      MAPS_NO_COMMUNITY: 'Todavía no hay mapas publicados.',
+      MAPS_NO_MY_MAPS: 'Aún no tienes mapas',
+      MAPS_CREATE_HINT: 'Crea uno en el editor y guárdalo.',
+      MAPS_OPEN_EDITOR: '✚ Abrir editor',
+      MAPS_NEW_MAP_BUTTON: '✚ Editor de mapas',
+      MAPS_MANUAL_CODE_BUTTON: '⌨️ Tengo un código',
+      MAPS_REFRESH_BUTTON: '🔄 Actualizar',
+      MAPS_UNTITLED: 'Mapa sin nombre',
+      MAPS_ACTION_PLAY: '▶ Jugar',
+      MAPS_ACTION_EDIT: '✎ Editar',
+      MAPS_ACTION_SHARE: '🔗 Compartir',
+      MAPS_ACTION_VOTE: '👍',
+      MAPS_ACTION_DELETE: '🗑',
+      MAPS_VOTE_TOOLTIP: 'Votar',
+      MAPS_DELETE_CONFIRM: '¿Eliminar este mapa?',
+      MAPS_VOTE_RECORDED: 'Voto registrado',
+      MAPS_VOTE_OFFLINE: 'Modo sin conexión',
+      MAPS_SAVED: 'Mapa guardado en tus mapas',
+      MAPS_ALREADY_SAVED: 'Ya está en tus mapas',
+      MAPS_SHARE_TITLE: '🔗 Compartir mapa',
+      MAPS_SHARE_LINK_LABEL: 'Enlace',
+      MAPS_SHARE_LINK_DESC: 'El enlace abre el mapa publicado en la comunidad.',
+      MAPS_NO_PUBLIC_URL: 'Esta copia del juego no tiene una dirección pública, así que un enlace apuntaría a tu equipo y solo se abriría ahí. No tiene que ver con tu conexión a internet: es la dirección desde la que se abre el juego.',
+      MAPS_CONFIGURE_URL: 'Configurar dirección pública',
+      MAPS_SHARE_CODE: 'Mientras tanto puedes compartir el código (funciona sin red).',
+      MAPS_CODE_LABEL: 'Código del mapa',
+      MAPS_COPY_LINK: 'Copiar enlace',
+      MAPS_COPY_CODE: 'Copiar código',
+      MAPS_CLOSE: 'Cerrar',
+      MAPS_LINK_COPIED: 'Enlace copiado',
+      MAPS_CODE_COPIED: 'Código copiado',
+      MAPS_PUBLISH_TITLE: '🌐 Publicar en la comunidad',
+      MAPS_PUBLISH_NAME_LABEL: 'Nombre del mapa',
+      MAPS_PUBLISH_AUTHOR_LABEL: 'Autor',
+      MAPS_PUBLISH_BUTTON: 'Publicar',
+      MAPS_PUBLISH_CANCEL: 'Cancelar',
+      MAPS_PUBLISHED: '¡Mapa publicado en la comunidad!',
+      MAPS_PUBLISH_FAILED: 'No se pudo publicar',
+      MAPS_SHARE_MODAL_TITLE: '🔗 Compartir mapa',
+      MAPS_SHARE_NOT_PUBLISHED: 'El enlace comparte el mapa publicado en la comunidad. Este mapa aún no está publicado.',
+      MAPS_PUBLISH_AND_SHARE: '🌐 Publicar y compartir',
+      MAPS_SHORT_LINK: '🔗 Enlace corto de 5 letras (sin publicar)',
+      MAPS_SHORT_LINK_DESC: 'Un código corto guardado en la nube. Sirve para cualquier mapa editado, publicado o no.',
+      MAPS_SHORT_LINK_TITLE: '🔗 Enlace corto del mapa',
+      MAPS_SHORT_LINK_INFO: 'Funciona sin publicar el mapa. El código se guarda en la nube y no expone tu cuenta.',
+      MAPS_SHORT_LINK_FAILED: 'No se pudo crear el enlace',
+      MAPS_SHORT_LINK_OFFLINE: 'Enlaces cortos no disponibles',
+      MAPS_SHORT_LINK_NO_CODE: 'Este mapa no tiene código válido',
+      MAPS_LANDING_TITLE: '🗺️ {name}',
+      MAPS_LANDING_AUTHOR: '{author} · R{R} · {factions} facciones{upvotes}',
+      MAPS_LANDING_PUBLISHED: 'Publicado en la comunidad',
+      MAPS_LANDING_PLAY: '▶ Jugar',
+      MAPS_LANDING_SAVE: '📥 Guardar',
+      MAPS_LANDING_CLOSE: 'Cerrar',
+      MAPS_ERROR_TITLE: 'Mapa no válido',
+      MAPS_ERROR_UNDERSTOOD: 'Entendido',
+
+      // Manual map modal
+      MANUAL_MAP_TITLE: '🗺️ Mapa por código',
+      MANUAL_MAP_DESC: 'Pega un código (<code>v1:…</code>) o el enlace de un mapa, incluido el enlace corto (<code>?m=…</code>); puedes jugarlo o abrirlo en el editor.',
+      MANUAL_MAP_PLACEHOLDER: 'v1:7:123:…, https://…#map=12 o https://…?m=X9K2A',
+      MANUAL_MAP_CANCEL: 'Cancelar',
+      MANUAL_MAP_EDIT: '✎ Editar',
+      MANUAL_MAP_PLAY: '▶ Jugar',
+
+      // Survey/Event feedback
+      EF_KICKER: 'Encuesta de la campaña',
+      EF_TITLE: 'Tu opinión cuenta',
+      EF_INTRO: 'Cuéntanos cómo ha ido. Solo te llevará un minuto.',
+      EF_CLOSE: 'Cerrar',
+      EF_LATER: 'Ahora no',
+      EF_SEND: 'Enviar respuestas',
+      EF_NAME: 'Nombre o alias',
+      EF_NAME_PH: 'Cómo te llaman en la frontera',
+      EF_EMAIL: 'Correo (opcional)',
+      EF_MESSAGE: 'Comentario adicional',
+      EF_OPTIONAL: 'Opcional',
+      EF_SELECT_PH: 'Elige una opción',
+      EF_ALIAS_PH: 'Cómo te llaman en la frontera',
+      EF_COMMENT_PH: '¿Algo más que contarnos?',
+      EF_PRIVACY: 'Tus datos son opcionales y solo servirán para mejorar el juego.',
+      EF_ERR_SELECT: 'Elige una de las opciones.',
+      EF_ERR_SEND: 'No se pudo enviar. Tu respuesta se guardó y se reintentará.',
+      EF_ERR_GENERIC: 'No se pudo enviar. Por favor, inténtalo de nuevo.',
+      EF_YES: 'Sí',
+      EF_NO: 'No',
+
+      // Banter data - ejemplo
+      BANTER_WINTER_STEW: 'El cocinero ha bautizado el guiso \'asedio de invierno\'. No pregunte por los ingredientes.',
+
+      // Feedback form
+      FEEDBACK_FROM_NAME: 'Hexfrontier',
+      FEEDBACK_APP: 'Hexfrontier',
+
+      // Banter tooltips
+      BANTER_TOOLTIP_INFO: 'Información',
+      BANTER_TOOLTIP_WARN: 'Advertencia',
+      BANTER_TOOLTIP_BAD: 'Peligro',
     },
     en: {
       HUB_TITLE: 'FEDERATI',
@@ -242,27 +810,40 @@
       LICENSE_LINK: 'Link device',
       LICENSE_SYNC: 'Sync',
       LICENSE_SYNC_OK: 'Profile synced',
-      LICENSE_ID: 'Public ID',
+      LICENSE_ID: 'Player ID',
       LICENSE_KEY: 'Secret key',
       LICENSE_SHOW_KEY: 'Show/Copy',
       LICENSE_HIDE_KEY: 'Hide',
       LICENSE_KEY_COPIED: 'Secret key copied',
       LICENSE_COPY_FAIL: 'Could not copy automatically',
+      LICENSE_EDIT_KEY: 'Edit key',
+      LICENSE_EDIT_KEY_DESC: 'The secret key is your password. If you change it, the old one will stop working on other devices.',
+      LICENSE_KEY_CURRENT: 'Current key',
+      LICENSE_KEY_NEW: 'New key',
+      LICENSE_KEY_GENERATE: 'Generate another',
+      LICENSE_EDIT_KEY_WARN: 'Keep the new key somewhere safe. Do not share it with anyone.',
+      LICENSE_KEY_OK: 'Key updated. Keep it somewhere safe.',
+      LICENSE_KEY_BAD: 'The key must be 6–40 characters (letters, numbers, - or _).',
+      LICENSE_KEY_SAME: 'The new key is the same as the current one.',
+      LICENSE_KEY_ERR: 'Could not change the key.',
+      LICENSE_KEY_AUTH: 'The current key is not valid. Sign in again with your ID and key.',
+      LICENSE_TOO_MANY: 'Too many attempts. Wait a while before trying again.',
       LICENSE_CHECKING: 'Checking license…',
       LICENSE_ACTIVE: 'Full license active',
       LICENSE_NOT_FOUND: 'The license is not active yet',
       LICENSE_OFFLINE: 'Offline: could not check the license',
-      LICENSE_LINK_DESC: 'Enter the ID and secret key of the device where you bought the game.',
+      LICENSE_LINK_DESC: 'Enter the ID and secret key of the device where you bought the game. The temporary account on this phone will be deleted if it has no license or payments.',
       LICENSE_LINKED: 'Device linked',
       LICENSE_ERR_CREDENTIALS: 'Wrong ID or key',
       LICENSE_RESTORE: 'Restore purchase',
       LICENSE_RESTORE_PURCHASE: 'Already bought on another device? Restore purchase',
-      LICENSE_RECOVER_DESC: 'If you registered a backup email, request a recovery code. You can also restore with the ID and key from your other device.',
-      LICENSE_RECOVER_GO: 'Send code',
+      LICENSE_RECOVER_DESC: 'Enter your account backup email. If it exists, we will send you your player ID and secret key. You can also restore with the ID and key from your other device.',
+      LICENSE_RECOVER_GO: 'Send credentials',
       LICENSE_RECOVER_ALT: 'Do you have another device with the license?',
-      LICENSE_RECOVER_PENDING: 'Request registered. Check your email to continue.',
+      LICENSE_RECOVER_PENDING: 'Request registered. Check your email.',
       LICENSE_RECOVER_OK: 'Account recovered',
-      LICENSE_RECOVER_NOT_FOUND: 'No account found with that email',
+      LICENSE_RECOVER_SENT: 'If the email exists, you will receive your ID and key in a few minutes. Check spam too.',
+      LICENSE_RECOVER_NOT_FOUND: 'Could not send the email',
       LICENSE_SAVE: 'Save',
       PAY_TITLE: 'Full license',
       PAY_INTRO: 'One payment, forever. No subscriptions or ads.',
@@ -295,6 +876,9 @@
       PAY_ERR_SEND: 'Could not register the request',
       PAY_PAYPAL_LOADING: 'Loading PayPal…',
       PAY_PAYPAL_SECURE: 'One-time payment processed by PayPal. We do not store your card details.',
+      PAY_PAYPAL_EMAIL_NOTE: 'We will send your player ID and secret key to your PayPal account email.',
+      PAY_PAYPAL_EMAIL_SENT: 'We also sent your credentials by email.',
+      PAY_PAYPAL_EMAIL_FAILED: 'We could not email your credentials; you can see them in Settings.',
       PAY_PAYPAL_CREATING: 'Creating the payment order…',
       PAY_PAYPAL_APPROVE: 'Complete the payment in the PayPal window.',
       PAY_PAYPAL_CAPTURING: 'Confirming the payment…',
@@ -361,8 +945,37 @@
       NO: 'No',
       CLOSE: 'Close',
       COMING_SOON: 'coming soon',
-      NO_MULTIPLAYER: 'no multiplayer'
-    }
+      NO_MULTIPLAYER: 'no multiplayer',
+      // Resource detail screen
+      RES_GOLD: 'Gold',
+      RES_FOOD: 'Food',
+      RES_WOOD: 'Wood',
+      RES_ORO: 'Gold',
+      RES_TRIGO: 'Wheat',
+      RES_MADERA: 'Wood',
+      TOTAL_FACTION: '(Total Faction)',
+      PROVINCE: 'Province',
+      CONCEPT: 'Concept',
+      TOTAL: 'Total',
+      INCOME_TERRAIN: '🗺️ Base Terrain',
+      INCOME_RESOURCES: '💎 Natural Resources',
+      INCOME_BUILDINGS: '🏗️ Buildings',
+      INCOME_DOCTRINES: '📜 Doctrines',
+      INCOME_TRADE: '🛣️ Trade Routes',
+      TRADE_LAND: 'Land',
+      TRADE_SEA: 'Sea',
+      TRADE_NOTE: 'Gold delivered on arrival',
+      TOTAL_INCOME: 'TOTAL INCOME/turn',
+      EXPENSE_UNITS: '⚔️ Unit Upkeep',
+      EXPENSE_LOANS: '💳 Loans',
+      LOAN_PAYMENT: 'Loan payment',
+      TURNS_LEFT: 'turns left',
+      TOTAL_EXPENSES: 'TOTAL EXPENSES/turn',
+      NET_BALANCE: 'Net Balance / Turn',
+      DEFICIT_WARNING: 'Deficit: desertions will occur at end of turn',
+      SURPLUS_OK: 'Surplus: your economy is sustainable',
+      RESOURCE_DETAIL: 'Details of',
+    },
   };
   // Cada idioma nuevo hereda el inglés como red de seguridad para los textos
   // largos del Códice; los textos principales se traducen aquí.
@@ -769,6 +1382,52 @@
     { code: 'it', name: 'Italiano', flag: '🇮🇹' }
   ];
 
+  // --- NUEVO: Algoritmo de detección ---
+  function resolveSystemLocale(browserLanguages, supportedCodes) {
+    const supportedSet = new Set(supportedCodes);
+    const regionalMap = {
+      // Chino
+      'zh-CN': 'zh', 'zh-SG': 'zh', 'zh-Hans': 'zh', 'zh-Hans-CN': 'zh', 'zh-Hans-SG': 'zh',
+      'zh-TW': 'zh', 'zh-HK': 'zh', 'zh-Hant': 'zh', 'zh-Hant-TW': 'zh', 'zh-Hant-HK': 'zh',
+      'zh-MO': 'zh', 'zh-Hant-MO': 'zh',
+      // Portugués
+      'pt-BR': 'pt', 'pt-PT': 'pt', 'pt-AO': 'pt', 'pt-MZ': 'pt', 'pt-CV': 'pt', 'pt-GW': 'pt', 'pt-ST': 'pt', 'pt-TL': 'pt',
+      // Español
+      'es-ES': 'es', 'es-MX': 'es', 'es-AR': 'es', 'es-CO': 'es', 'es-CL': 'es', 'es-PE': 'es', 'es-VE': 'es', 'es-US': 'es',
+      // Inglés
+      'en-US': 'en', 'en-GB': 'en', 'en-CA': 'en', 'en-AU': 'en', 'en-NZ': 'en', 'en-IN': 'en', 'en-IE': 'en', 'en-ZA': 'en', 'en-SG': 'en',
+      // Francés
+      'fr-FR': 'fr', 'fr-CA': 'fr', 'fr-BE': 'fr', 'fr-CH': 'fr', 'fr-LU': 'fr', 'fr-MC': 'fr',
+      // Alemán
+      'de-DE': 'de', 'de-AT': 'de', 'de-CH': 'de', 'de-LI': 'de', 'de-LU': 'de',
+      // Italiano
+      'it-IT': 'it', 'it-CH': 'it',
+      // Japonés
+      'ja-JP': 'ja',
+      // Coreano
+      'ko-KR': 'ko',
+      // Ruso
+      'ru-RU': 'ru', 'ru-BY': 'ru', 'ru-KZ': 'ru', 'ru-KG': 'ru', 'ru-MD': 'ru', 'ru-UA': 'ru',
+      // Hindi
+      'hi-IN': 'hi',
+      // Bengalí
+      'bn-BD': 'bn', 'bn-IN': 'bn'
+    };
+
+    for (const langTag of browserLanguages) {
+      if (!langTag) continue;
+      // 1. Match exacto regional
+      if (regionalMap[langTag] && supportedSet.has(regionalMap[langTag])) {
+        return regionalMap[langTag];
+      }
+      // 2. Match por código base
+      const base = langTag.split('-')[0].toLowerCase();
+      if (supportedSet.has(base)) return base;
+    }
+    // 4. Fallback: INGLÉS
+    return supportedSet.has('en') ? 'en' : supportedCodes[0];
+  }
+
   // Prólogo cinematográfico: se inyecta en los 13 diccionarios.
   const CRAWL = {
     es: {
@@ -1093,17 +1752,139 @@ Die Karten sind entrollt, die Figuren erwarten deinen Befehl.`,
 
   HF.t = function (key, fallback) {
     const s = HF.settings ? HF.settings() : {};
-    const dict = HF.LOCALES[s.lang] || HF.LOCALES.es;
+    const lang = s.lang || 'en';
+    const esDict = HF.LOCALES.es || {};
+    const enDict = HF.LOCALES.en || {};
+    const packs = HF.PHRASES || {};
+    const esText = esDict[key];
+
+    if (lang === 'es') {
+      if (esText != null) return esText;
+      return enDict[key] != null ? enDict[key] : (fallback != null ? fallback : key);
+    }
+
+    // Los packs de fr/it/pt/... heredaron el inglés en i18n.js. Para no
+    // devolver inglés, la traducción del catálogo de frases (hecha desde el
+    // español) tiene prioridad sobre el diccionario heredado.
+    if (lang !== 'en' && esText != null) {
+      const own = packs[lang];
+      if (own && Object.prototype.hasOwnProperty.call(own, esText)) return own[esText];
+    }
+
+    const dict = HF.LOCALES[lang] || {};
     if (dict[key] != null) return dict[key];
-    const base = HF.LOCALES.en || HF.LOCALES.es;
-    return base[key] != null ? base[key] : (fallback != null ? fallback : key);
+
+    if (esText != null) {
+      if (packs.en && Object.prototype.hasOwnProperty.call(packs.en, esText)) return packs.en[esText];
+      if (lang === 'en') return esText;
+    }
+    if (enDict[key] != null) return enDict[key];
+    return fallback != null ? fallback : key;
   };
+
+  /**
+   * Traduce una clave e interpola marcadores `{nombre}`.
+   * HF.tf('DAILY_ATTEMPTS', { attempts: 3 }) → "Intentos hoy: 3"
+   */
+  HF.tf = function (key, vars, fallback) {
+    let s = HF.t(key, fallback);
+    if (vars && typeof s === 'string') {
+      s = s.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? String(vars[k]) : m));
+    }
+    return s;
+  };
+
+  /**
+   * Traduce una frase literal escrita en español al idioma activo usando el
+   * catálogo HF.PHRASES (mensajes de unidades, nombres de datos, contenido).
+   * Si no hay traducción registrada devuelve el texto original: nunca rompe.
+   */
+  HF.tx = function (text, vars) {
+    if (text == null) return text;
+    const lang = HF.lang();
+    let s = text;
+    if (lang !== 'es') {
+      const packs = HF.PHRASES || {};
+      const own = packs[lang] || null;
+      if (own && Object.prototype.hasOwnProperty.call(own, text)) s = own[text];
+      else if (lang !== 'en' && packs.en && Object.prototype.hasOwnProperty.call(packs.en, text)) {
+        // Red de seguridad: si falta la frase en este idioma, se usa el inglés
+        // antes que dejar el español.
+        s = packs.en[text];
+      }
+    }
+    if (vars && typeof s === 'string') {
+      s = s.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? String(vars[k]) : m));
+    }
+    return s;
+  };
+
+  // --- Localización de contenido estático (nombres, doctrinas, barks) ---
+  // Los datos de config.js/data.js están escritos en español. Guardamos una
+  // copia original y, al cambiar de idioma, reescribimos solo los textos.
+  HF._locOrig = HF._locOrig || new WeakMap();
+  // Propiedades que son identificadores y nunca deben traducirse: si se
+  // traduce `PILLARS[].key` (alma/arma/victoria) la pantalla de Tribu busca
+  // `t['âme_path']` y revienta.
+  const LOC_SKIP = new Set(['key', 'id', 'tag', 'parent', 'root', 'code', 'type', 'color', 'crest', 'level', 'icon', 'slug']);
+  HF._locObj = function (obj) {
+    if (!obj || typeof obj !== 'object') return;
+    let orig = HF._locOrig.get(obj);
+    if (!orig) {
+      try { orig = JSON.parse(JSON.stringify(obj)); HF._locOrig.set(obj, orig); } catch (e) { return; }
+    }
+    for (const k in orig) {
+      const v = orig[k];
+      if (typeof v === 'string') {
+        if (!LOC_SKIP.has(k)) obj[k] = HF.tx(v);
+      } else if (v && typeof v === 'object') HF._locObj(obj[k]);
+    }
+  };
+
+  /** Traduce nombres de unidades, tamaños, biomas, doctrinas y metas. */
+  HF.localizeGameData = function () {
+    const roots = [];
+    if (HF.CFG) roots.push(HF.CFG.units, HF.CFG.sizes, HF.CFG.biomes);
+    roots.push(HF.DOCT, HF.IMPL, HF.CATALOG, HF.PILLARS, HF.TNAME, HF.BNAME,
+      HF.CREST_NAMES, HF.AI_NAMES, HF.CHTXT, HF.ACTS);
+    for (const r of roots) if (r) { try { HF._locObj(r); } catch (e) { console.warn('[i18n] localizeGameData', e); } }
+  };
+
+  // `HF.doctrineInfo(pillar, ...)` recibe el nombre visible del pilar, que con
+  // la traducción ya no coincide con las claves de HF.IMPL (Alma/Arma/Victoria).
+  // Se resuelve por `PILLARS[].key` para no perder los efectos "En juego".
+  if (typeof HF.doctrineInfo === 'function' && !HF.doctrineInfo._i18n) {
+    const _doctrineInfo = HF.doctrineInfo;
+    HF.doctrineInfo = function (pillar, d) {
+      if (!HF.IMPL || !HF.IMPL[pillar]) {
+        const p = (HF.PILLARS || []).find(x => x.name === pillar || x.key === pillar);
+        if (p && p.key) pillar = p.key.charAt(0).toUpperCase() + p.key.slice(1);
+      }
+      return _doctrineInfo(pillar, d);
+    };
+    HF.doctrineInfo._i18n = true;
+  }
+
+  /** Reconstruye el corpus de diálogos de unidades en el idioma activo. */
+  HF.localizeBanter = function () {
+    if (!HF.BANTER_DATABASE_ES) return;
+    const map = v => typeof v === 'string' ? HF.tx(v)
+      : Array.isArray(v) ? v.map(map)
+        : (v && typeof v === 'object') ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, map(x)]))
+          : v;
+    HF.BANTER_DATABASE = map(HF.BANTER_DATABASE_ES);
+  };
+
+  // Copia intacta en español del corpus (banter_data.js se carga antes).
+  if (HF.BANTER_DATABASE && !HF.BANTER_DATABASE_ES) {
+    try { HF.BANTER_DATABASE_ES = JSON.parse(JSON.stringify(HF.BANTER_DATABASE)); } catch (e) { }
+  }
   HF.lang = () => {
-    const lang = HF.settings ? (HF.settings().lang || 'es') : 'es';
-    return HF.LOCALES[lang] ? lang : 'es';
+    const lang = HF.settings ? (HF.settings().lang || 'en') : 'en';
+    return HF.LOCALES[lang] ? lang : 'en';
   };
   HF.setLang = lang => {
-    if (!HF.LOCALES[lang]) lang = 'es';
+    if (!HF.LOCALES[lang]) lang = 'en';
     const s = HF.settings ? HF.settings() : {};
     s.lang = lang; HF.store.set('settings', s);
     if (G.document && G.document.documentElement) {
@@ -1111,6 +1892,33 @@ Die Karten sind entrollt, die Figuren erwarten deinen Befehl.`,
       G.document.documentElement.dir = (HF.LANGS.find(x => x.code === lang) || {}).rtl ? 'rtl' : 'ltr';
     }
     if (HF.bgm) HF.bgm.refresh();
+    // Contenido estático y diálogos de unidades en el nuevo idioma.
+    try { if (HF.localizeBanter) HF.localizeBanter(); } catch (e) { console.warn('[i18n] localizeBanter', e); }
+    try { if (HF.localizeGameData) HF.localizeGameData(); } catch (e) { console.warn('[i18n] localizeGameData', e); }
+    // --- NUEVO: Trigger visual transition ---
+    const rootEl = G.document?.getElementById('app') || G.document?.body;
+    if (rootEl) {
+      // Fuerza reflow para reiniciar animación si se cambia rápido
+      rootEl.classList.remove('hf-lang-switching');
+      // Truco: void offsetWidth fuerza reflow sincrónico
+      void rootEl.offsetWidth;
+      rootEl.classList.add('hf-lang-switching');
+    }
+    
+    // Disparar suscriptores en next frame (FIX 3 combinado)
+    const raf = (typeof requestAnimationFrame === 'function')
+      ? requestAnimationFrame
+      : (typeof setTimeout === 'function' ? (fn => setTimeout(fn, 0)) : (fn => fn()));
+    raf(() => {
+      if (HF._localeSubs) HF._localeSubs.forEach(cb => { 
+        try { cb(lang); } catch(e) { console.error('[i18n] locale subscriber error', e); } 
+      });
+      
+      // Quitar clase tras animación (200ms)
+      if (typeof setTimeout === 'function') setTimeout(() => {
+        if (rootEl) rootEl.classList.remove('hf-lang-switching');
+      }, 200);
+    });
     return lang;
   };
   if (G.document && G.document.documentElement) {
@@ -1118,4 +1926,79 @@ Die Karten sind entrollt, die Figuren erwarten deinen Befehl.`,
     G.document.documentElement.lang = lang;
     G.document.documentElement.dir = (HF.LANGS.find(x => x.code === lang) || {}).rtl ? 'rtl' : 'ltr';
   }
+
+  // --- NUEVO: API Pública de Localización ---
+
+  /** Inicializa idioma en First Boot. Prioridad: settings.lang → navigator.languages → 'en'. Persiste en settings. */
+  HF.initFirstBootLanguage = function() {
+    return new Promise((resolve) => {
+      try {
+        // OJO: HF.settings() rellena lang:'es' por defecto, así que no sirve
+        // para saber si el jugador eligió idioma. Miramos el objeto crudo.
+        const raw = (HF.store && HF.store.get) ? HF.store.get('settings', null) : null;
+
+        // 1. Respetamos el guardado si fue una elección manual explícita.
+        //    Compatibilidad: versiones anteriores no guardaban lang_explicit;
+        //    si el idioma guardado no es el antiguo default 'es', lo tratamos
+        //    como elección manual para no pisar un alemán/francés ya elegido.
+        const explicit = raw && raw.lang && HF.LOCALES[raw.lang] &&
+          (raw.lang_explicit === true || raw.lang !== 'es');
+        if (explicit) {
+          if (raw.lang_explicit !== true && HF.store && HF.store.set) {
+            raw.lang_explicit = true;
+            HF.store.set('settings', raw);
+          }
+          return resolve(HF.setLang(raw.lang));
+        }
+
+        // 2. Usuario nuevo (o configuración antigua sin marca explícita):
+        //    detectar el idioma del dispositivo/navegador.
+        const nav = (typeof navigator !== 'undefined' && navigator) || {};
+        const browserLangs = (nav.languages && nav.languages.length)
+          ? nav.languages
+          : (nav.language ? [nav.language] : ['en']);
+
+        const supportedCodes = HF.LANGS.map(l => l.code);
+        const detected = resolveSystemLocale(browserLangs, supportedCodes);
+
+        // 3. Persistir como automático (lang_explicit=false). Si el jugador
+        //    cambia el idioma en Ajustes, HF.setLocale pondrá lang_explicit=true.
+        const s = HF.settings ? HF.settings() : {};
+        s.lang = detected;
+        s.lang_explicit = false;
+        if (HF.store && HF.store.set) HF.store.set('settings', s);
+
+        // 4. Aplicar y resolver
+        resolve(HF.setLang(detected));
+      } catch (e) {
+        console.error('[i18n] initFirstBootLanguage failed:', e);
+        resolve(HF.setLang('en'));
+      }
+    });
+  };
+
+  /** Obtiene locale actual activo. */
+  HF.getCurrentLocale = function() { return HF.lang(); };
+
+  /** Cambia idioma manualmente (menú Ajustes). Hot-swap + persist. */
+  HF.setLocale = function(code) {
+    return new Promise((resolve) => {
+      if (!HF.LOCALES[code]) code = 'en';
+      const s = HF.settings ? HF.settings() : {};
+      s.lang = code;
+      s.lang_explicit = true;           // elección manual: no la pisa el auto-detect
+      if (HF.store && HF.store.set) HF.store.set('settings', s);
+      resolve(HF.setLang(code));
+    });
+  };
+
+  /** Lista de idiomas soportados con metadatos (copia defensiva). */
+  HF.getSupportedLocales = function() { return HF.LANGS.slice(); };
+
+  /** Suscripción a cambios de idioma (para UI reactiva). Retorna unsubscribe. */
+  HF.onLocaleChanged = function(callback) {
+    if (!HF._localeSubs) HF._localeSubs = new Set();
+    HF._localeSubs.add(callback);
+    return () => HF._localeSubs.delete(callback);
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

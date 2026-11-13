@@ -71,6 +71,9 @@
         <button id="backHub" class="pri" style="width:100%">Volver al menú</button></div>`;
       const b = app().querySelector('#backHub'); if (b) b.onclick = () => HF.go('hub');
     }
+    // Traducción síncrona de la pantalla recién pintada: no depende de que el
+    // MutationObserver llegue antes del primer frame.
+    try { if (HF.translateDom) HF.translateDom(app(), true); } catch (e) { }
   };
   const header = title => `<div class="bar"><button data-back>◀</button><div class="title grow">${title}</div></div>`;
   HF.header = header;
@@ -221,7 +224,11 @@
     const cta = el.querySelector('#cta');
     if (cta) {
       const paint = (kicker, title, sub, icon, go) => {
-        cta.innerHTML = `<div class="cta-banner"><div class="cta-ico">${icon}</div><div class="grow"><div class="cta-kicker">${kicker}</div><b class="cta-title">${HF.esc(title)}</b><div class="cta-sub">${HF.esc(sub)}</div></div><button class="pri cta-go">▶ Iniciar</button></div>`;
+        kicker = HF.tx ? HF.tx(kicker) : kicker;
+        title = HF.tx ? HF.tx(title) : title;
+        sub = HF.tx ? HF.tx(sub) : sub;
+        const start = HF.tx ? HF.tx('▶ Iniciar') : '▶ Iniciar';
+        cta.innerHTML = `<div class="cta-banner"><div class="cta-ico">${icon}</div><div class="grow"><div class="cta-kicker">${kicker}</div><b class="cta-title">${HF.esc(title)}</b><div class="cta-sub">${HF.esc(sub)}</div></div><button class="pri cta-go">${start}</button></div>`;
         cta.querySelector('.cta-go').onclick = () => { HF.sfx('click'); go(); };
       };
       const biomes = Object.keys(HF.BIOMES);
@@ -235,8 +242,9 @@
       };
       const daily = HF.dailySpec();
       if (!doneToday) {
+        const factionWord = HF.tx ? HF.tx('facciones · niebla completa') : 'facciones · niebla completa';
         paint('RETO DIARIO', HF.dailyName ? HF.dailyName() : 'Reto diario',
-          `${HF.BIOMES[daily.biome].name} · ${daily.n} facciones · niebla completa`, '📜',
+          `${HF.BIOMES[daily.biome].name} · ${daily.n} ${factionWord}`, '📜',
           () => HF.startGame(HF.makeGame(daily, HF.loadTribe())));
       } else {
         paint('PARTIDA RÁPIDA', 'Un mapa en un toque', 'Mapa pequeño · 2 facciones', '⚡', quick);
@@ -244,8 +252,9 @@
           HF.cloud.getCommunityMaps().then(maps => {
             if (!maps || !maps.length || !cta.isConnected) return;
             const m = maps[Math.floor(Math.random() * Math.min(5, maps.length))];
+            const factionWord = HF.tx ? HF.tx('facciones') : 'facciones';
             paint('MAPA DE LA COMUNIDAD', m.name || 'Mapa de la comunidad',
-              `${m.author || 'Anónimo'} · R${m.radius || 7} · ${m.factions_count || 2} facciones`, '🌍', () => {
+              `${m.author || 'Anónimo'} · R${m.radius || 7} · ${m.factions_count || 2} ${factionWord}`, '🌍', () => {
                 const r = HF.importMap(m.code || '');
                 if (r.error) { HF.sfx('error'); return HF.toast(r.error); }
                 HF.playMap(r.R, r.cells, r.seed, { mapId: m.id, name: m.name });
@@ -825,9 +834,9 @@
     const price = pay ? pay.getPrices().amount : '$5.99 USD';
     const pending = pay && pay.pendingRequest ? pay.pendingRequest() : null;
 
-    // «Cuenta y licencia»: el pago manual y el registro van aquí, junto a la
-    // recuperación. Para una cuenta Free no se ofrece «Recuperar cuenta»
-    // (esa es la cara inversa de Premium): se le lleva al pago.
+    // «Cuenta y licencia»: el pago, la recuperación y el registro van aquí.
+    // La recuperación también está en Free: un jugador que compró en otro
+    // dispositivo entra como Free hasta que restaura su cuenta.
     const license = prem
       ? `<div class="card" id="licenseCard">
           <div class="row"><b class="grow">${HF.t('LICENSE_TITLE')}</b><span class="chip ok">${HF.t('LICENSE_PREMIUM_BADGE')}</span></div>
@@ -841,6 +850,7 @@
           </div>
           <div class="row" style="margin-top:6px"><span class="grow small dim">${HF.t('LICENSE_ID')}</span><code>${HF.esc(cid)}</code></div>
           <div class="row" style="margin-top:4px"><span class="grow small dim">${HF.t('LICENSE_KEY')}</span><code id="licenseSecret">••••••</code><button id="licenseKey">${HF.t('LICENSE_SHOW_KEY')}</button></div>
+          <button id="licenseEditKey" style="width:100%;margin-top:6px">🔑 ${HF.t('LICENSE_EDIT_KEY')}</button>
           <button id="licenseCheck" style="width:100%;margin-top:6px">${HF.t('LICENSE_CHECK')}</button>
         </div>`
       : `<div class="card" id="licenseCard">
@@ -854,6 +864,9 @@
             <button id="licenseCheck">${HF.t('LICENSE_CHECK')}</button>
           </div>
           <button id="licenseRestore" style="width:100%;margin-top:6px">🔄 ${HF.t('LICENSE_RESTORE_PURCHASE')}</button>
+          <button id="licenseEmail" style="width:100%;margin-top:6px">✉️ ${remail ? HF.t('LICENSE_EMAIL_CHANGE') : HF.t('LICENSE_EMAIL_REGISTER')}</button>
+          <button id="licenseRecover" style="width:100%;margin-top:6px">🔑 ${HF.t('LICENSE_RECOVER')}</button>
+          <button id="licenseEditKey" style="width:100%;margin-top:6px">🔑 ${HF.t('LICENSE_EDIT_KEY')}</button>
         </div>`;
 
     el.innerHTML = `<div class="screen">${header(HF.t('SETTINGS'))}<div class="scroll">
@@ -874,11 +887,16 @@
         <button id="efDiag" style="width:100%;margin-top:6px">Abrir diagnóstico</button>
       </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
-      <div class="dim small">Federati v1.2 · build 183 · 🌐 Multijugador en línea</div></div></div>`;
+      <div class="dim small">Federati v1.2 · build 208 · IA ${HF.aiBuild || '?'} · 🌐 Multijugador en línea</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
     const langSel = el.querySelector('#langSel');
-    if (langSel) langSel.onchange = () => { HF.setLang(langSel.value); HF.go('settings'); };
+    if (langSel) langSel.onchange = () => {
+      const code = langSel.value;
+      const done = () => HF.go('settings');
+      if (HF.setLocale) HF.setLocale(code).then(done, done);
+      else { HF.setLang(code); done(); }
+    };
     // Vista previa de la pantalla de introducción (especificacion_pantalla_lore.md).
     const lorePreview = el.querySelector('#lorePreview');
     if (lorePreview) lorePreview.onclick = () => {
@@ -929,6 +947,69 @@
       });
     }
 
+    function openEditSecret() {
+      if (!HF.cloud) return;
+      const current = HF.cloud.secretKey();
+      const suggested = HF.cloud.generateSecretKey();
+      HF.modal(`<h3>🔑 ${HF.t('LICENSE_EDIT_KEY')}</h3>
+        <p class="dim small">${HF.t('LICENSE_EDIT_KEY_DESC')}</p>
+        <div class="card"><div class="row"><span class="grow small dim">${HF.t('LICENSE_KEY_CURRENT')}</span><code>${HF.esc(current)}</code></div></div>
+        <label>${HF.t('LICENSE_KEY_NEW')}</label>
+        <input id="skNew" maxlength="40" autocomplete="off" spellcheck="false" value="${HF.esc(suggested)}">
+        <div class="row" style="margin-top:6px"><button id="skGen">🎲 ${HF.t('LICENSE_KEY_GENERATE')}</button></div>
+        <div class="dim small" style="margin-top:6px">${HF.t('LICENSE_EDIT_KEY_WARN')}</div>
+        <div class="neg small" id="skErr"></div>
+        <div class="row"><button id="skNo">${HF.t('CLOSE')}</button><button id="skGo" class="pri grow">${HF.t('LICENSE_SAVE')}</button></div>`, m => {
+        const input = m.querySelector('#skNew');
+        const err = m.querySelector('#skErr');
+        const gen = m.querySelector('#skGen');
+        const no = m.querySelector('#skNo');
+        const go = m.querySelector('#skGo');
+
+        if (no) no.onclick = HF.closeModal;
+        if (gen) gen.onclick = () => { if (input) input.value = HF.cloud.generateSecretKey(); };
+
+        const submit = () => {
+          const value = String(input ? input.value : '').trim();
+          if (!/^[A-Za-z0-9_-]{6,40}$/.test(value)) {
+            if (err) err.textContent = HF.t('LICENSE_KEY_BAD');
+            return;
+          }
+          if (value === current) {
+            if (err) err.textContent = HF.t('LICENSE_KEY_SAME');
+            return;
+          }
+          if (err) err.textContent = '';
+          if (go) { go.disabled = true; go.textContent = HF.t('PAY_SENDING'); }
+
+          HF.cloud.setSecretKey(value).then(r => {
+            if (r && r.ok) {
+              HF.closeModal();
+              HF.toast(HF.t('LICENSE_KEY_OK'), 4200);
+              HF.go('settings');
+              return;
+            }
+            if (go) { go.disabled = false; go.textContent = HF.t('LICENSE_SAVE'); }
+            const msg = (r && r.msg) || '';
+            if (err) {
+              if (/no autorizado/i.test(msg)) err.textContent = HF.t('LICENSE_KEY_AUTH');
+              else if (/llave sin cambios/i.test(msg)) err.textContent = HF.t('LICENSE_KEY_SAME');
+              else if (/llave invalida/i.test(msg)) err.textContent = HF.t('LICENSE_KEY_BAD');
+              else if (/demasiados/i.test(msg)) err.textContent = HF.t('LICENSE_TOO_MANY');
+              else if (r && r.offline) err.textContent = HF.t('LICENSE_OFFLINE');
+              else err.textContent = msg || HF.t('LICENSE_KEY_ERR');
+            }
+          }).catch(() => {
+            if (go) { go.disabled = false; go.textContent = HF.t('LICENSE_SAVE'); }
+            if (err) err.textContent = HF.t('LICENSE_OFFLINE');
+          });
+        };
+
+        if (go) go.onclick = submit;
+        if (input) input.onkeydown = e => { if (e.key === 'Enter') submit(); };
+      });
+    }
+
     function openRecoverAccount() {
       if (!HF.cloud) return;
       HF.modal(`<h3>🔑 ${HF.t('LICENSE_RECOVER')}</h3>
@@ -946,16 +1027,15 @@
         const go = m.querySelector('#rcGo');
         if (go) go.onclick = () => {
           const email = String(m.querySelector('#rcMail').value || '').trim();
-          if (!email || email.indexOf('@') < 1) { HF.toast(HF.t('LICENSE_EMAIL_BAD')); return; }
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { HF.toast(HF.t('LICENSE_EMAIL_BAD')); return; }
           HF.cloud.recoverByEmail(email).then(r => {
             if (r && r.ok) {
               HF.closeModal();
-              HF.toast(HF.t('LICENSE_RECOVER_OK'));
-              HF.go('settings');
-            } else if (r && r.pending) {
-              HF.toast(r.msg || HF.t('LICENSE_RECOVER_PENDING'), 3800);
+              HF.toast(HF.t('LICENSE_RECOVER_SENT'), 4600);
+            } else if (r && r.offline) {
+              HF.toast(HF.t('LICENSE_OFFLINE'), 3800);
             } else {
-              HF.toast((r && r.msg) || HF.t('LICENSE_RECOVER_NOT_FOUND'));
+              HF.toast((r && r.msg) || HF.t('LICENSE_RECOVER_NOT_FOUND'), 4200);
             }
           }).catch(() => HF.toast(HF.t('LICENSE_OFFLINE')));
         };
@@ -976,6 +1056,8 @@
     if (linkBtn) linkBtn.onclick = () => openLinkDevice();
     const recoverBtn = el.querySelector('#licenseRecover');
     if (recoverBtn) recoverBtn.onclick = () => openRecoverAccount();
+    const editKeyBtn = el.querySelector('#licenseEditKey');
+    if (editKeyBtn) editKeyBtn.onclick = () => openEditSecret();
     const syncBtn = el.querySelector('#licenseSync');
     if (syncBtn) syncBtn.onclick = () => {
       if (!HF.cloud) return;

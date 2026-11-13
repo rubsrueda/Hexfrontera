@@ -1,7 +1,7 @@
 (function (G) {
   const HF = G.HF, T = HF.T, B = HF.B;
 
-  HF.newCell = c => ({ i: c.i, q: c.q, r: c.r, t: 0, res: 0, b: 0, o: -1, cap: 0, u: null, tomb: 0, deg: 0, sup: 0 });
+  HF.newCell = c => ({ i: c.i, q: c.q, r: c.r, t: 0, res: 0, b: 0, o: -1, cap: 0, city: '', u: null, tomb: 0, deg: 0, sup: 0 });
 
   // Devuelve { grid, cells[], caps[] } sin propietarios jugables salvo los nacimientos.
   HF.generateMap = function (opt) {

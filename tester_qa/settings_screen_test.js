@@ -134,7 +134,7 @@ ok(html.indexOf('id="licenseBuy"') >= 0, 'el usuario Free ve «Desbloquear versi
 ok(html.indexOf('id="licenseRegister"') >= 0, 'el usuario Free ve el registro de la compra');
 ok(html.indexOf('id="licenseCheck"') >= 0, 'el usuario Free puede comprobar la licencia');
 ok(html.indexOf('id="licenseRestore"') >= 0, 'el usuario Free puede restaurar una compra de otro dispositivo');
-ok(html.indexOf('id="licenseRecover"') < 0, 'el usuario Free NO ve «Recuperar cuenta» (se le lleva al pago)');
+ok(html.indexOf('id="licenseRecover"') >= 0, 'el usuario Free también puede recuperar una cuenta comprada en otro dispositivo');
 appEl.querySelector('#licenseRestore').onclick();
 ok(modalEl.innerHTML.indexOf('id="lkId"') >= 0 && modalEl.innerHTML.indexOf('id="lkKey"') >= 0, '«Restaurar compra» pide ID y llave');
 HF.closeModal();

@@ -240,7 +240,10 @@
     } catch (e) { }
 
     if (HF.closeModal) HF.closeModal();
-    if (HF.toast) HF.toast(t('PAY_PAYPAL_SUCCESS'), 3800);
+    let notice = t('PAY_PAYPAL_SUCCESS');
+    if (data && data.email_sent === true) notice += ' ' + t('PAY_PAYPAL_EMAIL_SENT');
+    else if (data && data.email_sent === false) notice += ' ' + t('PAY_PAYPAL_EMAIL_FAILED');
+    if (HF.toast) HF.toast(notice, 5200);
     // Re-pinta la pantalla actual: la insignia/menú Premium se desbloquea ya,
     // sin reiniciar el juego.
     const screen = HF.currentScreen || 'settings';
@@ -265,6 +268,7 @@
         <div class="row"><span class="grow">${t('PAY_STORE')}</span><b>PayPal</b></div>
       </div>
       <div class="dim small">${t('PAY_SUPPORT')}</div>
+      <div class="dim small" style="margin-top:4px">${t('PAY_PAYPAL_EMAIL_NOTE')}</div>
       ${pending ? `<div class="card" style="margin:8px 0;border-color:var(--acc)">
         <div class="small">${t('PAY_PAYPAL_PENDING_ORDER')}</div>
         <button id="paypalRecover" class="pri" style="width:100%;margin-top:6px">${t('PAY_PAYPAL_RECOVER')}</button>
@@ -339,12 +343,22 @@
           createOrder: () => {
             if (err) err.textContent = '';
             status(t('PAY_PAYPAL_CREATING'));
+            const create = () => HF.cloud.callFunction('paypal', { action: 'create-order', player_id: playerId() });
             const ensure = (HF.cloud && HF.cloud.ensureRegistered)
               ? HF.cloud.ensureRegistered()
               : Promise.resolve({ ok: true });
             return ensure.then(reg => {
               if (!reg || !reg.ok) throw new Error((reg && (reg.offline ? 'offline' : reg.msg)) || 'registro');
-              return HF.cloud.callFunction('paypal', { action: 'create-order', player_id: playerId() });
+              return create();
+            }).then(r => {
+              // Identidad local antigua sin fila en hf_players: se fuerza el
+              // registro y se reintenta una sola vez.
+              const code = String((r && r.msg) || (r && r.data && r.data.error) || '');
+              if (r && !r.ok && r.status === 404 && /jugador_no_encontrado/i.test(code)) {
+                try { HF.store.del('cloud_registered'); } catch (e) { }
+                return HF.cloud.ensureRegistered().then(() => create());
+              }
+              return r;
             }).then(r => {
               if (!r || !r.ok || !r.data || !r.data.id) throw paymentError(r);
               status(t('PAY_PAYPAL_APPROVE'));

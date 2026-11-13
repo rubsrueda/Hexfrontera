@@ -3,15 +3,19 @@
 -- ----------------------------------------------------------------------------
 -- Qué crea:
 --   1. hf_campaigns             Campañas con ventana de vigencia.
+--  1b. hf_event_types           Catálogo de disparadores disponibles.
 --   2. hf_campaign_events       Evento del juego asociado a una campaña.
 --   3. hf_event_questions       Set de preguntas configurable por evento.
 --   4. hf_player_responses      Cabecera de cada respuesta (jugador + comentario).
 --   5. hf_response_details      Respuesta concreta a cada pregunta.
---   6. get_active_event_questions(p_event_type)
---                            RPC pública: campaña activa AHORA + preguntas.
---   7. fn_ef_submit_response(...)
+--   6. hf_survey_translations   Traducciones por clave e idioma.
+--   7. hf_survey_label / hf_survey_option_labels
+--                            Helpers de resolución de claves.
+--   8. get_active_event_questions(p_event_type, p_locale)
+--                            RPC pública: campaña activa + preguntas + etiquetas.
+--   9. fn_ef_submit_response(...)
 --                            RPC atómica y validada para guardar la encuesta.
---   8. hf_v_event_feedback      Vista plana para analítica (solo service_role).
+--  10. hf_v_event_feedback      Vista plana para analítica (solo service_role).
 --
 -- Cómo se aplica:
 --   Supabase → SQL Editor → pegar este archivo → Run.
@@ -52,6 +56,46 @@ COMMENT ON COLUMN public.hf_campaigns.start_date IS 'Inicio de vigencia (incluid
 COMMENT ON COLUMN public.hf_campaigns.end_date   IS 'Fin de vigencia (incluido).';
 
 -- ----------------------------------------------------------------------------
+-- 1b. CATÁLOGO DE EVENTOS
+-- ----------------------------------------------------------------------------
+-- Valores actuales que el cliente sabe disparar. Un evento nuevo se da de alta
+-- aquí primero; luego se inserta en hf_campaign_events y se añade el hook de
+-- código correspondiente.
+CREATE TABLE IF NOT EXISTS public.hf_event_types (
+    event_type   VARCHAR(50) PRIMARY KEY,
+    label        VARCHAR(120) NOT NULL,
+    description  TEXT,
+    trigger_hint VARCHAR(200),
+    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order   INT NOT NULL DEFAULT 100,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT hf_event_types_format CHECK (event_type ~ '^[A-Z][A-Z0-9_]{2,49}$'),
+    CONSTRAINT hf_event_types_label_not_blank CHECK (btrim(label) <> ''),
+    CONSTRAINT hf_event_types_order_valid CHECK (sort_order >= 0)
+);
+
+COMMENT ON TABLE  public.hf_event_types IS 'Catálogo de disparadores de encuesta disponibles.';
+COMMENT ON COLUMN public.hf_event_types.label IS 'Nombre legible para el panel de administración.';
+COMMENT ON COLUMN public.hf_event_types.trigger_hint IS 'Dónde se dispara en el cliente; informativo.';
+COMMENT ON COLUMN public.hf_event_types.is_active IS 'Si FALSE, el RPC ignora las campañas de este tipo.';
+
+INSERT INTO public.hf_event_types
+    (event_type, label, description, trigger_hint, sort_order)
+VALUES
+    ('GAME_ENTRY', 'Entrada al juego',
+     'Ingreso al juego / carga inicial del Hub.', 'main.js · openHub() · una vez por sesión', 10),
+    ('MATCH_OVER', 'Fin de partida',
+     'Al terminar una partida y cerrar el resumen.', 'game.js · showEnd() · al cerrar con Menú', 20),
+    ('TRIBE_MODIFIED', 'Tribu modificada',
+     'Al terminar de modificar la tribu.', 'screens.js · al salir de Tribu con cambios', 30),
+    ('MAP_EDIT_COMPLETE', 'Mapa guardado',
+     'Al guardar un mapa en el editor.', 'editor.js · tras guardar el mapa', 40),
+    ('REPLAY_FINISHED', 'Repetición terminada',
+     'Al terminar de ver una repetición.', 'replay.js · finish() · al cerrar el resumen', 50)
+ON CONFLICT (event_type) DO NOTHING;
+-- No se pisan labels/descripciones ni is_active de un catálogo ya editado.
+
+-- ----------------------------------------------------------------------------
 -- 2. EVENTOS DE CAMPAÑA
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.hf_campaign_events (
@@ -70,6 +114,32 @@ CREATE TABLE IF NOT EXISTS public.hf_campaign_events (
 COMMENT ON TABLE  public.hf_campaign_events IS 'Disparador del juego (GAME_ENTRY, MATCH_OVER, …) asociado a una campaña.';
 COMMENT ON COLUMN public.hf_campaign_events.collect_user_info IS 'Si TRUE, el modal pide correo y alias (ambos opcionales).';
 COMMENT ON COLUMN public.hf_campaign_events.allow_comments     IS 'Si TRUE, el modal muestra el comentario final.';
+
+-- Los eventos que ya existieran en una instalación previa se dan de alta en el
+-- catálogo antes de crear la FK, para no romper datos.
+DO $$
+BEGIN
+    INSERT INTO public.hf_event_types (event_type, label)
+    SELECT DISTINCT ce.event_type, ce.event_type
+    FROM public.hf_campaign_events ce
+    ON CONFLICT (event_type) DO NOTHING;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'public'
+          AND t.relname = 'hf_campaign_events'
+          AND c.contype = 'f'
+          AND pg_get_constraintdef(c.oid) LIKE '%hf_event_types%'
+    ) THEN
+        ALTER TABLE public.hf_campaign_events
+            ADD CONSTRAINT hf_campaign_events_type_fk
+            FOREIGN KEY (event_type) REFERENCES public.hf_event_types(event_type)
+            ON DELETE RESTRICT;
+    END IF;
+END $$;
 
 -- ----------------------------------------------------------------------------
 -- 3. PREGUNTAS DEL EVENTO
@@ -101,8 +171,9 @@ CREATE TABLE IF NOT EXISTS public.hf_event_questions (
 );
 
 COMMENT ON TABLE  public.hf_event_questions IS 'Preguntas del set, ordenadas por display_order.';
+COMMENT ON COLUMN public.hf_event_questions.question_text IS 'Texto literal o clave de traducción tipo survey.match_over.q1_lost.';
 COMMENT ON COLUMN public.hf_event_questions.question_type IS 'RATING (1..5) · SELECT · BOOLEAN · TEXT.';
-COMMENT ON COLUMN public.hf_event_questions.options       IS 'Para SELECT: ["Fácil","Medio","Difícil"]. Para RATING: etiquetas opcionales de las 5 estrellas.';
+COMMENT ON COLUMN public.hf_event_questions.options       IS 'Para SELECT: claves o etiquetas, p. ej. ["survey.match_over.opt_yes", …]. Para RATING: 5 etiquetas/claves opcionales.';
 
 -- ----------------------------------------------------------------------------
 -- 4. RESPUESTAS (CABECERA)
@@ -140,6 +211,31 @@ CREATE TABLE IF NOT EXISTS public.hf_response_details (
 COMMENT ON TABLE public.hf_response_details IS 'Valor puntual de cada pregunta (siempre como texto canónico).';
 
 -- ----------------------------------------------------------------------------
+-- 5b. TRADUCCIONES DEL CONTENIDO
+-- ----------------------------------------------------------------------------
+-- Una fila por clave e idioma. Las preguntas/opciones guardan la clave; la RPC
+-- resuelve la etiqueta para el idioma del jugador (fallback a inglés y a la
+-- propia clave). No se cargan archivos JSON en runtime.
+CREATE TABLE IF NOT EXISTS public.hf_survey_translations (
+    translation_key  VARCHAR(160) NOT NULL,
+    locale           VARCHAR(10)  NOT NULL,
+    translation_text TEXT         NOT NULL,
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT hf_survey_translations_pkey PRIMARY KEY (translation_key, locale),
+    CONSTRAINT hf_survey_translations_key_format CHECK (translation_key ~ '^survey\.[a-z0-9_.-]+$'),
+    CONSTRAINT hf_survey_translations_locale_format CHECK (locale ~ '^[a-z]{2}(-[A-Za-z]{2,})?$'),
+    CONSTRAINT hf_survey_translations_text_not_blank CHECK (btrim(translation_text) <> '')
+);
+
+COMMENT ON TABLE  public.hf_survey_translations IS 'Traducciones de preguntas/opciones por clave e idioma.';
+COMMENT ON COLUMN public.hf_survey_translations.translation_key IS 'Clave estable, p. ej. survey.match_over.q1_lost.';
+COMMENT ON COLUMN public.hf_survey_translations.locale IS 'Código base: en, es, zh, hi, fr, ar, bn, pt, ru, de, ja, ko, it.';
+COMMENT ON COLUMN public.hf_survey_translations.translation_text IS 'Texto que ve el jugador.';
+
+CREATE INDEX IF NOT EXISTS idx_hf_survey_translations_locale
+    ON public.hf_survey_translations (locale, translation_key);
+
+-- ----------------------------------------------------------------------------
 -- 6. ÍNDICES
 -- ----------------------------------------------------------------------------
 -- Ventana de campañas activas (la consulta principal del RPC).
@@ -167,29 +263,118 @@ CREATE INDEX IF NOT EXISTS idx_hf_response_details_question
     ON public.hf_response_details (question_id);
 
 -- ----------------------------------------------------------------------------
--- 7. RPC · get_active_event_questions
+-- 6b. HELPERS · resolución de claves de traducción
 -- ----------------------------------------------------------------------------
--- Devuelve SIEMPRE un objeto JSON (nunca NULL):
---   {
---     "active": true,
---     "campaign": { campaign_id, name, description, start_date, end_date },
---     "event":    { campaign_event_id, event_type, collect_user_info, allow_comments },
---     "questions": [ { question_id, question_text, question_type,
---                      options, display_order, is_required }, … ]
---   }
--- Sin campaña/evento activo devuelve { "active": false, … }.
---
--- Si hay varias campañas solapadas para el mismo evento se elige la de
--- start_date más reciente (y created_at como desempate): una sola encuesta
--- por disparador, determinista.
-CREATE OR REPLACE FUNCTION public.get_active_event_questions(p_event_type VARCHAR)
+-- Si el valor es una clave `survey.…`, busca primero el locale base del
+-- jugador, luego inglés y, por último, devuelve la propia clave. Si es texto
+-- literal, lo devuelve sin tocar.
+CREATE OR REPLACE FUNCTION public.hf_survey_label(
+    p_key    TEXT,
+    p_locale VARCHAR DEFAULT 'en'
+)
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+    SELECT CASE
+        WHEN p_key IS NULL OR btrim(p_key) = '' THEN ''
+        WHEN p_key !~ '^survey\.[a-z0-9_.-]+$' THEN p_key
+        ELSE COALESCE(
+            (
+                SELECT t.translation_text
+                FROM public.hf_survey_translations t
+                WHERE t.translation_key = p_key
+                  AND t.locale = split_part(lower(btrim(coalesce(p_locale, 'en'))), '-', 1)
+                LIMIT 1
+            ),
+            (
+                SELECT t.translation_text
+                FROM public.hf_survey_translations t
+                WHERE t.translation_key = p_key
+                  AND t.locale = 'en'
+                LIMIT 1
+            ),
+            p_key
+        )
+    END;
+$$;
+
+-- Devuelve un array de etiquetas alineado con options. Acepta opciones
+-- escalares (claves o texto) y objetos { value, label }.
+CREATE OR REPLACE FUNCTION public.hf_survey_option_labels(
+    p_options JSONB,
+    p_locale  VARCHAR DEFAULT 'en'
+)
 RETURNS JSONB
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-WITH chosen AS (
+    SELECT CASE
+        WHEN p_options IS NULL OR jsonb_typeof(p_options) <> 'array' THEN NULL
+        ELSE (
+            SELECT jsonb_agg(
+                public.hf_survey_label(
+                    CASE
+                        WHEN jsonb_typeof(o) = 'object'
+                            THEN coalesce(o ->> 'label', o ->> 'value')
+                        ELSE o #>> '{}'
+                    END,
+                    p_locale
+                )
+                ORDER BY ord
+            )
+            FROM jsonb_array_elements(p_options) WITH ORDINALITY AS t(o, ord)
+        )
+    END;
+$$;
+
+REVOKE ALL ON FUNCTION public.hf_survey_label(TEXT, VARCHAR) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.hf_survey_option_labels(JSONB, VARCHAR) FROM PUBLIC, anon, authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 7. RPC · get_active_event_questions
+-- ----------------------------------------------------------------------------
+-- Devuelve SIEMPRE un objeto JSON (nunca NULL):
+--   {
+--     "active": true,
+--     "locale": "es",
+--     "campaign": { campaign_id, name, name_label, description,
+--                   description_label, start_date, end_date },
+--     "event":    { campaign_event_id, event_type, collect_user_info, allow_comments },
+--     "questions": [ { question_id, question_text, question_label, question_type,
+--                      options, option_labels, display_order, is_required }, … ]
+--   }
+-- `question_text`/`options` son los valores canónicos de la BD; los `*_label`
+-- son lo que se pinta en el idioma del jugador. Sin campaña/evento activo
+-- devuelve { "active": false, … }.
+--
+-- Si hay varias campañas solapadas para el mismo evento se elige la de
+-- start_date más reciente (y created_at como desempate): una sola encuesta
+-- por disparador, determinista.
+-- Se mantienen dos firmas:
+--   1 arg  -> compatibilidad con clientes antiguos (locale inglés).
+--   2 args -> cliente nuevo (locale del jugador).
+DROP FUNCTION IF EXISTS public.get_active_event_questions(VARCHAR);
+DROP FUNCTION IF EXISTS public.get_active_event_questions(VARCHAR, VARCHAR);
+
+CREATE OR REPLACE FUNCTION public.get_active_event_questions(
+    p_event_type VARCHAR,
+    p_locale     VARCHAR
+)
+RETURNS JSONB
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+WITH params AS (
+    SELECT split_part(lower(btrim(coalesce(p_locale, 'en'))), '-', 1) AS locale
+),
+chosen AS (
     SELECT
         c.campaign_id,
         c.name,
@@ -199,11 +384,15 @@ WITH chosen AS (
         ce.campaign_event_id,
         ce.event_type,
         ce.collect_user_info,
-        ce.allow_comments
+        ce.allow_comments,
+        et.label AS event_label,
+        et.description AS event_description
     FROM public.hf_campaigns c
     JOIN public.hf_campaign_events ce ON ce.campaign_id = c.campaign_id
+    JOIN public.hf_event_types et ON et.event_type = ce.event_type
     WHERE c.is_active
       AND ce.is_active
+      AND et.is_active
       AND NOW() BETWEEN c.start_date AND c.end_date
       AND ce.event_type = upper(btrim(coalesce(p_event_type, '')))
     ORDER BY c.start_date DESC, c.created_at DESC, c.campaign_id
@@ -213,16 +402,21 @@ SELECT COALESCE(
     (
         SELECT jsonb_build_object(
             'active', TRUE,
+            'locale', p.locale,
             'campaign', jsonb_build_object(
                 'campaign_id', c.campaign_id,
                 'name', c.name,
+                'name_label', public.hf_survey_label(c.name, p.locale),
                 'description', c.description,
+                'description_label', public.hf_survey_label(c.description, p.locale),
                 'start_date', c.start_date,
                 'end_date', c.end_date
             ),
             'event', jsonb_build_object(
                 'campaign_event_id', c.campaign_event_id,
                 'event_type', c.event_type,
+                'label', c.event_label,
+                'description', c.event_description,
                 'collect_user_info', c.collect_user_info,
                 'allow_comments', c.allow_comments
             ),
@@ -232,8 +426,10 @@ SELECT COALESCE(
                         jsonb_build_object(
                             'question_id', q.question_id,
                             'question_text', q.question_text,
+                            'question_label', public.hf_survey_label(q.question_text, p.locale),
                             'question_type', q.question_type,
                             'options', q.options,
+                            'option_labels', public.hf_survey_option_labels(q.options, p.locale),
                             'display_order', q.display_order,
                             'is_required', q.is_required
                         )
@@ -245,10 +441,11 @@ SELECT COALESCE(
                 '[]'::jsonb
             )
         )
-        FROM chosen c
+        FROM chosen c CROSS JOIN params p
     ),
     jsonb_build_object(
         'active', FALSE,
+        'locale', (SELECT locale FROM params),
         'campaign', NULL,
         'event', NULL,
         'questions', '[]'::jsonb
@@ -256,10 +453,25 @@ SELECT COALESCE(
 );
 $$;
 
-COMMENT ON FUNCTION public.get_active_event_questions(VARCHAR)
-    IS 'Campaña activa AHORA para un disparador y su set de preguntas ordenado por display_order.';
+-- Compatibilidad: clientes anteriores que aún no envían p_locale.
+CREATE OR REPLACE FUNCTION public.get_active_event_questions(p_event_type VARCHAR)
+RETURNS JSONB
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+    SELECT public.get_active_event_questions(p_event_type, 'en');
+$$;
 
+COMMENT ON FUNCTION public.get_active_event_questions(VARCHAR, VARCHAR)
+    IS 'Campaña activa AHORA, preguntas ordenadas y etiquetas resueltas para el locale.';
+COMMENT ON FUNCTION public.get_active_event_questions(VARCHAR)
+    IS 'Compatibilidad: delega en la versión con locale usando inglés.';
+
+REVOKE ALL ON FUNCTION public.get_active_event_questions(VARCHAR, VARCHAR) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.get_active_event_questions(VARCHAR) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_active_event_questions(VARCHAR, VARCHAR) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_active_event_questions(VARCHAR) TO anon, authenticated;
 
 -- ----------------------------------------------------------------------------
@@ -313,8 +525,10 @@ BEGIN
     INTO v_event
     FROM public.hf_campaign_events ce
     JOIN public.hf_campaigns c ON c.campaign_id = ce.campaign_id
+    JOIN public.hf_event_types et ON et.event_type = ce.event_type
     WHERE ce.campaign_event_id = p_campaign_event_id
       AND ce.is_active
+      AND et.is_active
       AND c.is_active
       AND NOW() BETWEEN c.start_date AND c.end_date;
 
@@ -498,19 +712,23 @@ GRANT EXECUTE ON FUNCTION public.fn_ef_submit_response(UUID, JSONB, VARCHAR, VAR
 -- 9. RLS · sin acceso directo desde el cliente
 -- ----------------------------------------------------------------------------
 ALTER TABLE public.hf_campaigns         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hf_event_types      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hf_campaign_events   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hf_event_questions   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hf_player_responses  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.hf_response_details  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hf_survey_translations ENABLE ROW LEVEL SECURITY;
 
 -- Las RPC SECURITY DEFINER son la única puerta pública. Si en el futuro se
 -- quiere un panel de administración con Supabase Auth, se añaden políticas
 -- para el rol `authenticated` y se conceden los GRANT correspondientes.
 REVOKE ALL ON TABLE public.hf_campaigns        FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.hf_event_types     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.hf_campaign_events  FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.hf_event_questions  FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.hf_player_responses FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.hf_response_details FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.hf_survey_translations FROM PUBLIC, anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 10. VISTA ANALÍTICA
@@ -546,6 +764,41 @@ COMMENT ON VIEW public.hf_v_event_feedback IS 'Vista plana de respuestas para an
 
 REVOKE ALL ON public.hf_v_event_feedback FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.hf_v_event_feedback TO service_role;
+
+-- Catálogo + uso real: permite ver qué eventos están configurados, si están
+-- vigentes y si ya generan preguntas/respuestas.
+CREATE OR REPLACE VIEW public.hf_v_event_type_usage
+WITH (security_invoker = TRUE)
+AS
+SELECT
+    et.event_type,
+    et.label,
+    et.description,
+    et.trigger_hint,
+    et.is_active,
+    et.sort_order,
+    COUNT(DISTINCT ce.campaign_event_id) AS eventos_configurados,
+    COUNT(DISTINCT ce.campaign_event_id) FILTER (
+        WHERE c.is_active
+          AND ce.is_active
+          AND NOW() BETWEEN c.start_date AND c.end_date
+    ) AS eventos_vigentes,
+    COUNT(DISTINCT eq.question_id) AS preguntas,
+    COUNT(DISTINCT pr.response_id) AS respuestas,
+    MAX(pr.created_at) AS ultima_respuesta
+FROM public.hf_event_types et
+LEFT JOIN public.hf_campaign_events ce ON ce.event_type = et.event_type
+LEFT JOIN public.hf_campaigns c ON c.campaign_id = ce.campaign_id
+LEFT JOIN public.hf_event_questions eq ON eq.campaign_event_id = ce.campaign_event_id
+LEFT JOIN public.hf_player_responses pr ON pr.campaign_event_id = ce.campaign_event_id
+GROUP BY et.event_type, et.label, et.description, et.trigger_hint,
+         et.is_active, et.sort_order;
+
+COMMENT ON VIEW public.hf_v_event_type_usage
+    IS 'Catálogo de eventos con uso: campañas, vigentes, preguntas y respuestas.';
+
+REVOKE ALL ON public.hf_v_event_type_usage FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.hf_v_event_type_usage TO service_role;
 
 -- ----------------------------------------------------------------------------
 -- 11. CONSULTA ANALÍTICA DE REFERENCIA
