@@ -3,7 +3,7 @@
   const FILES = {
     unit: { INF: 'infanteria', ENG: 'ingeniero', ARC: 'arquero', CAB: 'caballeria', SIE: 'asedio', BAR: 'barco' },
     build: { 1: 'arbol', 2: 'camino', 3: 'campamento', 4: 'pueblo', 5: 'ciudad', 6: 'bastion' },
-    misc: { fog: 'nube', tomb: 'tumba' },
+    misc: { fog: 'nube', tomb: 'tumba', bridge: 'puente' },
     resource: { resMADERA: 'madera', resTRIGO: 'trigo', resORO_MONEDA: 'oro_moneda', resORO_ROCA: 'oro_roca' },
     // Unidades comerciales (no reclutables): caravana terrestre y urca de mar.
     trade: { cart: 'carreta', ship: 'urca' }

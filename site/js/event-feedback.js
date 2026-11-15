@@ -44,7 +44,11 @@
   const SURVEY_KEY_RE = /^survey\.[a-z0-9_.-]+$/i;
   function tr(value) {
     const s = String(value == null ? '' : value).trim();
-    if (!SURVEY_KEY_RE.test(s)) return s;
+    if (!SURVEY_KEY_RE.test(s)) {
+      // Texto literal (BD sembrada sin claves): se traduce con el catálogo de
+      // frases del jugador. Si no hay entrada, se deja tal cual.
+      return HF.tx ? HF.tx(s) : s;
+    }
     const out = t(s, null);
     if (!out || out === s) {
       warnOnce('i18n:' + s, 'falta traducción para ' + s);
@@ -173,14 +177,14 @@
       if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
         const s = String(item).trim();
         if (!s) continue;
-        out.push({ value: s, label: dbLabel != null ? dbLabel : tr(s) });
+        out.push({ value: s, label: tr(dbLabel != null ? dbLabel : s) });
       } else if (item && typeof item === 'object') {
         // Formato extendido tolerado: { value, label }. El valor es lo que se
         // guarda; la etiqueta es lo que ve el jugador.
         const v = item.value == null ? item.id : item.value;
         if (v == null) continue;
         const rawLabel = item.label == null ? v : item.label;
-        out.push({ value: String(v), label: dbLabel != null ? dbLabel : tr(rawLabel) });
+        out.push({ value: String(v), label: tr(dbLabel != null ? dbLabel : rawLabel) });
       }
     }
     return out.length ? out : null;
@@ -209,7 +213,7 @@
       out.push({
         question_id: id,
         question_text: text,
-        question_label: dbLabel || tr(text),
+        question_label: tr(dbLabel || text),
         question_type: type,
         options,
         display_order: +item.display_order || 1,
@@ -449,10 +453,10 @@
       // Cabecera ---------------------------------------------------------------
       const head = el('div', 'ef-head');
       const headText = el('div', 'ef-head-text');
-      const campaignName = String(campaign.name_label || '').trim() ||
-        (campaign.name ? tr(campaign.name) : '');
-      const campaignDesc = String(campaign.description_label || '').trim() ||
-        (campaign.description ? tr(campaign.description) : '');
+      const campaignName = tr(String(campaign.name_label || '').trim() ||
+        (campaign.name ? campaign.name : ''));
+      const campaignDesc = tr(String(campaign.description_label || '').trim() ||
+        (campaign.description ? campaign.description : ''));
       headText.appendChild(el('div', 'ef-kicker', campaignName || t('EF_KICKER')));
       const title = el('h3', 'ef-title', t('EF_TITLE'));
       title.id = 'efTitle';

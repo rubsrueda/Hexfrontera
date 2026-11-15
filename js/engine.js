@@ -11,13 +11,16 @@
     // CIV_TYPE_THALASSOCRACY: las tropas de tierra se hacen a la mar sin puerto (los ríos ya eran transitables)
     if (c.t === T.MAR) return !!(f && has(f, 'CIV_TYPE_THALASSOCRACY'));
     if (!passableT(c)) return false;
-    // Solo el Ingeniero cruza ríos y montañas sin camino/puente.
-    if (c.t === T.MONTANA) return isRoad(c) || (HF.CFG.mountainUnits || ['ENG']).indexOf(u.type) >= 0;
-    if (c.t === T.RIO) return isRoad(c) || u.type === 'ENG';
     // DIPLOMACIA: Fronteras selladas por PNA (Pacto Sagrado) son intransitables para enemigos
     if (c.borderControl && c.borderControl.napLocked && f && c.o !== f.id && c.o >= 0) {
       return false;
     }
+    // El puente es una mutación permanente del terreno: cualquier unidad de
+    // tierra lo cruza como llano, aunque debajo haya río o montaña.
+    if (c.br) return true;
+    // Solo el Ingeniero cruza ríos y montañas sin camino/puente.
+    if (c.t === T.MONTANA) return isRoad(c) || (HF.CFG.mountainUnits || ['ENG']).indexOf(u.type) >= 0;
+    if (c.t === T.RIO) return isRoad(c) || u.type === 'ENG';
     return true;
   };
   // camino y todo edificio superior: sin penalización de terreno y transitable por cualquier unidad de tierra
@@ -74,6 +77,7 @@
     const nF = o.factions.length;
     const g = {
       v: 1, mode: o.mode || 'skirmish', seed: o.seed >>> 0, R: o.R, biome: o.biome, fog: o.fog || 'FULL', difficulty: o.difficulty || 'normal',
+      aiNoFog: (o.difficulty === 'hard' || o.difficulty === 'brutal'),
       turn: 1, cur: 0, over: null, goal: o.goal || { type: 'conquer' }, meta: o.meta || {}, rs: (o.seed * 7 + 13) >>> 0,
       f: [], cells: null, fogMap: null, timeline: [], events: [], undo: [],
       caravans: [], tradeBlocked: {}, storms: [],
@@ -153,6 +157,9 @@
     if (HF.Diplomacy) { HF.Diplomacy.ensure(g); HF.Diplomacy.ensureCells(g); }
     HF.updateFog(g);
     HF.recordTimeline(g);
+    // El tráfico existe desde el primer turno: los pueblos sin dueño ya tienen
+    // sus convoyes en el mapa listos para ser asaltados.
+    HF.syncCaravans(g);
     save_rs(g);
     return g;
   };
@@ -312,14 +319,34 @@
   // Rutas comerciales: pares de asentamientos (PUEBLO/CIUDAD) unidos por una
   // calzada continua (tierra) o por agua (mar). Se eligen las parejas MÁS
   // LEJANAS de cada dominio y se guarda el camino completo para la caravana.
+  // Los pueblos SIN DUEÑO forman además un mercado libre: generan convoyes
+  // neutrales desde el primer turno, de modo que la guerra al comercio existe
+  // aunque nadie haya construido todavía una segunda aldea.
+  const NEUTRAL = -1;
+  const isTown = c => !!c && (c.b === B.PUEBLO || c.b === B.CIUDAD);
   function tradeEnds(g, f) {
     const out = [];
-    for (const c of g.cells) if (c && c.o === f.id && c.sup && (c.b === B.PUEBLO || c.b === B.CIUDAD)) out.push(c);
+    for (const c of g.cells) {
+      if (!isTown(c)) continue;
+      if (c.o === NEUTRAL) { out.push(c); continue; }        // mercado libre
+      if (f && c.o === f.id && c.sup) out.push(c);           // socio propio abastecido
+    }
     return out;
   }
-  function tradeWalkable(n, f, kind) {
-    if (!n || (n.o !== f.id && n.o !== -1)) return false;
-    return kind === 'sea' ? isWater(n) : isRoad(n);
+  // Tierra: las caravanas propias circulan por la red vial (camino y
+  // asentamientos). Las neutrales cruzan campo abierto porque nadie les
+  // construye calzadas. El mar exige agua y no cruza fuego.
+  function tradeWalkable(n, owner, kind) {
+    if (!n) return false;
+    if (kind === 'sea') {
+      if (!isWater(n) || n.fire > 0) return false;
+      return owner == null || n.o === owner || n.o === NEUTRAL;
+    }
+    if (n.fire > 0 || n.burn > 0) return false;
+    if (owner == null) return n.t !== T.MAR;
+    // Un puente es paso franco para las caravanas: abre la ruta cortada por
+    // un río o una cadena montañosa, igual que una calzada.
+    return (isRoad(n) || n.br) && (n.o === owner || n.o === NEUTRAL);
   }
   function tradePath(g, s, t, prev, kind) {
     if (kind === 'sea') {
@@ -338,46 +365,61 @@
     return path.reverse();
   }
   function tradePairs(g, f, kind) {
-    const gr = grid(g), ends = tradeEnds(g, f), out = [];
+    const gr = grid(g), owner = f ? f.id : null, ends = tradeEnds(g, f), out = [];
     for (const s of ends) {
       const prev = new Map(), q = [];
       if (kind === 'sea') {
         for (const j of gr.nb[s.i]) {
-          if (tradeWalkable(g.cells[j], f, 'sea')) { prev.set(j, s.i); q.push(j); }
+          if (tradeWalkable(g.cells[j], owner, 'sea')) { prev.set(j, s.i); q.push(j); }
         }
       } else { prev.set(s.i, -1); q.push(s.i); }
       for (let h = 0; h < q.length; h++) {
         const x = q[h];
         for (const y of gr.nb[x]) {
-          if (prev.has(y) || !tradeWalkable(g.cells[y], f, kind)) continue;
+          if (prev.has(y) || !tradeWalkable(g.cells[y], owner, kind)) continue;
           prev.set(y, x); q.push(y);
         }
       }
       for (const t of ends) {
         if (t.i <= s.i) continue;
+        // El mercado neutral no se duplica como ruta de cada facción, y una
+        // ruta de facción siempre toca al menos un asentamiento propio.
+        if (!f && (s.o !== NEUTRAL || t.o !== NEUTRAL)) continue;
+        if (f && s.o === NEUTRAL && t.o === NEUTRAL) continue;
         const path = tradePath(g, s, t, prev, kind);
         if (path) out.push({ a: s.i, b: t.i, kind, path });
       }
     }
     return out;
   }
+  const byLongest = (p, q) => q.path.length - p.path.length || p.a - q.a || p.b - q.b;
   function tradeRoutes(g, f) {
     if (!g._trade) g._trade = {};
     const cached = g._trade[f.id];
     if (cached && cached.turn === g.turn) return cached.routes;
     const maxL = Math.max(0, HF.CFG.commerce.maxRoutes || 3);
     const maxS = Math.max(0, HF.CFG.commerce.maxSeaRoutes || 3);
-    const byLen = (p, q) => q.path.length - p.path.length || p.a - q.a || p.b - q.b;
-    const land = tradePairs(g, f, 'land').sort(byLen).slice(0, maxL);
-    const sea = tradePairs(g, f, 'sea').sort(byLen).slice(0, maxS);
-    const routes = land.concat(sea);
+    const routes = tradePairs(g, f, 'land').sort(byLongest).slice(0, maxL)
+      .concat(tradePairs(g, f, 'sea').sort(byLongest).slice(0, maxS));
     g._trade[f.id] = { turn: g.turn, routes };
     return routes;
   }
   HF.tradeRoutes = tradeRoutes;
+  // Tráfico de los pueblos sin dueño: convoyes cazables en cualquier partida.
+  function neutralRoutes(g) {
+    if (!g._trade) g._trade = {};
+    const cached = g._trade.neutral;
+    if (cached && cached.turn === g.turn) return cached.routes;
+    const C = HF.CFG.commerce || {};
+    const maxL = Math.max(0, C.neutralRoutes == null ? 2 : C.neutralRoutes);
+    const maxS = Math.max(0, C.neutralSeaRoutes == null ? 1 : C.neutralSeaRoutes);
+    const routes = tradePairs(g, null, 'land').sort(byLongest).slice(0, maxL)
+      .concat(tradePairs(g, null, 'sea').sort(byLongest).slice(0, maxS));
+    g._trade.neutral = { turn: g.turn, routes };
+    return routes;
+  }
+  HF.neutralRoutes = neutralRoutes;
 
-  // ---------- caravanas físicas ----------
-  const caravanKey = r => r.kind + ':' + r.a + ':' + r.b;
   function creditGold(g, cellId, owner, amount) {
     if (!amount) return;
     const c = g.cells[cellId], f = g.f[owner];
@@ -390,60 +432,118 @@
   // « en Tarraco» (o vacío si la casilla no tiene nombre de ciudad).
   const cityAt = c => (c && c.city) ? ' en ' + c.city : '';
   const RES_ES = { gold: 'oro', food: 'comida', wood: 'madera' };
+
+  // ---------- caravanas físicas ----------
+  // Una caravana OCUPA su hexágono: no se puede atravesar, no se apila con
+  // otra y hay que asaltarla para quitarla de en medio. Los convoyes neutrales
+  // (pueblos sin dueño) son presa libre para cualquiera.
+  const blockKey = (owner, r) => owner + ':' + r.kind + ':' + r.a + ':' + r.b;
+  function caravanAt(g, cellId) {
+    return (g.caravans || []).find(c => !c.dead && c.path[c.pos] === cellId) || null;
+  }
+  HF.caravanAt = caravanAt;
+  HF.caravansAt = (g, cellId) => (g.caravans || []).filter(c => !c.dead && c.path[c.pos] === cellId);
+  // ¿La casilla impide el paso de un convoy? Una unidad, otra caravana, fuego
+  // o cenizas bloquean el hexágono.
+  function caravanBlocked(g, cellId, except) {
+    const c = g.cells[cellId];
+    if (!c) return true;
+    if (c.u) return true;
+    if (c.fire > 0 || c.burn > 0) return true;
+    return (g.caravans || []).some(k => k !== except && !k.dead && k.path[k.pos] === cellId);
+  }
+  function firstFreeOnPath(g, car) {
+    for (let k = 0; k < car.path.length; k++) if (!caravanBlocked(g, car.path[k], car)) return k;
+    return -1;
+  }
+  // Avanza casilla a casilla: nunca salta por encima de un bloqueo y entrega
+  // al llegar a un extremo. El mercado neutral repone su carga.
+  function moveCaravan(g, car, speed, f, baseGold) {
+    const last = car.path.length - 1;
+    let arrived = false;
+    for (let k = 0; k < speed && last > 0; k++) {
+      let next = car.pos + car.dir;
+      if (next > last) { car.dir = -1; next = car.pos - 1; }
+      else if (next < 0) { car.dir = 1; next = 1; }
+      if (next < 0 || next > last) break;
+      if (caravanBlocked(g, car.path[next], car)) break;
+      car.pos = next;
+      if (car.pos === last || car.pos === 0) { arrived = true; break; }
+    }
+    if (arrived) {
+      const cellId = car.path[car.pos];
+      if (f) {
+        const amount = Math.max(0, car.gold || 0);
+        if (amount) creditGold(g, cellId, f.id, amount);
+        car.gold = 0;
+      } else car.gold = Math.max(1, baseGold || 4);
+      car.dir = car.pos === last ? -1 : 1;
+    }
+  }
   // Al final de cada ronda: aparecen caravanas para las rutas activas, avanzan
-  // 4 casillas y devengan 5 de oro por turno. Al llegar entregan la carga.
+  // y devengan oro; al llegar a un extremo entregan la carga. Es idempotente
+  // por turno, así se puede llamar al arrancar, al construir y al cerrar ronda.
   HF.syncCaravans = function (g) {
     if (!g.caravans) g.caravans = [];
     if (!g.tradeBlocked) g.tradeBlocked = {};
+    if (g._carTurn === g.turn) return;
+    g._carTurn = g.turn;
     const C = HF.CFG.commerce || {};
     const speed = Math.max(1, C.caravanSpeed || 4);
+    const nSpeed = Math.max(1, C.neutralSpeed || 3);
     const perTurn = Math.max(1, C.caravanGold || 5);
-    const blockTurns = Math.max(0, C.blockTurns || 2);
-    const alive = new Set();
+    const nGold = Math.max(1, C.neutralGold || 4);
     // 1) urcas de carga manuales: navegan y entregan al llegar al puerto.
+    //    También ocupan su hexágono: avanzan casilla a casilla y esperan si el
+    //    paso está tapado por una unidad u otro convoy.
     for (const car of g.caravans) {
-      if (car.kind !== 'cargo') continue;
+      if (car.kind !== 'cargo' || car.dead) continue;
       const last = car.path.length - 1;
-      const pos = (car.pos || 0) + speed;
-      if (pos >= last) {
-        car.pos = last;
-        creditRes(g, car.path[last], car.owner, car.cargo.res, car.cargo.qty);
-        car.dead = true;
-      } else car.pos = pos;
+      for (let k = 0; k < speed; k++) {
+        const next = (car.pos || 0) + 1;
+        if (next > last) break;
+        if (caravanBlocked(g, car.path[next], car)) break;
+        car.pos = next;
+        if (car.pos === last) {
+          creditRes(g, car.path[last], car.owner, car.cargo.res, car.cargo.qty);
+          car.dead = true;
+          break;
+        }
+      }
     }
+    // 2) mercado neutral primero (siempre hay tráfico que cazar) y luego cada
+    //    facción viva. Un convoy por ruta; la ruta saqueada queda bloqueada.
+    const groups = [{ owner: NEUTRAL, f: null, routes: neutralRoutes(g), speed: nSpeed, gold: nGold }];
     for (const f of g.f) {
       if (!f || f.alive === false) continue;
-      const routes = tradeRoutes(g, f);
+      groups.push({ owner: f.id, f: f, routes: tradeRoutes(g, f), speed: speed, gold: perTurn });
+    }
+    for (const grp of groups) {
       const keys = new Set();
-      for (const r of routes) {
-        const key = caravanKey(r);
+      for (const r of grp.routes) {
+        const key = blockKey(grp.owner, r);
         keys.add(key);
-        let car = g.caravans.find(c => c.key === key);
+        let car = g.caravans.find(c => c.owner === grp.owner && c.kind === r.kind && c.a === r.a && c.b === r.b);
         if (!car) {
           if ((g.tradeBlocked[key] || 0) > g.turn) continue;
-          car = { key, owner: f.id, kind: r.kind, a: r.a, b: r.b, path: r.path.slice(), pos: 0, dir: 1, gold: 0 };
+          car = { key, owner: grp.owner, kind: r.kind, a: r.a, b: r.b, path: r.path.slice(), pos: 0, dir: 1, gold: grp.f ? 0 : grp.gold };
+          const p0 = firstFreeOnPath(g, car);
+          if (p0 < 0) continue;            // ruta taponada por unidades
+          car.pos = p0;
           g.caravans.push(car);
         } else if (car.path.length !== r.path.length || car.path[car.pos] !== r.path[car.pos]) {
-          // la red cambió: la caravana reaparece al inicio del recorrido
-          car.path = r.path.slice(); car.pos = 0; car.dir = 1;
+          // la red cambió: la caravana reaparece en el primer hueco del recorrido
+          car.path = r.path.slice(); car.dir = 1;
+          const p0 = firstFreeOnPath(g, car);
+          car.pos = p0 < 0 ? 0 : p0;
         }
-        car.gold = (car.gold || 0) + perTurn;
-        let pos = car.pos + speed * car.dir;
-        const last = car.path.length - 1;
-        if (pos >= last) {
-          pos = last;
-          creditGold(g, car.path[last], car.owner, car.gold || 0);
-          car.gold = 0; car.dir = -1;
-        } else if (pos <= 0) {
-          pos = 0;
-          creditGold(g, car.path[0], car.owner, car.gold || 0);
-          car.gold = 0; car.dir = 1;
-        }
-        car.pos = pos;
+        car.gold = (car.gold || 0) + grp.gold;
+        moveCaravan(g, car, grp.speed, grp.f, nGold);
       }
-      for (const car of g.caravans) if (car.owner === f.id && car.kind !== 'cargo' && !keys.has(car.key)) car.dead = true;
+      for (const car of g.caravans) if (car.owner === grp.owner && car.kind !== 'cargo' && !keys.has(car.key)) car.dead = true;
     }
-    g.caravans = g.caravans.filter(c => !c.dead);
+    g.caravans = g.caravans.filter(c => !c.dead &&
+      (c.owner === NEUTRAL || (g.f[c.owner] && g.f[c.owner].alive !== false)));
     for (const k in g.tradeBlocked) if (g.tradeBlocked[k] <= g.turn) delete g.tradeBlocked[k];
   };
   // Asalto: cualquier tropa con ataque disponible se lleva el oro (o la carga)
@@ -456,14 +556,16 @@
     if (u.at <= 0) return { ok: false, msg: 'Sin ataque disponible' };
     const t = g.cells[to];
     if (!t) return { ok: false, msg: 'Destino no válido' };
-    const list = (g.caravans || []).filter(k => k.owner !== u.owner && k.path[k.pos] === to);
+    const list = (g.caravans || []).filter(k => !k.dead && k.owner !== u.owner && k.path[k.pos] === to);
     if (!list.length) return { ok: false, msg: 'No hay comercio en esa casilla' };
+    // Prioridad: la caravana con más botín.
+    list.sort((a, b) => ((b.gold || (b.cargo && b.cargo.qty) || 0) - (a.gold || (a.cargo && a.cargo.qty) || 0)));
     const car = list[0], f = g.f[u.owner];
     const naval = u.type === 'BAR', seaTrade = car.kind !== 'land';
     const origin = src != null && g.cells[src] ? g.cells[src] : c;
     const range = tradeStrikeRange(g, u, origin);
     if (naval && !seaTrade) return { ok: false, msg: 'Un barco no puede asaltar una carreta' };
-    // Permitir que infantería ataque caravanas marítimas desde costa adyacente (range=1)
+    // La infantería alcanza las urcas que navegan pegadas a la costa.
     if (!naval && seaTrade && range <= 1) {
       const isCoastal = HF.nbs(g, origin.i).some(j => {
         const n = g.cells[j];
@@ -475,20 +577,25 @@
     if (HF.hexDist(origin, t) > range) return { ok: false, msg: 'El comercio queda fuera de alcance' };
     if (origin !== c && origin.u) return { ok: false, msg: 'La posición de asalto está ocupada' };
     const comp = c.comp != null ? c.comp : mainComp(g, f);
-    let loot = 0;
+    let loot = 0, res = 'gold';
     if (car.kind === 'cargo') {
       loot = Math.max(0, (car.cargo && car.cargo.qty) || 0);
-      const res = car.cargo.res;
+      res = car.cargo.res;
       if (f.stock && f.stock[comp]) { f.stock[comp][res] += loot; syncTotals(f); }
       else f[res] = (f[res] || 0) + loot;
-      ev(g, to, 'Urca capturada: +' + loot + ' ' + res, 'good');
+      ev(g, to, 'Urca capturada: +' + loot + ' ' + (RES_ES[res] || res), 'good');
     } else {
       loot = Math.max(0, car.gold || 0);
       if (f.stock && f.stock[comp]) { f.stock[comp].gold += loot; syncTotals(f); }
       else f.gold = (f.gold || 0) + loot;
-      g.tradeBlocked = g.tradeBlocked || {};
-      g.tradeBlocked[car.key || caravanKey(car)] = g.turn + Math.max(0, HF.CFG.commerce.blockTurns || 2);
-      ev(g, to, 'Caravana saqueada: +' + loot + ' oro', 'good');
+      // El mercado neutral no se bloquea: repone convoyes y sigue siendo caza.
+      if (car.owner !== NEUTRAL) {
+        g.tradeBlocked = g.tradeBlocked || {};
+        g.tradeBlocked[blockKey(car.owner, car)] = g.turn + Math.max(0, HF.CFG.commerce.blockTurns || 2);
+      }
+      const who = car.owner === NEUTRAL ? 'Caravana neutral saqueada'
+        : (car.kind === 'sea' ? 'Urca mercante saqueada' : 'Caravana saqueada');
+      ev(g, to, who + ': +' + loot + ' oro', 'good');
     }
     g.caravans = g.caravans.filter(k => k !== car);
     // Si el asalto se lanzó desde una casilla alcanzable, la tropa se planta
@@ -496,15 +603,17 @@
     if (origin !== c) { origin.u = u; c.u = null; u.mv = 0; }
     u.at = 0;
     g._trade = null;
-    return { ok: true, kind: 'raid', loot, res: car.cargo ? car.cargo.res : 'gold', movedTo: origin.i };
+    return { ok: true, kind: 'raid', loot, res: res, movedTo: origin.i, owner: car.owner };
   };
-  HF.caravansAt = (g, cellId) => (g.caravans || []).filter(c => c.path[c.pos] === cellId);
 
   // ---------- carga manual entre puertos ----------
   // Puerto: asentamiento propio con suministro y al menos una casilla de agua
   // adyacente. El stock es por provincia (f.stock[comp]).
+  // Un campamento costero también es puerto: es el destino natural del
+  // abastecimiento de una colonia incomunicada por tierra.
   HF.isPort = function (g, c) {
-    if (!c || !c.sup || (c.b !== B.PUEBLO && c.b !== B.CIUDAD)) return false;
+    if (!c || !c.sup) return false;
+    if (c.b !== B.PUEBLO && c.b !== B.CIUDAD && c.b !== B.CAMPAMENTO) return false;
     return grid(g).nb[c.i].some(j => isWater(g.cells[j]));
   };
   HF.ports = function (g, f) {
@@ -516,18 +625,37 @@
   HF.seaPath = function (g, f, aId, bId) {
     const gr = grid(g), a = g.cells[aId], b = g.cells[bId];
     if (!a || !b) return null;
+    const owner = f && f.id != null ? f.id : f;
     const prev = new Map(), q = [];
     for (const j of gr.nb[aId]) {
-      if (tradeWalkable(g.cells[j], f, 'sea')) { prev.set(j, aId); q.push(j); }
+      if (tradeWalkable(g.cells[j], owner, 'sea')) { prev.set(j, aId); q.push(j); }
     }
     for (let h = 0; h < q.length; h++) {
       const x = q[h];
       for (const y of gr.nb[x]) {
-        if (prev.has(y) || !tradeWalkable(g.cells[y], f, 'sea')) continue;
+        if (prev.has(y) || !tradeWalkable(g.cells[y], owner, 'sea')) continue;
         prev.set(y, x); q.push(y);
       }
     }
     return tradePath(g, a, b, prev, 'sea');
+  };
+  // ¿Dos casillas están comunicadas por tierra dentro del mismo territorio?
+  // Si lo están, no tiene sentido fletar una urca: el jugador debe usar la red
+  // vial. Se recorre el territorio propio por tierra (sin cruzar mar).
+  HF.landLinked = function (g, owner, aId, bId) {
+    if (aId === bId) return true;
+    const seen = new Set([aId]), q = [aId];
+    while (q.length) {
+      const x = q.pop();
+      for (const y of HF.nbs(g, x)) {
+        if (seen.has(y)) continue;
+        const n = g.cells[y];
+        if (!n || n.o !== owner || n.t === T.MAR) continue;
+        if (y === bId) return true;
+        seen.add(y); q.push(y);
+      }
+    }
+    return false;
   };
   function creditRes(g, cellId, owner, res, qty) {
     if (!qty) return;
@@ -539,13 +667,19 @@
     ev(g, cellId, 'Carga entregada' + cityAt(c) + ': +' + qty + ' ' + (RES_ES[res] || res), 'good');
   }
   // Crea una urca de carga: viaja sola y es saqueable como el comercio naval.
+  // Reglas: zarpa de una ciudad o pueblo y abastece una colonia INCOMUNICADA
+  // POR TIERRA (normalmente un campamento costero). Si el destino ya está
+  // conectado por tierra, el jugador debe usar la red vial, no el mar.
   HF.sendCargo = function (g, fromId, toId, res, qty) {
     const from = g.cells[fromId], to = g.cells[toId];
     if (!from || !to) return { ok: false, msg: 'Puerto no válido' };
     const f = g.f[from.o];
     if (!f || from.o !== to.o) return { ok: false, msg: 'Los puertos deben ser tuyos' };
     if (['gold', 'food', 'wood'].indexOf(res) < 0) return { ok: false, msg: 'Recurso no válido' };
-    if (!HF.isPort(g, from) || !HF.isPort(g, to)) return { ok: false, msg: 'No son puertos' };
+    if (from.b !== B.PUEBLO && from.b !== B.CIUDAD) return { ok: false, msg: 'La carga debe zarpar de una ciudad o pueblo' };
+    if (!HF.isPort(g, from) || !HF.isPort(g, to)) return { ok: false, msg: 'No son puertos: hace falta agua adyacente' };
+    if (HF.landLinked(g, f.id, fromId, toId)) return { ok: false, msg: 'Ya están comunicados por tierra: usa la red vial' };
+    if (caravanAt(g, fromId)) return { ok: false, msg: 'El puerto está ocupado por un convoy: espera a que zarpe' };
     const path = HF.seaPath(g, f, fromId, toId);
     if (!path) return { ok: false, msg: 'Sin ruta marítima entre los puertos' };
     const comp = from.comp != null ? from.comp : mainComp(g, f);
@@ -565,6 +699,15 @@
     // La repetición reconstruye la partida: registrar el envío manual.
     if (g.replayLog && !g.noReplay) g.replayLog.push([9, fromId, toId, res, q]);
     return { ok: true, qty: q };
+  };
+  // Destinos válidos para una carga: puertos propios (ciudad, pueblo o
+  // campamento costero) a los que NO se llega por tierra desde el origen.
+  HF.cargoDests = function (g, f, fromId) {
+    const from = g.cells[fromId];
+    if (!from || from.o !== f.id || (from.b !== B.PUEBLO && from.b !== B.CIUDAD)) return [];
+    if (!HF.isPort(g, from)) return [];
+    return HF.ports(g, f).filter(p => p.i !== fromId &&
+      !HF.landLinked(g, f.id, fromId, p.i) && HF.seaPath(g, f, fromId, p.i));
   };
   HF.income = (g, f, comp) => {
     const inc = { gold: 0, food: 0, wood: 0 }, C = HF.CFG.income;
@@ -763,6 +906,7 @@
     for (const j of HF.nbs(g, cell.i)) {
       const n = g.cells[j];
       if (!n || n.u) continue;
+      if (caravanAt(g, j)) continue;          // el convoy ocupa el hexágono
       const water = n.t === T.MAR || n.t === T.RIO;
       if (naval ? !water : water) continue;
       if (n.o !== f.id && n.o !== -1) continue;
@@ -792,8 +936,10 @@
     if (roll < rRec) {
       const spot = tombSpot(g, f, t, info.type === 'BAR');
       if (spot) {
-        spot.u = { type: info.type, tier: info.tier, owner: u.owner, mv: 0, at: 0 };
-        ev(g, spot.i, 'Reliquia: recuperas ' + HF.UNITS[info.type].name + ' N' + info.tier, 'good');
+        const tier = info.type === 'ENG' && HF.CFG.engineer && HF.CFG.engineer.singleTier ? 1 : info.tier;
+        spot.u = { type: info.type, tier, owner: u.owner, mv: 0, at: 0 };
+        if (info.type === 'ENG' && HF.CFG.engineer) spot.u.supply = HF.CFG.engineer.supplyTurns;
+        ev(g, spot.i, 'Reliquia: recuperas ' + HF.UNITS[info.type].name + ' N' + tier, 'good');
         return 'recover';
       }
     }
@@ -833,6 +979,9 @@
   function massDegrade(g, f, comp, label) {
     let any = false;
     for (const c of g.cells) if (c && c.u && c.u.owner === f.id && c.comp === comp) {
+      // La carga de suministros del ingeniero lo mantiene operativo durante
+      // sus turnos de misión, aunque la provincia esté incomunicada.
+      if (c.u.type === 'ENG' && (c.u.supply | 0) > 0) continue;
       const nm = HF.UNITS[c.u.type].name, r = degradeUnit(g, c, f);
       if (r === 'deserta') creditStarvation(g, f.id, c);
       if (f.human) ev(g, c.i, label + ': ' + nm + ' ' + r, 'bad');
@@ -1066,7 +1215,11 @@
           f.economy.expenses.gold += cellUp(f, c, 'upGold');
           f.economy.expenses.food += cellUp(f, c, 'up');
         }
+    // unidades: coste, mantenimiento por turno según nivel...
+    // Nota: el ingeniero con suministro propio (supply > 0) no deserta aunque su
+    // provincia haya desaparecido o esté incomunicada.
         while (c.u && guard-- > 0) {
+          if (c.u.type === 'ENG' && (c.u.supply | 0) > 0) break;
           const ug = cellUp(f, c, 'upGold'), uf = cellUp(f, c, 'up');
           if (pay(ug, uf)) break;
           anyDef = true;
@@ -1134,7 +1287,29 @@
       c.u.mv = 1; c.u.at = 1; c.u.retreat = 0;
       if (c.u.cargo) { c.u.cargo.mv = 1; c.u.cargo.at = 1; c.u.cargo.retreat = 0; }
     }
+    // Carga del ingeniero: se captura el estado de incomunicación ANTES de
+    // settle(), porque el colapso de una provincia aislada borra c.iso.
+    const isoEng = [];
+    for (const c of g.cells) if (c && c.u && c.u.owner === f.id && c.u.type === 'ENG' && (c.u.supply | 0) > 0 &&
+      (!c.sup || c.iso === g.turn)) isoEng.push(c);
+    // Fuera del territorio no hay colapso de provincia: un ingeniero que YA
+    // empieza el turno sin carga ni suministro se degrada. Los que agotan la
+    // carga en este mismo turno conservan su última jornada de misión.
+    const expiredEng = [];
+    for (const c of g.cells) if (c && c.u && c.u.owner === f.id && c.u.type === 'ENG' &&
+      (c.u.supply | 0) <= 0 && c.o === -1 && !c.sup) expiredEng.push(c);
     settle(g, f);
+    // La carga dura exactamente N turnos incomunicados (config.engineer).
+    for (const c of isoEng) {
+      if (!c.u || c.u.type !== 'ENG') continue;
+      c.u.supply = Math.max(0, (c.u.supply | 0) - 1);
+      if (c.u.supply === 0 && f.human) ev(g, c.i, 'Ingeniero: carga de suministros agotada', 'bad');
+    }
+    for (const c of expiredEng) {
+      if (!c.u || c.u.type !== 'ENG') continue;
+      const r = degradeUnit(g, c, f);
+      if (f.human) ev(g, c.i, 'Ingeniero sin suministros: ' + r, 'bad');
+    }
     if (f.human && f.deficit) {
       // Diagnóstico visible: el HUD puede estar mostrando solo la provincia
       // seleccionada; aquí va el total inicial real de la facción.
@@ -1148,9 +1323,15 @@
   function unitDef(g, u, c) {
     const f = g.f[u.owner], K = HF.CFG.combat, D = HF.UNITS[u.type];
     if (u.type === 'INF' || u.type === 'ENG') {
+      // El Ingeniero es nivel único: defensa fija de N1, sin evolución.
       // B1.1.2 · PRAETORIAN_GUARD: el Tier 4 usa sus estadísticas de élite
-      const base = u.tier >= HF.CFG.doctrine.pretorianTier ? HF.CFG.doctrine.pretorianDef : u.tier;
-      let d = base + (c.t === T.COLINA ? K.hillDef : 0) + (c.t === T.MONTANA ? K.mountainDef : 0);
+      const elite = u.tier >= HF.CFG.doctrine.pretorianTier;
+      const base = u.type === 'ENG' && HF.CFG.engineer
+        ? HF.CFG.engineer.defense
+        : (elite ? HF.CFG.doctrine.pretorianDef : u.tier);
+      // Un puente desmantela la ventaja del terreno: se combate como llano.
+      const ter = c.br ? 0 : 1;
+      let d = base + (c.t === T.COLINA ? K.hillDef * ter : 0) + (c.t === T.MONTANA ? K.mountainDef * ter : 0);
       if (has(f, 'TESTUDO_SHIELD')) {
         let n = 0; for (const j of HF.nbs(g, c.i)) { const x = g.cells[j]; if (x.u && x.u.owner === u.owner && (x.u.type === 'INF' || x.u.type === 'ENG')) n++; }
         d += Math.min(K.testudoMax, n);
@@ -1201,10 +1382,13 @@
       const u = c.u, f = g.f[u.owner], D = HF.UNITS[u.type];
       if (u.type === 'INF' || u.type === 'ENG') {
         const elite = u.tier >= HF.CFG.doctrine.pretorianTier;
-        const n = elite ? HF.CFG.doctrine.pretorianDef : u.tier;
+        const single = u.type === 'ENG' && HF.CFG.engineer;
+        const n = single ? HF.CFG.engineer.defense : (elite ? HF.CFG.doctrine.pretorianDef : u.tier);
         parts.push({ label: (u.type === 'ENG' ? 'Ing' : 'Inf') + ' N' + u.tier + (elite ? ' pretoriana' : ''), value: n }); base = n;
-        if (c.t === T.COLINA) { parts.push({ label: 'colina', value: HF.CFG.combat.hillDef }); base += HF.CFG.combat.hillDef; }
-        if (c.t === T.MONTANA) { parts.push({ label: 'montaña', value: HF.CFG.combat.mountainDef }); base += HF.CFG.combat.mountainDef; }
+        const ter = c.br ? 0 : 1;
+        if (c.t === T.COLINA && ter) { parts.push({ label: 'colina', value: HF.CFG.combat.hillDef }); base += HF.CFG.combat.hillDef; }
+        if (c.t === T.MONTANA && ter) { parts.push({ label: 'montaña', value: HF.CFG.combat.mountainDef }); base += HF.CFG.combat.mountainDef; }
+        if (c.br) parts.push({ label: 'puente', value: 0 });
         if (has(f, 'TESTUDO_SHIELD')) {
           let n2 = 0;
           for (const j of HF.nbs(g, c.i)) { const x = g.cells[j]; if (x.u && x.u.owner === u.owner && (x.u.type === 'INF' || x.u.type === 'ENG')) n2++; }
@@ -1249,7 +1433,8 @@
   function attackOf(g, u, charge, target, from) {
     const f = g.f[u.owner];
     let a;
-    if (u.type === 'INF' || u.type === 'ENG') a = u.tier >= HF.CFG.doctrine.pretorianTier ? HF.CFG.doctrine.pretorianAtk : u.tier;
+    if (u.type === 'ENG') a = HF.CFG.engineer ? HF.CFG.engineer.attack : 0;
+    else if (u.type === 'INF') a = u.tier >= HF.CFG.doctrine.pretorianTier ? HF.CFG.doctrine.pretorianAtk : u.tier;
     else {
       a = HF.UNITS[u.type].atk + u.tier - 1;
       if (u.type === 'CAB') {
@@ -1270,9 +1455,14 @@
     if (u.type === 'BAR') return D.move + (seasonOf(g) === 1 ? HF.CFG.seasons.summerShipMove : 0);
     if (u.retreat > 0) return 1;   // B2.1.1 · PARTHIAN_RETREAT: solo un paso de retirada
     // INF, ENG y ARC comparten la movilidad base de su ficha (config.units).
-    // Línea Pesada ya no aplasta la infantería a una sola casilla.
+    // Línea Pesada ya no aplasta a la infantería a una sola casilla.
     let move = D.move;
-    if (u.type === 'ENG' && has(f, 'SCOUT_NETWORK')) move = D.move + 1;
+    if (u.type === 'ENG') {
+      // El Ingeniero avanza 1 casilla SIEMPRE (ni la red vial ni el nudo
+      // logístico del asentamiento lo aceleran): es lento y vulnerable.
+      if (has(f, 'SCOUT_NETWORK')) move = (HF.CFG.engineer || D).move + 1;
+      return move;
+    }
     // Cualquier asentamiento es un nudo logístico: garantiza al menos 3 de
     // alcance al partir de él.
     if (cell && cell.b >= B.CAMPAMENTO) move = Math.max(3, move);
@@ -1292,7 +1482,10 @@
     const tag = k => !!(f && has(f, k));
     const elite = t >= HF.CFG.doctrine.pretorianTier;
     let atk, def;
-    if (type === 'INF' || type === 'ENG') {
+    if (type === 'ENG') {
+      atk = HF.CFG.engineer ? HF.CFG.engineer.attack : 0;
+      def = HF.CFG.engineer ? HF.CFG.engineer.defense : 1;
+    } else if (type === 'INF') {
       atk = elite ? HF.CFG.doctrine.pretorianAtk : t;
       def = elite ? HF.CFG.doctrine.pretorianDef : t;
     } else {
@@ -1301,8 +1494,10 @@
       if (type === 'CAB' && tag('KNIGHTLY_ORDER')) def = D.defKnight + t - 1;
     }
     let move = D.move;
+    if (type === 'ENG' && HF.CFG.engineer) move = HF.CFG.engineer.move;
     if (type === 'ENG' && tag('SCOUT_NETWORK')) move += 1;
-    let range = D.atkRange || 1;
+    let range = D.atkRange == null ? 1 : D.atkRange;
+    if (type === 'ENG' && HF.CFG.engineer) range = 0;
     if (type === 'CAB' && tag('TACTIC_MOBILE_WAR')) range = D.atkRangeMobile || range;
     return { atk, def, move, atkRange: range, shoot: D.shoot || 0, shootHill: D.shootHill || 0, elite, naval: !!D.naval };
   };
@@ -1330,6 +1525,7 @@
     for (const y of gr.nb[ci]) {
       const n = g.cells[y];
       if (isWater(n) || !canStep(cu, n, f)) continue;
+      if (caravanAt(g, y)) continue;            // el convoy ocupa el hexágono
       if (n.o === u.owner) {
         if (n.u) continue;
         out.set(y, { k: n.b === B.ARBOL ? 'chop' : 'move', ship: true });
@@ -1364,7 +1560,7 @@
     const fixed = u.type === 'ARC' || u.type === 'SIE';
     const sources = (fixed ? [c.i] : (srces && srces.length ? srces : [c.i])).filter(i => g.cells[i]);
     for (const car of g.caravans) {
-      if (car.owner === u.owner) continue;
+      if (car.dead || car.owner === u.owner) continue;
       const seaTrade = car.kind !== 'land';
       const cid = car.path[car.pos];
       const t = cid != null ? g.cells[cid] : null;
@@ -1374,27 +1570,26 @@
       let from = null, best = 0;
       for (const s of sources) {
         const sc = g.cells[s], r = tradeStrikeRange(g, u, sc);
-        // Permitir que infantería ataque caravanas marítimas si está en costa adyacente
-        // (r=1 desde casilla costera adyacente al mar)
+        // Un barco no sube a una calzada.
+        if (naval && !seaTrade) continue;
+        // La infantería sólo alcanza las urcas que navegan junto a la costa.
         if (seaTrade && !naval && r <= 1) {
-          // Verificar si la fuente está en costa (adyacente a mar)
           const isCoastal = HF.nbs(g, s).some(j => {
             const n = g.cells[j];
             return n && isWater(n);
           });
           if (!isCoastal) continue;
         }
-        if (naval && !seaTrade) continue;             // un barco no sube a una calzada
         if (HF.hexDist(sc, t) > r) continue;
         if (r > best) { best = r; from = s; }
       }
       if (from == null) continue;
       const loot = car.kind === 'cargo' ? ((car.cargo && car.cargo.qty) || 0) : (car.gold || 0);
-      const opt = { k: 'raid', from, loot, res: car.cargo ? car.cargo.res : 'gold' };
+      const opt = { k: 'raid', from, loot, res: car.cargo ? car.cargo.res : 'gold', target: car.owner };
       const prev = out.get(cid);
       if (!prev) out.set(cid, opt);
       else if (prev.k === 'raid') { if (loot > (prev.loot || 0)) out.set(cid, opt); }
-      else if (!(prev.alt || []).some(a => a.k === 'raid')) (prev.alt = prev.alt || []).push(opt);
+      else putAlt(out, cid, opt);
     }
   }
 
@@ -1413,6 +1608,8 @@
           const n = g.cells[y];
           if (dist.has(y) || !isWater(n)) continue;
           if (winter && n.t === T.RIO) continue;   // río helado: los barcos no navegan
+          // Ningún convoy se atraviesa: ni enemigo, ni neutral ni propio.
+          if (caravanAt(g, y)) continue;
           if (n.u) {
             if (n.u.owner === u.owner && n.u.type === 'BAR' && !n.u.cargo && !u.cargo && HF.CFG.fuseTypes.includes('BAR') && n.u.tier + u.tier <= (has(g.f[u.owner], 'ASCETIC_COMMUNE') ? HF.CFG.fuseMaxAscetic : HF.CFG.fuseMax)) out.set(y, { k: 'fuse' });
             continue;
@@ -1431,8 +1628,9 @@
         const t = g.cells[d.i];
         if (t.i !== ci && HF.hexDist(c, t) <= HF.UNITS.BAR.shoot && t.u && t.u.owner !== u.owner && t.u.type !== 'BAR') out.set(t.i, { k: 'shoot' });
       }
-      // Urca enemiga a tiro de abordaje: el barco de guerra puede saquearla.
-      const sources = [ci].concat(reach ? [...reach.keys()].filter(k => k !== ci && !g.cells[k].u) : []);
+      // Urca enemiga o neutral: el barco de guerra la aborda desde su casilla o
+      // desde cualquier agua alcanzable.
+      const sources = [ci].concat(reach ? [...reach.keys()].filter(k => k !== ci && !g.cells[k].u && !caravanAt(g, k)) : []);
       tradeRaidOptions(g, c, u, out, sources);
     }
   }
@@ -1445,7 +1643,7 @@
     if (u.mv > 0 && HF.CFG.shipCarry) {
       for (const y of grid(g).nb[ci]) {
         const n = g.cells[y];
-        if (isWater(n) && n.u && n.u.owner === u.owner && n.u.type === 'BAR' && !n.u.cargo) out.set(y, { k: 'board' });
+        if (isWater(n) && n.u && n.u.owner === u.owner && n.u.type === 'BAR' && !n.u.cargo && !caravanAt(g, y)) out.set(y, { k: 'board' });
       }
     }
     const f = g.f[u.owner], gr = grid(g);
@@ -1469,7 +1667,11 @@
           if (!canStep(u, n, f)) continue;
           // CIV_TYPE_THALASSOCRACY: también se navega por agua neutral a 1 paso
           const sea = thal && isWater(n) && (n.o === u.owner || n.o === -1);
-          if (u.type === 'SIE' && n.t === T.RIO && !isRoad(n)) continue;
+          if (u.type === 'SIE' && n.t === T.RIO && !isRoad(n) && !n.br) continue;
+          // Misión de ingeniero: puede pisar ríos y montañas NEUTRALES para
+          // tender un puente, sin conquistarlas (el terreno muta, no el dueño).
+          const engMission = u.type === 'ENG' && n.o === -1 && !n.u &&
+            (n.t === T.RIO || n.t === T.MONTANA) && !n.br;
           // La "autopista" solo existe dentro de la red: el paso cuesta 1/4
           // cuando se va de una construcción (camino, campamento, pueblo,
           // bastión o ciudad) a otra. Desde campo abierto se paga un paso
@@ -1480,7 +1682,7 @@
           if (nd > budget) continue;
           // El Ingeniero opera en río y montaña sin quedar atascado; el resto
           // ni siquiera puede entrar sin camino.
-          const slow = u.type !== 'ENG' && (((n.t === T.RIO && !sea) || n.t === T.MONTANA) && !isRoad(n)) ||
+          const slow = u.type !== 'ENG' && (((n.t === T.RIO && !sea) || n.t === T.MONTANA) && !isRoad(n) && !n.br) ||
             (u.type === 'CAB' && n.t === T.COLINA && !isRoad(n) && !has(f, 'CIV_TYPE_NOMAD') && !has(f, 'TACTIC_MOBILE_WAR'));
           if (n.u && n.u.owner === u.owner) {
             // Tropa aliada: no es un muro y tampoco debe bloquear aunque esté
@@ -1501,7 +1703,9 @@
           }
           // Un enemigo sigue bloqueando por completo.
           if (n.u) continue;
-          if (!sea && n.o !== u.owner) continue;
+          // Los convoyes ocupan su hexágono: no se atraviesan, se asaltan.
+          if (caravanAt(g, y)) continue;
+          if (!sea && n.o !== u.owner && !engMission) continue;
           const old = dist.get(y);
           if (old !== undefined && old <= nd) continue;
           dist.set(y, nd);
@@ -1527,12 +1731,15 @@
         if (d >= rng) continue;
         gr.nb[x].forEach(y => {
           const n = g.cells[y];
+          // Un convoy ocupa el hexágono: no se conquista ni se atraviesa, solo
+          // se saquea (la opción de asalto la añade tradeRaidOptions).
+          if (caravanAt(g, y)) return;
           // Una casilla con un aliado queda fuera del asalto: no se le puede
           // atacar ni sirve de escalón (la unidad acabaría encima de él).
           if (n.u && n.u.owner === u.owner) return;
           if ((n.o === u.owner && !(n.u && n.u.owner !== u.owner)) || !canStep(u, n, f)) return;
           if (n.burn > 0 && n.o !== u.owner) return;      // A3.3.2 · SCORCHED_EARTH: cenizas no capturables
-          if (u.type === 'SIE' && n.t === T.RIO && !isRoad(n)) return;
+          if (u.type === 'SIE' && n.t === T.RIO && !isRoad(n) && !n.br) return;
           const dirY = dirBetween(g, x, y);
           const st = d === 0 ? true : (straight && dirY === dir);
           const lvl = d + 1;
@@ -1563,6 +1770,7 @@
     // desde la costa y el barco de guerra aborda las que navegan a su lado.
     tradeRaidOptions(g, c, u, out, launch);
     doctrineOptions(g, ci, c, u, f, out);
+    engineerOptions(g, ci, c, u, f, out);
     return out;
   };
 
@@ -1636,6 +1844,32 @@
     // B3.3.3 · LAST_STAND_FORT: marcar los asaltos que la guarnición absorberá
     for (const [i, o] of out) if (o.k === 'atk' && o.ok && needsLastStand(g, u, i)) o.lastStand = true;
   }
+  // ---------- ingeniero y puentes ----------
+  // El puente es una mutación del TERRENO (c.br), no un edificio: sobrevive al
+  // cambio de dueño, la ve todo el mundo y cualquiera puede cruzarlo o
+  // destruirlo. Se construye con el ingeniero encima de un río o montaña sin
+  // edificio; la demolición la ejecutan ingenieros (encima) o asedio (a rango).
+  function engineerOptions(g, ci, c, u, f, out) {
+    const E = HF.CFG.engineer;
+    if (!E || !E.bridge) return;
+    if (u.type === 'ENG' && u.at > 0) {
+      if (c.br) {
+        if (E.bridge.demolish.indexOf('ENG') >= 0) putAlt(out, ci, { k: 'unbridge', from: ci });
+      } else if (!c.b && E.bridge.terrains.indexOf(c.t) >= 0 && (c.o === u.owner || c.o === -1)) {
+        const prov = HF.provOf(g, f, c);
+        putAlt(out, ci, { k: 'bridge', prov, cost: E.bridge.cost });
+      }
+    }
+    if (u.type === 'SIE' && u.at > 0 && E.bridge.demolish.indexOf('SIE') >= 0) {
+      const sr = c.t === T.COLINA ? HF.UNITS.SIE.shootHill : HF.UNITS.SIE.shoot;
+      for (const d of grid(g).list) {
+        const t = g.cells[d.i];
+        if (!t || !t.br || t.i === ci) continue;
+        if (HF.hexDist(c, t) > sr) continue;
+        putAlt(out, t.i, { k: 'unbridge', from: ci });
+      }
+    }
+  }
   function dirBetween(g, a, b) { return grid(g).nb[a].indexOf(b); }
 
   function snap(g) {
@@ -1695,6 +1929,10 @@
       const r = HF.raidCaravan(g, from, to, opt.from);
       if (r.ok) { HF.updateFog(g); HF.checkEnd(g); }
       return r;
+    }
+    // Defensa en profundidad: el hexágono de un convoy no se ocupa nunca.
+    if ((opt.k === 'move' || opt.k === 'atk' || opt.k === 'chop') && caravanAt(g, to)) {
+      return { ok: false, msg: 'Un convoy ocupa esa casilla: asáltalo para despejarla' };
     }
     const t = g.cells[to], f = g.f[u.owner], D = HF.CFG.doctrine;
     const human = f.human;
@@ -1885,6 +2123,39 @@
       f.wonderCell = t.i; f.wonderTurns = 0;
       u.at = 0; u.mv = 0;
       if (human) ev(g, to, 'Pirámide erigida: resiste ' + D.wonderStandTurns + ' turnos', 'good');
+    } else if (opt.k === 'bridge') {
+      // El ingeniero tiende un puente sobre el río/montaña que pisa. Mutación
+      // permanente del terreno: no cambia el dueño de la casilla.
+      if (!HF.CFG.engineer || u.type !== 'ENG') return { ok: false, msg: 'Solo un ingeniero puede construir puentes' };
+      if (t.u !== u) return { ok: false, msg: 'El ingeniero debe estar sobre la casilla' };
+      if (t.br) return { ok: false, msg: 'Ya hay un puente en esta casilla' };
+      if (t.b) return { ok: false, msg: 'La casilla ya tiene una construcción' };
+      if ((HF.CFG.engineer.bridge.terrains || []).indexOf(t.t) < 0) return { ok: false, msg: 'Solo se puede construir sobre río o montaña' };
+      if (t.o !== u.owner && t.o !== -1) return { ok: false, msg: 'No puedes construir en territorio enemigo' };
+      if (HF.CFG.engineer.singleTier) t.u.tier = 1;
+      if (!costOk(stockOf(f, opt.prov), opt.cost)) return { ok: false, msg: 'Recursos insuficientes en la provincia' };
+      if (human) snap(g); else noUndo(g);
+      pay(f, opt.prov, opt.cost);
+      t.br = 1; t.brOwner = u.owner; t.brTurn = g.turn;
+      u.mv = 0; u.at = 0; g._trade = null;
+      if (human) ev(g, to, 'Puente construido: río/montaña transitable para todos', 'good');
+    } else if (opt.k === 'unbridge') {
+      // Demolición: un ingeniero encima o una catapulta a distancia. El puente
+      // vuelve a ser río/montaña intransitable para las tropas normales.
+      if (!t.br) return { ok: false, msg: 'No hay puente que destruir' };
+      if (u.type === 'ENG') {
+        if (from !== to) return { ok: false, msg: 'El ingeniero debe estar sobre el puente' };
+      } else if (u.type === 'SIE') {
+        const sr = c.t === T.COLINA ? HF.UNITS.SIE.shootHill : HF.UNITS.SIE.shoot;
+        if (HF.hexDist(c, t) > sr) return { ok: false, msg: 'El puente está fuera de alcance' };
+      } else {
+        return { ok: false, msg: 'Esta unidad no puede destruir puentes' };
+      }
+      if (human) snap(g); else noUndo(g);
+      t.br = 0; delete t.brOwner; delete t.brTurn;
+      u.at = 0; if (u.type === 'ENG') u.mv = 0;
+      g._trade = null;
+      if (human) ev(g, to, 'Puente destruido: el paso vuelve a estar cortado', 'good');
     }
     if (opt.k === 'shoot' && t.u) { t.deg = Math.max(t.deg, 1); }
     HF.updateFog(g);
@@ -1989,16 +2260,22 @@
     return c;
   };
   const clampTier = t => Math.max(1, Math.min(3, t | 0 || 1));
+  // El Ingeniero es nivel único: cualquier petición de tier superior se
+  // resuelve como N1 (no existe N2/N3).
+  const unitTier = (type, tier) => (type === 'ENG' && HF.CFG.engineer && HF.CFG.engineer.singleTier)
+    ? 1 : clampTier(tier);
   // coste × rango para el reclutamiento directo de T2/T3
   HF.recruitCost = (g, f, type, tier) => {
-    const c = HF.unitCost(g, f, type), n = clampTier(tier);
+    const c = HF.unitCost(g, f, type), n = unitTier(type, tier);
     for (const k in c) c[k] *= n;
     return c;
   };
   // casillas donde se puede reclutar y, para cada una, las provincias que podrían pagarlo
   function recruitScan(g, type, tier) {
-    const f = g.f[g.cur], out = new Map(), def = HF.UNITS[type], t = clampTier(tier);
-    if (!def || (t > 2 && has(f, 'ASCETIC_COMMUNE'))) return out;
+    const f = g.f[g.cur], out = new Map(), def = HF.UNITS[type];
+    if (!def) return out;
+    const t = unitTier(type, tier);
+    if (t > 2 && has(f, 'ASCETIC_COMMUNE')) return out;
     const gr = grid(g), srcs = g.cells.filter(c => c && c.o === f.id && c.sup && def.from.indexOf(c.b) >= 0);
     if (!srcs.length) return out;
     const cost = HF.recruitCost(g, f, type, t);
@@ -2026,7 +2303,7 @@
   HF.recruitCells = (g, type, tier) => Array.from(recruitScan(g, type, tier).keys());
   HF.recruitScan = recruitScan;
   function recruitRaw(g, type, ci, comp, tier) {
-    const f = g.f[g.cur], t = clampTier(tier);
+    const f = g.f[g.cur], t = unitTier(type, tier);
     if (g.over) return { ok: false, msg: 'Partida terminada' };
     if (t > 2 && has(f, 'ASCETIC_COMMUNE')) return { ok: false, msg: 'El dogma ascético prohíbe el Tier 3' };
     const comps = recruitScan(g, type, t).get(ci);
@@ -2035,7 +2312,11 @@
     if (f.human) snap(g);
     pay(f, comp != null ? comp : comps[0], cost);
     const c = g.cells[ci];
-    c.u = { type, tier: t, owner: f.id, mv: 1, at: 1 }; c.tomb = 0;
+    c.u = { type, tier: t, owner: f.id, mv: 1, at: 1 };
+    // El Ingeniero carga suministros al nacer: N turnos de autonomía si queda
+    // incomunicado. Se guarda en la propia unidad para que viaje en el save.
+    if (type === 'ENG' && HF.CFG.engineer) c.u.supply = HF.CFG.engineer.supplyTurns;
+    c.tomb = 0;
     // reclutar en casilla neutral la ocupa y consume el movimiento
     if (!HF.UNITS[type].naval && c.o !== f.id) { c.o = f.id; c.cap = 0; c.u.mv = 0; g._trade = null; HF.supply(g); }
     if (f.human) g.stat.recruited++;
@@ -2528,12 +2809,13 @@
       if (!c) return null;
       const d = { i: c.i, q: c.q, r: c.r };
       for (const k of ['t', 'res', 'b', 'o', 'cap', 'tomb', 'deg', 'sup', 'conq',
-        'burn', 'fire', 'wonder', 'wonderAt', 'lastStand', 'lastStandTurn', 'builtTurn', 'firedTurn', 'noCamp', 'iso', 'autoCampTurn', 'city']) if (c[k]) d[k] = c[k];
+        'burn', 'fire', 'wonder', 'wonderAt', 'lastStand', 'lastStandTurn', 'builtTurn', 'firedTurn', 'noCamp', 'iso', 'autoCampTurn', 'city', 'br', 'brOwner', 'brTurn']) if (c[k]) d[k] = c[k];
       // El dueño 0 es un valor válido: se guarda aparte de la lista anterior.
       if (c.tombOwner != null) d.tombOwner = c.tombOwner;
       if (c.tombUnit) d.tombUnit = c.tombUnit;
       if (c.comp !== undefined) d.comp = c.comp;
       if (c.degBy != null) d.degBy = c.degBy;         // el dueño 0 es un valor válido
+      if (c.brOwner != null) d.brOwner = c.brOwner;   // el dueño 0 es válido
       if (c.trap != null) d.trap = c.trap;           // el dueño 0 es un valor válido
       if (c.trapTurn != null) d.trapTurn = c.trapTurn;
       // DIPLOMACIA: guardar borderControl y tradeRoutes
@@ -2591,6 +2873,10 @@
     g.cells = o.cells.map(c => c && Object.assign(HF.newCell(c), c));
     // Partidas guardadas antes de los nombres de ciudad: se bautizan ahora.
     for (const c of g.cells) if (c && (c.b === B.PUEBLO || c.b === B.CIUDAD) && !c.city) c.city = HF.pickCityName(g);
+    // Ingenieros de guardados antiguos: reciben su carga de suministros.
+    for (const c of g.cells) if (c && c.u && c.u.type === 'ENG' && c.u.supply == null && HF.CFG.engineer) {
+      c.u.supply = HF.CFG.engineer.supplyTurns;
+    }
     for (const c of g.cells) if (c && c.u && c.u.pa !== undefined) { c.u.mv = c.u.at = c.u.pa; delete c.u.pa; }
     g.fogMap = o.fogMap ? Int8Array.from(o.fogMap) : null;
     g._customCells = o._customCells || null;

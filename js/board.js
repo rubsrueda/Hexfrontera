@@ -327,6 +327,17 @@
     for (let k = 0; k < 6; k++) { const a = Math.PI / 180 * (60 * k - 30); const px = x + s * Math.cos(a), py = y + sy * Math.sin(a); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
     ctx.closePath();
   }
+  // Media anchura interior del hexágono (pointy-top, aplastado por TILT) a una
+  // altura dy respecto a su centro. En la banda central el lado es vertical;
+  // hacia los vértices norte/sur el borde cierra en chaflán.
+  function hexHalfWidthAt(dy, fs) {
+    const hh = fs * TILT;          // vértice sur
+    const flat = hh * .5;          // fin de la banda de ancho completo
+    const ady = Math.abs(dy);
+    if (ady >= hh) return 0;
+    if (ady <= flat) return fs * S3 / 2;
+    return fs * S3 / 2 * (hh - ady) / (hh - flat);
+  }
 
   P._nbs = function (c) {
     if (!this.game || !c) return [];
@@ -561,6 +572,41 @@
     ctx.textAlign = 'center';
     return { cx: x, cy, R, bx, by, bw, bh, font: lab, level: tl, def: dl };
   };
+  // Nivel de la unidad en la vista normal: cifra pequeña y DENTRO de su propia
+  // casilla. Antes se pintaba en (x + 0.55·fs, y + 0.55·fs), prácticamente
+  // sobre el vértice sur del hexágono, así que la casilla contigua —con
+  // edificio o unidad, dibujada después por estar más al sur— la tapaba. Ahora
+  // la fuente se reduce (tope de 11 px) y el ancla se recorta al interior del
+  // hexágono con margen; draw() la pinta en la pasada final, por encima del
+  // resto del tablero.
+  P.drawUnitLevel = function (ctx, u, x, y, fs) {
+    if (!u || !(u.tier > 1)) return null;
+    const lab = String(u.tier);
+    // Sin mínimo absoluto grande: a zoom lejano la cifra se oculta en vez de
+    // desbordar una casilla que ya es más pequeña que el propio glifo.
+    const font = Math.min(fs * .32, 11);
+    if (font < 7) return null;
+    ctx.save();
+    ctx.font = '700 ' + font + 'px "Plus Jakarta Sans", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const hw = ctx.measureText(lab).width / 2, hh = font / 2;
+    const margin = Math.max(1.5, fs * .05);
+    const dy = fs * .28;
+    const ty = y + dy;
+    // El glifo es más estrecho en su base: ahí se calcula el límite derecho.
+    const edge = hexHalfWidthAt(dy + hh, fs);
+    const tx = Math.min(x + fs * .44, x + edge - margin - hw);
+    // Halo oscuro: la cifra se lee tanto sobre el arte de la unidad como sobre
+    // el suelo, sin una placa que tape el diorama.
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(2, font * .55);
+    ctx.strokeStyle = 'rgba(8,14,28,.92)';
+    ctx.strokeText(lab, tx, ty);
+    ctx.fillStyle = '#ffd34d';
+    ctx.fillText(lab, tx, ty);
+    ctx.restore();
+    return { x: tx, y: ty, font, w: hw * 2, h: font, margin };
+  };
   P._drawHop = function (ctx, now, fs) {
     const h = this.hop; if (!h) return;
     const t = Math.min(1, (now - h.t0) / h.dur);
@@ -591,27 +637,50 @@
   P._drawCaravans = function (ctx, fs) {
     const g = this.game;
     if (!g || !g.caravans || !g.caravans.length) return;
+    const me = (g && g.mySeat) || 0;
     for (const car of g.caravans) {
+      if (car.dead) continue;
       const c = g.cells[car.path[car.pos]];
       if (!c) continue;
-      // Las caravanas enemigas solo se ven en casillas visibles.
-      if (car.owner !== ((this.game && this.game.mySeat) || 0) && HF.visible && !HF.visible(g, c.i)) continue;
+      // Convoyes propios: siempre. Rivales: solo en casillas visibles.
+      // Neutrales: en cualquier terreno ya explorado, para que el jugador
+      // descubra las rutas comerciales que puede saquear.
+      if (car.owner !== me) {
+        const explored = g.fog === 'NONE' || (g.fogMap && g.fogMap[c.i] >= 1);
+        const visible = HF.visible ? HF.visible(g, c.i) : true;
+        if (car.owner === -1 ? !explored : !visible) continue;
+      }
       const [x, y0] = this.toScreen(...this.pos(c));
       const y = y0 - this._lift(c);
-      const s = fs * 1.2;
+      const s = fs * 1.35;
       const art = car.kind === 'land' ? 'cart' : 'ship';
+      // Un convoy en terreno explorado pero fuera de la visión actual se pinta
+      // atenuado (es información antigua, no una unidad observada ahora).
+      ctx.save();
+      if (HF.visible && !HF.visible(g, c.i)) ctx.globalAlpha = .55;
+      // Anillo de bando: el mercado neutral va en ámbar; cada facción con su
+      // color. Hace obvious que el convoy es una pieza física del tablero.
+      const ring = car.owner === -1 ? '#fbbf24' : ((this.colors && this.colors[car.owner]) || '#fbbf24');
+      ctx.save();
+      ctx.strokeStyle = ring; ctx.lineWidth = Math.max(1.5, fs * .05);
+      ctx.globalAlpha = Math.min(ctx.globalAlpha, .85);
+      ctx.beginPath(); ctx.ellipse(x, y + fs * .1, fs * .62, fs * .42, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
       if (this.viewMode === 'nato') this.drawTradeCounter(ctx, car, x, y - fs * .14, fs);
-      else if (!HF.art.draw(ctx, 'trade', art, x, y - fs * .14, s, s)) continue;
+      else if (!HF.art.draw(ctx, 'trade', art, x, y - fs * .14, s, s)) { ctx.restore(); continue; }
       const badge = car.kind === 'cargo'
         ? (({ gold: '💰', food: '🌾', wood: '🪵' }[car.cargo.res] || '📦') + car.cargo.qty)
-        : (car.gold > 0 ? '💰' + car.gold : '');
+        : ('💰' + Math.max(0, car.gold | 0));
       if (badge) {
         ctx.font = '700 ' + Math.max(9, fs * .42) + 'px "Plus Jakarta Sans", sans-serif';
         const w = ctx.measureText(badge).width;
         ctx.fillStyle = 'rgba(8,14,28,.82)';
-        this._roundRect(ctx, x - w / 2 - 4, y - fs * .8, w + 8, fs * .42, 6); ctx.fill();
-        ctx.fillStyle = '#ffd34d'; ctx.fillText(badge, x, y - fs * .59);
+        this._roundRect(ctx, x - w / 2 - 4, y - fs * .82, w + 8, fs * .42, 6); ctx.fill();
+        ctx.strokeStyle = car.owner === -1 ? 'rgba(251,191,36,.75)' : 'rgba(244,239,234,.28)';
+        ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = '#ffd34d'; ctx.fillText(badge, x, y - fs * .61);
       }
+      ctx.restore();
     }
   };
   // ---------- Simbología militar (APP-6 / MIL-STD-2525) ----------
@@ -636,7 +705,7 @@
     return false;
   };
   P._natoTerrain = function (c, u) {
-    return (u.type === 'INF' || u.type === 'ENG') && (c.t === T.COLINA || c.t === T.MONTANA);
+    return !c.br && (u.type === 'INF' || u.type === 'ENG') && (c.t === T.COLINA || c.t === T.MONTANA);
   };
   P.drawNatoCounter = function (ctx, c, u, x, y, fs) {
     const g = this.game;
@@ -740,7 +809,7 @@
     if (c.u) return null;                       // con guarnición ya lo dice su ficha
     const g = this.game;
     const def = g && HF.defenseAt ? HF.defenseAt(g, c.i) : 0;
-    const ter = c.t === T.COLINA ? 1 : c.t === T.MONTANA ? 2 : 0;
+    const ter = c.br ? 0 : c.t === T.COLINA ? 1 : c.t === T.MONTANA ? 2 : 0;
     if (!def && !ter) return null;
     const parts = [];
     if (def) parts.push({ t: '🛡' + def, c: c.deg > 0 ? '#f87171' : (this._natoAura(g, c) ? '#38bdf8' : '#f4efea') });
@@ -790,7 +859,7 @@
     // OTAN: justo encima del marco de la ficha (no la tapa). Resto de vistas:
     // sobre el cuerpo de la unidad, nunca por debajo de su dibujo.
     const cx = x;
-    const cy = nato ? y - fs * .42 : y - fs * .06;
+    const cy = nato ? y - fs * .42 : y - fs * .08;
     // Punto pequeño: no debe competir con el arte ni con la ficha OTAN.
     const r = Math.max(2.0, fs * (nato ? .075 : .095));
     ctx.save();
@@ -974,7 +1043,7 @@
     const tactical = combat || nato;
     const editor = this.mode === 'paint' || !!this.mapEditor;
     const fogPat = fog ? HF.art.fogPattern(ctx, this.cam, this.W, this.H, .6, TILT) : null;
-    const items = [], walls = [], combatLabels = [], unitStatus = [];
+    const items = [], walls = [], combatLabels = [], unitStatus = [], unitLevels = [];
     // Se pintan las casillas de norte a sur (y = 1.5*size*r). Una casilla
     // elevada (tierra) invade la de arriba, asi que debe dibujarse despues:
     // de lo contrario el agua del norte tapaba el borde realzado del llano.
@@ -1191,8 +1260,6 @@
     for (const it of items) _itemsArr.push(it);
     // Fronteras diplomáticas: sobre el terreno, bajo caravanas y unidades.
     drawNAP();
-    // Las caravanas van sobre el suelo pero por debajo de las unidades.
-    this._drawCaravans(ctx, fs);
     // Orden por profundidad: las casillas del sur se dibujan después, así una
     // unidad alta tapa correctamente a la de detrás y no al revés.
     _itemsArr.sort((a, b) => (a[2] - b[2]) || (a[0].i - b[0].i));
@@ -1216,6 +1283,16 @@
         const rk = RES_ART_KEY[c.res];
         if (rk) HF.art.drawStretched(ctx, 'resource', rk, x, y - fs * .08, fs * RES_BOX, fs * RES_BOX, SPRITE_STRETCH);
       }
+      // Puente: mutación permanente del terreno. Es suelo, no edificio: se
+      // pinta bajo recursos, construcciones y tropas, y tapa río/montaña.
+      if (!editor && c.br) {
+        const bw = fs * 2.2, bh = fs * 1.2;
+        if (!HF.art.draw(ctx, 'misc', 'bridge', x, y, bw, bh)) {
+          ctx.font = fs * .7 + 'px sans-serif';
+          ctx.fillText('🌉', x, y);
+          ctx.font = em + 'px sans-serif';
+        }
+      }
       if (c.b) {
         const treeDim = (politic || tactical) && c.b === B.ARBOL;
         if (treeDim) ctx.globalAlpha = politic ? .2 : .4;
@@ -1229,6 +1306,25 @@
         }
         if (treeDim) ctx.globalAlpha = 1;
         if (c.cap) { ctx.font = fs * .5 + 'px sans-serif'; ctx.fillText('⭐', x + fs * .55, y - fs * .55); ctx.font = em + 'px sans-serif'; }
+        // Nombre del asentamiento: placa legible sobre el mapa, como en los
+        // referentes modernos. Solo pueblos y ciudades, y solo con zoom útil.
+        if (c.city && (c.b === B.PUEBLO || c.b === B.CIUDAD) && !tactical && fs > 9) {
+          ctx.save();
+          ctx.font = '700 ' + Math.max(8, Math.round(fs * .28)) + 'px "Plus Jakarta Sans", sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          const label = c.city;
+          const tw = ctx.measureText(label).width;
+          const bh = Math.max(11, fs * .34);
+          const by = y + fs * .46;
+          ctx.fillStyle = 'rgba(8,14,28,.78)';
+          this._roundRect(ctx, x - tw / 2 - 5, by - bh / 2, tw + 10, bh, bh * .35); ctx.fill();
+          ctx.strokeStyle = c.o === -1 ? 'rgba(251,191,36,.55)' : 'rgba(244,239,234,.22)';
+          ctx.lineWidth = 1; ctx.stroke();
+          ctx.fillStyle = c.o === -1 ? '#fde68a' : '#f4efea';
+          ctx.fillText(label, x, by);
+          ctx.restore();
+          ctx.font = em + 'px sans-serif';
+        }
       }
       if (c.tomb) {
         ctx.globalAlpha = .6 + .1 * c.tomb;
@@ -1260,9 +1356,12 @@
               ctx.fillRect(x - fs * .95, y + fs * .56, tw2 + 5, fs * .44);
               ctx.fillStyle = '#ffd34d'; ctx.fillText(tl, x - fs * .95 + (tw2 + 5) / 2, y + fs * .78);
               ctx.font = em + 'px sans-serif';
-            } else if (u.tier > 1) {
-              ctx.font = '700 ' + fs * .5 + 'px "Plus Jakarta Sans", sans-serif'; ctx.fillStyle = VOID; ctx.fillText(u.tier, x + fs * .55, y + fs * .55); ctx.fillStyle = '#ffd34d'; ctx.fillText(u.tier, x + fs * .53, y + fs * .53);
-              ctx.font = em + 'px sans-serif';
+            } else if (u.tier > 1 && !resource) {
+              // Se acumula para pintarlo en la pasada final, dentro de su
+              // casilla y por encima de las unidades vecinas del sur. En la
+              // vista de recursos se omite: las unidades van atenuadas y una
+              // cifra a plena opacidad rompería el foco del suelo.
+              unitLevels.push({ u, x, y });
             }
             if (u.cargo) {
               const kx = x + fs * .5, ky = y - fs * .5;
@@ -1293,6 +1392,10 @@
         if (fogPat) { ctx.globalAlpha = .5; ctx.fillStyle = fogPat; ctx.fill(); ctx.globalAlpha = 1; }
       }
     }
+    // Los convoyes se pintan al final del paso de casillas: por ENCIMA del
+    // recurso, del edificio y del nombre del pueblo. Una carreta sobre un
+    // trigal debe verse, no quedar enterrada bajo el arte del recurso.
+    this._drawCaravans(ctx, fs);
     if (this.hop) this._drawHop(ctx, now, fs);
     if (view === 'normal' && !editor) {
     this._drawClouds(ctx, now);
@@ -1337,6 +1440,10 @@
     // anillo, de la niebla de borde y de los resaltados. Así ninguna unidad
     // apilada delante las tapa.
     for (const L of combatLabels) this.drawCombatLabels(ctx, L.c, L.u, L.x, L.y, fs);
+    // Nivel de las unidades (vista normal): pasada final, dentro de su propia
+    // casilla. Al pintarse después de todas las casillas, ni el edificio ni la
+    // unidad del hexágono contiguo pueden taparlo.
+    for (const L of unitLevels) this.drawUnitLevel(ctx, L.u, L.x, L.y, fs);
     // Semáforo de acciones de las unidades propias: pasada final, encima de
     // todas las unidades, y dentro de su propia casilla.
     for (const S of unitStatus) this.drawUnitStatus(ctx, S.u, S.x, S.y, fs);

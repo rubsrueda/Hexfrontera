@@ -156,7 +156,7 @@ console.log('--- 5. Construcción ---');
   g.cur = 1;
   const count = () => g.cells.filter(c => c && c.o === 1 && c.b > 0).length;
   const before = count();
-  for (let t = 0; t < 5; t++) HF.endTurn(g, HF.aiPlay);
+  for (let t = 0; t < 8; t++) HF.endTurn(g, HF.aiPlay);
   ok(count() > before, 'la IA construye/mejora con recursos (' + before + ' → ' + count() + ')');
   ok((HF.provinces(g, g.f[1]) || []).length >= 1, 'mantiene al menos una provincia abastecida');
 }

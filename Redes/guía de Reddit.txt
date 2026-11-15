@@ -1,0 +1,17 @@
+Usa una rotación de **3 tipos de puzles distintos**, publicando **1 vez cada 4 días / un set de 3 cada 12 días, 2 a 3 veces al mes creas los 3** (alternando entre `r/TurnBasedStrategy`, `r/4Xgames` y `r/wargames`):
+
+Tu esfuerzo hacer 9 mapas en el mes. y los textos de los reddits. 
+
+1. **El Cerco (Logística):** El que acabas de hacer. Un ejército grande a punto de morir de hambre por una sola unidad enemiga cortando el paso.
+
+2. **El Cuello de Botella (Terreno):** Dos unidades defensivas bloqueando un paso estrecho de montaña frente a un ejército triple. El reto: aguantar 4 turnos sin ceder la posición.
+
+3. **La Bancarrota (Economía):** Una partida avanzada donde estás en números rojos (-oro/-comida) y debes desbandar unidades o tomar una provincia rica en 2 turnos antes de que tu ejército deserte.
+
+**Regla de oro:**
+
+* Crea **3 mapas cortos distintos** (uno por cada concepto) con su propio link (`?m=XXXXX`).
+
+* No repitas el mismo post en el mismo subreddit. Si quieres volver a publicar en el mismo grupo semanas después, usa un escenario diferente.
+
+* Analiza cuál de los 3 conceptos genera más clics en el enlace y más comentarios; ese será el formato ganador para repetir con mapas nuevos.

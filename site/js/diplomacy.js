@@ -1020,7 +1020,7 @@
             if (Array.isArray(g.caravans)) {
               for (const car of g.caravans) {
                 if (!car || !Array.isArray(car.path)) continue;
-                if (car.path[car.pos] === cellId && car.owner !== route.fromFaction && car.owner !== route.toFaction) { interdictor = car.owner; break; }
+                if (car.path[car.pos] === cellId && car.owner >= 0 && car.owner !== route.fromFaction && car.owner !== route.toFaction) { interdictor = car.owner; break; }
               }
             }
             if (interdictor != null) break;

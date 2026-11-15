@@ -67,11 +67,13 @@
     del(k) { if (ls) ls.removeItem('hf_' + k); else delete mem['hf_' + k]; },
     has(k) { return ls ? ls.getItem('hf_' + k) != null : ('hf_' + k) in mem; },
     atomicSave(k, o) {
-      const v = JSON.stringify(o);
       try {
-        this.set(k + '_tmp', o);
+        const v = JSON.stringify(o);
+        // Si la escritura temporal falla (cuota llena), no se toca el guardado
+        // anterior: el jugador conserva el último turno válido.
+        if (!this.set(k + '_tmp', o)) return false;
         JSON.parse(v);
-        this.set(k, o);
+        if (!this.set(k, o)) { this.del(k + '_tmp'); return false; }
         this.del(k + '_tmp');
         return true;
       } catch (e) { return false; }

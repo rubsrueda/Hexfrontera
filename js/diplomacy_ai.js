@@ -39,7 +39,8 @@
     const u = c.u;
     if (!u || !HF.UNITS[u.type]) return 0;
     const D = HF.UNITS[u.type];
-    const atk = (u.type === 'INF' || u.type === 'ENG') ? u.tier : (D.atk || 0) + u.tier - 1;
+    const atk = u.type === 'ENG' ? ((HF.CFG.engineer && HF.CFG.engineer.attack) || 0)
+      : (u.type === 'INF' ? u.tier : (D.atk || 0) + u.tier - 1);
     return atk + (D.def || 0) + u.tier - 1;
   }
 

@@ -620,6 +620,15 @@ async function handleCaptureOrder(orderId: string, playerId: string): Promise<Js
 }
 
 async function handleRecoverRequest(email: string): Promise<Json> {
+  // DEBUG: log de variables de entorno reales en runtime
+  console.log("[paypal] recover-request env check:", {
+    RESEND_API_KEY: Deno.env.get("RESEND_API_KEY") ? "SET" : "MISSING",
+    EMAIL_FROM: Deno.env.get("EMAIL_FROM") ? "SET" : "MISSING",
+    SMTP_HOST: Deno.env.get("SMTP_HOST") ? "SET" : "MISSING",
+    emailMode: emailMode(),
+    emailMissing: emailMissing(),
+  });
+
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     throw new HttpError(400, "correo_invalido");
   }
@@ -656,7 +665,8 @@ async function handleRecoverRequest(email: string): Promise<Json> {
   const mail = credentialsEmail({ playerId, secretKey, kind: "recovery" });
   const sent = await sendEmail({ to, ...mail });
   if (!sent.ok) {
-    throw new HttpError(502, "email_error", { error: sent.error });
+    // DEBUG: devolver error real de Resend/SMTP en detalle
+    throw new HttpError(502, "email_error", { error: sent.error, provider: emailMode() });
   }
   return { ok: true, sent: true };
 }
@@ -666,6 +676,9 @@ async function handleRecoverRequest(email: string): Promise<Json> {
 // ---------------------------------------------------------------------------
 
 Deno.serve(async (req: Request): Promise<Response> => {
+  // DEBUG: log inmediato al recibir request
+  console.log("[paypal] HTTP request:", { method: req.method, url: req.url });
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders(req) });
   }
@@ -681,6 +694,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   const action = String(body.action || "");
+  console.log("[paypal] action:", action);
 
   try {
     if (action === "health") {

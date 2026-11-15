@@ -887,7 +887,7 @@
         <button id="efDiag" style="width:100%;margin-top:6px">Abrir diagnóstico</button>
       </div>
       <div class="card"><div class="dim small">${HF.t('LOCAL_DATA')}</div><br><button id="reset">${HF.t('RESET')}</button></div>
-      <div class="dim small">Federati v1.2 · build 208 · IA ${HF.aiBuild || '?'} · 🌐 Multijugador en línea</div></div></div>`;
+      <div class="dim small">Federati v1.2 · build 219 · IA ${HF.aiBuild || '?'} · 🌐 Multijugador en línea</div></div></div>`;
     wireBack(el);
     el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { s[b.dataset.k] = !s[b.dataset.k]; HF.store.set('settings', s); if (HF.bgm) HF.bgm.refresh(); HF.go('settings'); });
     const langSel = el.querySelector('#langSel');

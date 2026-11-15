@@ -226,6 +226,14 @@
       DEFICIT_WARNING: 'Déficit: se producirán deserciones al final del turno',
       SURPLUS_OK: 'Superávit: tu economía es sostenible',
       RESOURCE_DETAIL: 'Detalle de',
+      // Grid de ingresos/gastos por recurso (pantalla de detalle)
+      RD_TITLE: 'Ingresos y gastos',
+      INCOME_SECTION: 'Ingresos',
+      EXPENSE_SECTION: 'Gastos',
+      NET_SECTION: 'Balance neto',
+      RESERVES: 'Reservas',
+      RD_NO_INCOME: 'Sin ingresos en este ámbito',
+      RD_NO_EXPENSE: 'Sin gastos en este ámbito',
 
       // === NUEVAS CLAVES PARA TRADUCCIÓN COMPLETA ===
       // Editor
@@ -606,7 +614,7 @@
       SETTINGS_EF_DIAG_LABEL: '🔎 Diagnóstico de encuesta',
       SETTINGS_EF_DIAG_DESC: 'Comprueba si hay campaña activa, preguntas y bloqueos locales sin abrir DevTools.',
       SETTINGS_EF_DIAG_BUTTON: 'Abrir diagnóstico',
-      SETTINGS_VERSION: 'Federati v1.2 · build 208 · IA 2026-11-13-6 · 🌐 Multijugador en línea',
+      SETTINGS_VERSION: 'Federati v1.2 · build 219 · IA 2026-11-13-17 · 🌐 Multijugador en línea',
 
       // Online screen
       ONLINE_JOIN_TITLE: 'Unirse a una sala',
@@ -749,6 +757,14 @@
       BANTER_TOOLTIP_INFO: 'Información',
       BANTER_TOOLTIP_WARN: 'Advertencia',
       BANTER_TOOLTIP_BAD: 'Peligro',
+
+      // Ingeniero y puentes
+      BRIDGE_BUILD: 'Construir puente',
+      BRIDGE_DEMOLISH: 'Demoler puente',
+      BRIDGE_BUILT: 'Puente construido: el paso queda abierto para todos',
+      BRIDGE_DESTROYED: 'Puente destruido: el paso vuelve a estar cortado',
+      SUPPLY_CARGO: 'Carga de suministros',
+      ENG_SINGLE_TIER: 'Nivel único',
     },
     en: {
       HUB_TITLE: 'FEDERATI',
@@ -975,6 +991,21 @@
       DEFICIT_WARNING: 'Deficit: desertions will occur at end of turn',
       SURPLUS_OK: 'Surplus: your economy is sustainable',
       RESOURCE_DETAIL: 'Details of',
+      RD_TITLE: 'Income & spending',
+      INCOME_SECTION: 'Income',
+      EXPENSE_SECTION: 'Expenses',
+      NET_SECTION: 'Net balance',
+      RESERVES: 'Stock',
+      RD_NO_INCOME: 'No income in this scope',
+      RD_NO_EXPENSE: 'No expenses in this scope',
+
+      // Engineer and bridges
+      BRIDGE_BUILD: 'Build bridge',
+      BRIDGE_DEMOLISH: 'Demolish bridge',
+      BRIDGE_BUILT: 'Bridge built: the crossing is open to everyone',
+      BRIDGE_DESTROYED: 'Bridge destroyed: the crossing is cut again',
+      SUPPLY_CARGO: 'Supply cargo',
+      ENG_SINGLE_TIER: 'Single level',
     },
   };
   // Cada idioma nuevo hereda el inglés como red de seguridad para los textos

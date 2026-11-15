@@ -1,0 +1,10 @@
+**Título:**
+
+> Lose your supply territory, lose your empire. Can you survive bankruptcy?
+
+**Primer comentario:**
+
+> Third tactical puzzle for **Federati** (a deterministic hex-based 4X with zero combat RNG).
+> The game runs on 3 core resources: if you produce more than you can maintain, or if you lose a city or territory that feeds your empire, you enter bankruptcy.
+> **[Click here to play this scenario directly in your browser](https://www.google.com/search?q=https://federati.org/%3Fm%3DXYZ12)** *(Nota: Reemplaza este link con tu código de mapa real)*
+> Can you restructure your economy before total collapse?

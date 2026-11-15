@@ -315,6 +315,21 @@
     win.addEventListener('resize', () => G.setTimeout(hydrate, 120));
   }
 
+  // --- Escritorio: atajos de recarga ---
+  // En Electron/Steam (y Tauri) F5 y Ctrl/Cmd+R recargan el WebView y cortan la
+  // partida. En web NO se interceptan: el usuario debe poder recargar.
+  const isTauri = !!(G.__TAURI__ || G.__TAURI_INTERNALS__);
+  if ((isElectron || isTauri) && doc) {
+    doc.addEventListener('keydown', e => {
+      const k = e.key;
+      const mod = e.ctrlKey || e.metaKey;
+      if (k === 'F5' || (mod && (k === 'r' || k === 'R'))) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
+  }
+
   // --- Electron: cierre ordenado ---
   if (isElectron) {
     try {

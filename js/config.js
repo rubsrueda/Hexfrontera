@@ -116,7 +116,7 @@
     3: [1, 1],   // Camp
     4: [2, 2],   // Village
     5: [4, 4],   // City
-    6: [3, 3],   // Bastion
+    6: [2, 2],   // Bastion
     },
     // producción extra del recurso de la casilla según el edificio construido encima
     // (se suma al rendimiento base del recurso: camino 0, campamento +1, pueblo +2, bastión +2, ciudad +3)
@@ -167,7 +167,13 @@
       maxSeaRoutes: 3,     // rutas marítimas (parejas más lejanas por agua)
       caravanSpeed: 4,     // casillas que avanza la caravana por turno
       caravanGold: 5,      // oro que devenga por turno (se entrega al llegar)
-      blockTurns: 2        // rondas que queda rota la ruta tras un saqueo
+      blockTurns: 2,       // rondas que queda rota la ruta tras un saqueo
+      // Mercado libre de los pueblos sin dueño: convoyes cazables desde el
+      // primer turno aunque nadie tenga una segunda aldea.
+      neutralRoutes: 2,    // rutas terrestres neutrales activas
+      neutralSeaRoutes: 1, // rutas marítimas neutrales activas
+      neutralGold: 4,      // oro base que porta un convoy neutral (se repone al llegar)
+      neutralSpeed: 3      // casillas por ronda de un convoy neutral
     },
     loan: { amount: 50, perTurn: 6, turns: 10 }, // +50 oro, -6/turno durante 10 turnos
     // Banca de la capital: precio = (producción oro / producción recurso) * fee.
@@ -204,11 +210,14 @@
        up: [2, 6, 18], upGold: [2, 6, 18],
        from: [3, 4, 5, 6], move: 3, moveHeavy: 1, atkRange: 1, def: 0
      },
+     // El Ingeniero es una pieza única de apoyo: no sube de nivel, no ataca, no
+     // conquista y su mantenimiento es deliberadamente alto. Su valor está en
+     // mutar el terreno con puentes y en sobrevivir incomunicado con su carga.
      ENG: {
        name: 'Ingeniero', icon: '🔧',
        cost: { gold: 25, food: 10, wood: 10 },
-       up: [2, 6, 18], upGold: [2, 6, 18],
-       from: [3, 4, 5, 6], move: 2, moveHeavy: 1, atkRange: 0, def: 0
+       up: [4, 4, 4], upGold: [5, 5, 5],
+       from: [3, 4, 5, 6], move: 1, moveHeavy: 1, atkRange: 0, def: 1
      },
      ARC: {
        name: 'Arquero', icon: '🏹',
@@ -239,7 +248,26 @@
     mountainUnits: ['ENG'],                   // solo los ingenieros cruzan montañas y ríos sin camino
     recruitRadius: 3,                         // casillas máximas desde un edificio de origen
     fuseMax: 3, fuseMaxAscetic: 2,            // nivel máximo al fusionar
-    fuseTypes: ['INF', 'ENG', 'ARC', 'CAB', 'SIE', 'BAR'],  // tipos de unidad fusionables (cada nivel extra suma +1 ataque y +1 defensa en las no-infantería)
+    fuseTypes: ['INF', 'ARC', 'CAB', 'SIE', 'BAR'],  // tipos de unidad fusionables (cada nivel extra suma +1 ataque y +1 defensa en las no-infantería)
+    // --- Ingeniero y Puentes ---
+    // El ingeniero no evoluciona (singleTier), no ataca (attack) ni conquista
+    // (noCapture). La carga de suministros le da N turnos de gracia cuando su
+    // casilla queda incomunicada. Todo es parametrizable desde aquí.
+    engineer: {
+      move: 1,
+      attack: 0,
+      defense: 1,
+      singleTier: true,
+      noCapture: true,
+      supplyTurns: 3,
+      // terreno 2 = MONTANA, 3 = RIO (HF.T se define después de este archivo)
+      bridge: {
+        terrains: [2, 3],
+        cost: { wood: 15, gold: 10 },
+        defense: 0,                            // un puente anula el bono defensivo del terreno
+        demolish: ['ENG', 'SIE']               // quién puede destruirlo
+      }
+    },
     shipCarry: true,  // los barcos pueden transportar 1 unidad de tierra (embarcar desde costa, desembarcar en costa)
     isolatedCampMin: 3, // casillas propias incomunicadas necesarias para fundar un campamento (nueva provincia)
 
@@ -325,10 +353,12 @@
     },
 
     // tamaños y biomas de mapa
+    // R se ha agrandado para compensar el espacio que ocupan mar, montañas,
+    // ríos y lagos: se mantiene el espacio construible por facción.
     sizes: {
-      small: { name: 'Pequeño', R: 7, minF: 2, maxF: 2 },
-      medium: { name: 'Mediano', R: 12, minF: 2, maxF: 4 },
-      large: { name: 'Enorme', R: 18, minF: 4, maxF: 6 }
+      small: { name: 'Pequeño', R: 8, minF: 2, maxF: 2 },
+      medium: { name: 'Mediano', R: 14, minF: 2, maxF: 4 },
+      large: { name: 'Enorme', R: 21, minF: 4, maxF: 6 }
     },
     biomes: {
       plains: { name: 'Llanuras', sea: .10, hill: .12, mtn: .05, tree: .12 },
@@ -342,7 +372,8 @@
       wheatMoisture: .55, wheatChance: .5,
       goldHillChance: .25,
       woodChance: { LLANO: .14, COLINA: .2 },
-      capitalRing: .62,                       // distancia de las capitales al centro (fracción del radio)
+      capitalRing: .53,                       // distancia de las capitales al centro (fracción del radio); reajustada para que, con mapas más grandes, la separación entre capitales y el ritmo de contacto (turno ~15) se mantengan.
+      minPlayablePerFaction: 60,              // presupuesto mínimo de celdas construibles (llano+colina) por facción; si un seed no lo alcanza, se recupera montaña → colina.
       guaranteed: { radius: 2, wheat: 2, wood: 2 },  // recursos garantizados cerca de cada capital
       archipelago: { minGap: .5, noise: .12 }  // separación mínima entre centros de isla (fracción del radio del mapa) y ruido de costa
     },

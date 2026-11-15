@@ -1,0 +1,14 @@
+no pasaran.png
+([https://federati.org/?m=P2K2G](https://federati.org/?m=P2K2G)).
+
+**Título:**
+
+> Holding the pass against superior numbers. Can you survive the breach?
+
+**Primer comentario:**
+
+> Second tactical puzzle for **Federati** (a deterministic hex-based 4X focused on terrain, logistics, and zero combat RNG).
+> Two defensive units are holding a narrow bottleneck against a larger force.
+> **[Click here to play this map directly in your browser and hold the line](https://federati.org/?m=P2K2G)**
+> Can you survive the assault without yielding the position?
+

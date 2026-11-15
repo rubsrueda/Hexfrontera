@@ -6,7 +6,8 @@
   const UCODE = { INF: 'I', ENG: 'E', CAB: 'C', ARC: 'A', SIE: 'S', BAR: 'B' };
   const UFROM = { I: 'INF', E: 'ENG', C: 'CAB', A: 'ARC', S: 'SIE', B: 'BAR' };
   const tok = c => '' + c.t + c.res + c.b + (c.o < 0 ? 9 : c.o) + (c.cap ? 1 : 0) +
-    (c.u && UCODE[c.u.type] ? UCODE[c.u.type] + (Math.max(1, Math.min(9, c.u.tier || 1))) + (c.u.owner >= 0 ? c.u.owner : 0) : '0');
+    (c.u && UCODE[c.u.type] ? UCODE[c.u.type] + (Math.max(1, Math.min(9, c.u.tier || 1))) + (c.u.owner >= 0 ? c.u.owner : 0) : '0') +
+    (c.br ? '1' : '');
   HF.exportMap = (R, cells, seed) => {
     const list = HF.makeGrid(R).list, parts = [];
     let last = null, n = 0;
@@ -27,7 +28,12 @@
       for (const p of atob(b64).split(',')) { const [n, t] = p.split('x'); for (let k = 0; k < +n; k++) toks.push(t); }
       if (toks.length !== grid.list.length) throw 0;
       grid.list.forEach((d, k) => {
-        const t = toks[k], c = cells[d.i];
+        let t = toks[k], br = 0, c = cells[d.i];
+        // Puente (opcional, al final): 7 dígitos sin unidad o 9 con unidad.
+        if ((t.length === 7 && /^\d{6}[01]$/.test(t)) || (t.length === 9 && /^\d{5}[ICASBE]\d\d[01]$/.test(t))) {
+          br = +t.slice(-1);
+          t = t.slice(0, -1);
+        }
         // Formatos aceptados: 6 dígitos (mapas antiguos, sin unidades) u 8 caracteres
         // con el bloque de unidad Tipo+tier+dueño (p. ej. I20).
         if (/^\d{6}$/.test(t)) {
@@ -38,6 +44,7 @@
           if (!type || !(tier >= 1 && tier <= 4) || !(owner >= 0 && owner <= 9)) throw 0;
           c.u = { type, tier, owner, mv: 1, at: 1 };
         } else throw 0;
+        c.br = br;
         if (c.t > 4 || c.b > 7) throw 0;
       });
       return { R, cells, seed: +seed };

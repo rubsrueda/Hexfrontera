@@ -1,16 +1,16 @@
 // La version del cache debe subir en cada release: si no, el navegador sigue
 // sirviendo el JS viejo y los cambios de arte/tamaÃ±os no llegan a la partida.
-const C = 'federati-v209';
+const C = 'federati-v224';
 const FILES = [
   './', 'index.html', 'css/style.css', 'manifest.json', 'icon.svg',
   'fonts/plus-jakarta-sans-latin.woff2', 'fonts/plus-jakarta-sans-latin-ext.woff2', 'fonts/plus-jakarta-sans-cyrillic.woff2',
-  'js/util.js', 'js/telemetry.js', 'js/platform.js', 'js/config.js', 'js/security.js', 'js/music.js', 'js/art.js', 'js/artdata.js', 'js/data.js', 'js/links.js', 'js/mapgen.js',
-  'js/engine.js', 'js/ai.js', 'js/board.js', 'js/cloud.js', 'js/progress.js', 'js/i18n.js',
+  'js/util.js', 'js/telemetry.js', 'js/platform.js', 'js/storage.js', 'js/config.js', 'js/security.js', 'js/music.js', 'js/art.js', 'js/artdata.js', 'js/data.js', 'js/links.js', 'js/mapgen.js',
+  'js/engine.js', 'js/ai.js', 'js/board.js', 'js/cloud.js', 'js/auth.js', 'js/progress.js', 'js/i18n.js',
   // packs de idioma (pantallas + mensajes de unidades) y capa de traducción de UI
   'js/i18n/en-keys.js', 'js/i18n/phrases.en.js', 'js/i18n/phrases.fr.js', 'js/i18n/phrases.de.js',
   'js/i18n/phrases.it.js', 'js/i18n/phrases.pt.js', 'js/i18n/phrases.ru.js', 'js/i18n/phrases.zh.js',
   'js/i18n/phrases.ja.js', 'js/i18n/phrases.ko.js', 'js/i18n/phrases.ar.js', 'js/i18n/phrases.hi.js',
-  'js/i18n/phrases.bn.js', 'js/i18n/ui-layer.js',
+  'js/i18n/phrases.bn.js', 'js/i18n/survey-i18n.js', 'js/i18n/ui-layer.js',
   'js/names.js',
   'js/banter_data.js', 'js/banter.js', 'js/screens.js', 'js/payment.js', 'js/feedback.js', 'js/event-feedback-langs.js', 'js/event-feedback.js', 'js/diplomacy.js', 'js/diplomacy_ai.js', 'js/diplomacy_ui.js', 'js/online.js', 'js/game.js', 'js/editor.js', 'js/maps.js', 'js/replay.js', 'js/replay-caster-langs.js', 'js/replay-caster.js', 'js/replays.js', 'js/main.js',
   // pantalla de introducciÃ³n / lore (especificacion_pantalla_lore.md)

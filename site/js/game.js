@@ -73,6 +73,21 @@
       </div>
       <div class="tip hidden" id="tip"></div></div>`;
     const q = s => el.querySelector(s);
+    // La barra de recursos se delega UNA vez: su innerHTML se reescribe en cada
+    // hud(), así que atar el onclick dentro de un setTimeout tras cada pintado
+    // dejaba clics perdidos (o caían en un nodo ya sustituido). Delegando en el
+    // contenedor, cualquier chip —presente o futuro— abre el detalle.
+    q('#res').addEventListener('click', e => {
+      const chip = e.target && e.target.closest ? e.target.closest('.res-clickable') : null;
+      e.preventDefault();
+      e.stopPropagation();
+      // El chip de convoyes tiene su propia ventana: no es un recurso.
+      if (chip && chip.id === 'hudCars') { caravanModal(); return; }
+      // Mismo ámbito que la barra: si hay una provincia seleccionada, el
+      // detalle es de esa provincia (antes abría siempre el total de la
+      // facción y los números no coincidían con los de arriba).
+      showResourceDetail(chip && chip.dataset ? chip.dataset.res : 'gold', !(st.prov >= 0));
+    });
     const st = { sel: -1, opts: new Map(), pending: null, drawer: null, busy: false, focus: -1, evPtr: g.events.length, bubbles: [] };
     cur = { g, st };
     // Contrato para la telemetría (js/telemetry.js): si el runtime revienta,
@@ -126,6 +141,7 @@
       const provs = HF.provinces(g, f);
       let prov = fc && (fc.o === P || (fc.u && fc.u.owner === P)) && provs.length > 1 ? HF.provOf(g, f, fc) : null;
       if (prov != null && prov < 0) prov = null;
+      st.prov = prov;   // ámbito que muestra la barra (lo usa el clic del detalle)
       const pv = HF.preview(g, f, prov), sk = HF.stockFor(g, f, prov);
       const trs = HF.tradeRoutes(g, f);
       const trL = trs.filter(r => r.kind === 'land').length, trS = trs.filter(r => r.kind === 'sea').length;
@@ -151,7 +167,22 @@
         `<span class="res-clickable" data-res="wood" title="Madera disponible · ingreso +${pv.inc.wood} (click para ver detalle)">${resIco('wood')}${sk.wood}${pv.inc.wood ? `<i class="pos">+${pv.inc.wood}</i>` : ''}</span>` +
         `<span title="Mantenimiento total de la facción (todas las provincias)" style="opacity:.85">Σ${totalUpFood}</span>` +
         `${trL ? `<span title="Rutas terrestres activas">🛣${trL}</span>` : ''}` +
-        `${trS ? `<span title="Rutas marítimas activas">⛵${trS}</span>` : ''}`;
+        `${trS ? `<span title="Rutas marítimas activas">⛵${trS}</span>` : ''}` +
+        (() => {
+          // Convoyes a la vista que se pueden saquear: el contador mantiene la
+          // guerra al comercio presente sin necesidad de buscarlos a mano.
+          const vis = (g.caravans || []).filter(c => {
+            if (!c || c.dead) return false;
+            const cell = g.cells[c.path[c.pos]];
+            if (!cell) return false;
+            if (c.owner === P) return true;
+            if (c.owner === -1) return g.fog === 'NONE' || (g.fogMap && g.fogMap[cell.i] >= 1);
+            return HF.visible(g, cell.i);
+          });
+          const lootable = vis.filter(c => c.owner !== P).length;
+          if (!vis.length) return '';
+          return `<span id="hudCars" class="res-clickable" title="${vis.length} convoyes a la vista · ${lootable} saqueables. Pulsa para verlos">🐫${vis.length}${lootable ? `<i class="pos">⚔${lootable}</i>` : ''}</span>`;
+        })();
       // Cuando el mantenimiento cambia de verdad (reclutar, fusionar, perder
       // una unidad, cambiar de provincia...) el chip parpadea en ámbar para que
       // el cambio no pase desapercibido en la barra superior.
@@ -164,13 +195,6 @@
       st.upk = { gold: upGold, food: upFood };
       q('#bUndo').disabled = !HF.canUndo(g);
       q('#bEnd').disabled = st.busy || !!g.over;
-
-      // Bind click handlers on resource icons
-      setTimeout(() => {
-        q('#res')?.querySelectorAll('.res-clickable')?.forEach(el => {
-          el.onclick = (e) => { e.stopPropagation(); showResourceDetail(el.dataset.res, true); };
-        });
-      }, 0);
     }
     function overlay() {
       board.over = new Map(); board.sel = st.sel;
@@ -258,6 +282,25 @@
       if (c.burn > 0) t += ` · 🕳 cenizas ${c.burn}`;
       if (c.fire > 0) t += ` · 🔥 arde ${c.fire}`;
       if (c.trap === 0) t += ' · 🪤 trampa propia';
+      // Convoyes: se anuncian al tocar su hexágono para que se vea el botín y
+      // que es un objetivo saqueable, no decoración.
+      const cars = HF.caravansAt ? HF.caravansAt(g, i) : [];
+      for (const car of cars) {
+        // No se revela tráfico rival en zona sin explorar.
+        if (car.owner !== P) {
+          const shown = car.owner === -1
+            ? (g.fog === 'NONE' || (g.fogMap && g.fogMap[i] >= 1))
+            : HF.visible(g, i);
+          if (!shown) continue;
+        }
+        const who = car.owner === -1 ? 'neutral' : (g.f[car.owner] ? HF.esc(g.f[car.owner].name) : 'rival');
+        const kind = car.kind === 'sea' ? 'urca' : car.kind === 'cargo' ? 'urca de carga' : 'carreta';
+        const loot = car.kind === 'cargo'
+          ? (({ gold: '💰', food: '🌾', wood: '🪵' }[car.cargo.res] || '📦') + car.cargo.qty)
+          : ('💰' + Math.max(0, car.gold | 0));
+        t += ` · ${car.kind === 'sea' ? '⛵' : '🐫'} Convoy ${who} (${kind}) ${loot}`;
+        if (car.owner !== P) t += ' · 💥 saqueable';
+      }
       if (c.cap && c.b === B.CIUDAD && c.o === P && g.f[P].loan) t += ` · 💳 deuda ${g.f[P].loan.turns} turnos`;
       return t;
     }
@@ -267,8 +310,7 @@
       const c = g.cells[i], canBank = !!(c && c.cap && c.b === B.CIUDAD && c.o === P && g.cur === P && !g.over && !g.online);
       const unitVisible = c && c.u && (c.u.owner === P || HF.visible(g, i));
       const bd = c && (unitVisible || (c.b && HF.BDEF[c.b])) ? HF.defenseBreakdown(g, i) : null;
-      const canCargo = !!(c && c.o === P && c.sup && (c.b === B.PUEBLO || c.b === B.CIUDAD) &&
-        HF.isPort && HF.isPort(g, c) && HF.ports(g, g.f[P]).some(p => p.i !== i && HF.seaPath(g, g.f[P], i, p.i)));
+      const canCargo = !!(c && c.o === P && HF.cargoDests && HF.cargoDests(g, g.f[P], i).length);
       q('#info').innerHTML = describe(i) + (extra || '') +
         (bd && bd.parts.length ? `<div class="defbreak">🛡 <b>${bd.total}</b> · ${HF.esc(bd.detail)}</div>` : '') +
         (canBank ? ` <button class="loanbtn" id="bankBtn" title="Banca de la capital">🏦 Banca</button>` : '') +
@@ -351,17 +393,20 @@
       });
     }
 
-    // Envío manual de carga entre dos puertos propios conectados por mar.
+    // Envío manual de carga: de una ciudad/pueblo a una colonia INCOMUNICADA
+    // POR TIERRA (campamento costero u otro puerto aislado). Si el destino ya
+    // está unido por tierra, se usa la red vial y el mar no tiene sentido.
     function cargoModal(fromIdx) {
       const f = g.f[P], c = g.cells[fromIdx];
-      if (!f || !c || !HF.ports || !HF.seaPath) return;
-      const dests = HF.ports(g, f).filter(p => p.i !== fromIdx && HF.seaPath(g, f, fromIdx, p.i));
-      if (!dests.length) { HF.sfx('error'); return HF.toast(HF.lang() === 'en' ? 'No sea route to another port' : 'No hay otro puerto conectado por mar'); }
+      if (!f || !c || !HF.cargoDests) return;
+      const dests = HF.cargoDests(g, f, fromIdx);
+      if (!dests.length) { HF.sfx('error'); return HF.toast(HF.lang() === 'en' ? 'No isolated port to supply by sea' : 'No hay ningún puerto aislado por tierra al que abastecer'); }
       const comp = c.comp != null ? c.comp : 0;
       const st = (f.stock && f.stock[comp]) || { gold: 0, food: 0, wood: 0 };
-      const pn = p => `${p.city || HF.BNAME[p.b] || 'Puerto'} (${p.q},${p.r})`;
+      const pn = p => `${p.city || HF.BNAME[p.b] || 'Puerto'} (${p.q},${p.r})${p.b === B.CAMPAMENTO ? ' · campamento' : ''}`;
       HF.modal(`<h3>⛵ Enviar carga</h3>
         <p class="dim small">Origen (${c.q},${c.r}) · disponible: 💰${st.gold} 🌾${st.food} 🪵${st.wood}</p>
+        <p class="dim small">Solo aparecen colonias sin conexión terrestre: si hay camino, usa la red vial.</p>
         <label>Puerto de destino</label>
         <select id="ckDst">${dests.map(p => `<option value="${p.i}">${pn(p)}</option>`).join('')}</select>
         <label>Recurso</label>
@@ -387,9 +432,24 @@
       });
     }
 
-    // Pantalla de detalle de recursos: desglose de ingresos y gastos.
-    // Si se llama desde el HUD (totalFaction=true), siempre muestra el total de la facción.
-    function showResourceDetail(resKey, totalFaction = false) {
+    // Detalle de recursos: un grid legible de conceptos (filas) contra recursos
+    // (columnas: oro, trigo y madera). Dos bloques paralelos —Ingresos y
+    // Gastos— con la misma cabecera, y el balance neto al cierre.
+    //
+    // No hay columna «Total»: sumar oro + trigo + madera en un solo número no
+    // significa nada y era una de las razones por las que la pantalla anterior
+    // no se entendía. Los gastos se muestran en negativo para que el balance se
+    // lea como una resta. La columna del recurso pulsado queda resaltada.
+    function showResourceDetail(resKey, totalFaction) {
+      // Un fallo al calcular el desglose no puede quedarse en silencio: antes
+      // cualquier excepción dejaba el clic sin pantalla y sin aviso.
+      try { resourceDetailModal(resKey, totalFaction); }
+      catch (err) {
+        console.error('[detalle de recursos]', err);
+        HF.toast(HF.lang() === 'en' ? 'The resource detail could not be opened' : 'No se pudo abrir el detalle de recursos', 2600);
+      }
+    }
+    function resourceDetailModal(resKey, totalFaction = false) {
       const f = g.f[P];
       if (!f) return;
       let prov = null;
@@ -403,176 +463,109 @@
       const bd = HF.resourceBreakdown(g, f, prov);
       if (!bd) return;
 
-      const RES_NAMES = { gold: HF.t('RES_GOLD'), food: HF.t('RES_FOOD'), wood: HF.t('RES_WOOD') };
-      const RES_ICONS = { gold: '💰', food: '🌾', wood: '🪵' };
-      const focusRes = bd.income.total[resKey] !== undefined ? resKey : 'gold';
-      const scopeLabel = totalFaction ? ' ' + HF.t('TOTAL_FACTION') : (prov != null ? ' ' + HF.t('PROVINCE') + ' ' + prov : '');
+      const RES = [
+        { key: 'gold', label: HF.t('RES_GOLD'), ico: RES_ICO.gold },
+        { key: 'food', label: HF.t('RES_TRIGO'), ico: RES_ICO.food },
+        { key: 'wood', label: HF.t('RES_MADERA'), ico: RES_ICO.wood }
+      ];
+      const focus = RES.some(r => r.key === resKey) ? resKey : 'gold';
+      const focusRes = RES.find(r => r.key === focus);
+      const scope = totalFaction ? HF.t('TOTAL_FACTION')
+        : (prov != null ? HF.t('PROVINCE') + ' ' + prov : HF.t('TOTAL_FACTION'));
 
-      const fmt = n => (n >= 0 ? '+' : '') + n;
-      const cls = (v) => v < 0 ? 'neg' : v > 0 ? 'pos' : '';
+      // Números enteros; cualquier valor raro cae a 0 en vez de imprimir NaN.
+      const n = v => { const x = Number(v); return isFinite(x) ? Math.round(x) : 0; };
+      const zero = '<span class="rd-zero">—</span>';
+      const gain = v => { const x = n(v); return x === 0 ? zero : `<span class="pos">+${x}</span>`; };
+      const loss = v => { const x = n(v); return x === 0 ? zero : `<span class="neg">−${Math.abs(x)}</span>`; };
+      const net = v => { const x = n(v); return x === 0 ? zero : `<span class="${x > 0 ? 'pos' : 'neg'}"><b>${x > 0 ? '+' : '−'}${Math.abs(x)}</b></span>`; };
 
-      // Helper para formatear una celda de recurso (solo número con signo y color)
-      const valCell = (v, resource) => {
-        if (v === 0) return '<span class="zero">—</span>';
-        const c = cls(v);
-        return `<span class="${c}">${fmt(v)}</span>`;
+      const colCls = key => key === focus ? ' rd-col-focus' : '';
+      const head = RES.map(r => `<th class="rd-col${colCls(r.key)}"><img class="res-ico" src="${r.ico}" alt="" draggable="false"> ${r.label}</th>`).join('');
+      const cells = (fn, vals) => RES.map(r => `<td class="rd-num${colCls(r.key)}">${fn(vals ? vals[r.key] : 0)}</td>`).join('');
+      const row = (label, vals) => `<tr><td class="rd-concept">${label}</td>${cells(gain, vals)}</tr>`;
+      const costRow = (label, vals) => `<tr><td class="rd-concept">${label}</td>${cells(loss, vals)}</tr>`;
+      const noteRow = txt => `<tr class="rd-note"><td colspan="4">${txt}</td></tr>`;
+
+      const TERRAIN_IDX = { LLANO: 0, COLINA: 1, MONTANA: 2, RIO: 3, MAR: 4 };
+      const terrainName = k => (TERRAIN_IDX[k] != null && HF.TNAME[TERRAIN_IDX[k]]) || k;
+      const doctrineName = tag => {
+        if (HF.DOCT) for (const id in HF.DOCT) if (HF.DOCT[id].tag === tag) return HF.DOCT[id].name || tag;
+        return tag;
       };
-
-      // Helper para celda total (suma de los 3 recursos)
-      const totalCell = (g, f, w) => {
-        const total = (g||0) + (f||0) + (w||0);
-        const c = cls(total);
-        return `<span class="${c}"><b>${fmt(total)}</b></span>`;
+      const unitLabel = key => {
+        const parts = String(key).split(' ');
+        const u = HF.UNITS && HF.UNITS[parts[0]];
+        return (u ? u.name : parts[0]) + (parts[1] ? ' ' + parts[1] : '');
       };
+      const times = c => c ? ` <small class="rd-x">×${c}</small>` : '';
 
-      // Construir filas de ingresos
-      const buildIncomeRows = () => {
-        let rows = '';
-        let totG = 0, totF = 0, totW = 0;
+      // ---- Ingresos ----
+      let incomeRows = '';
+      for (const [k, v] of Object.entries(bd.income.terrain.detail || {})) {
+        if (!v || (!n(v.gold) && !n(v.food) && !n(v.wood))) continue;
+        incomeRows += row('🗺️ ' + terrainName(k), v);
+      }
+      for (const [k, v] of Object.entries(bd.income.resources.detail || {})) {
+        if (!v || (!n(v.gold) && !n(v.food) && !n(v.wood))) continue;
+        incomeRows += row('💎 ' + HF.t('RES_' + k) + times(v.count), v);
+      }
+      for (const [k, v] of Object.entries(bd.income.buildings.detail || {})) {
+        if (!v || (!n(v.gold) && !n(v.food))) continue;
+        incomeRows += row('🏗️ ' + k + times(v.count), v);
+      }
+      for (const [k, v] of Object.entries(bd.income.doctrines.detail || {})) {
+        if (!v || (!n(v.gold) && !n(v.food) && !n(v.wood))) continue;
+        incomeRows += row('📜 ' + doctrineName(k), v);
+      }
+      const car = bd.income.caravans.detail || {};
+      if (car.land || car.sea) {
+        const legs = [];
+        if (car.land) legs.push(HF.t('TRADE_LAND') + ' ×' + car.land);
+        if (car.sea) legs.push(HF.t('TRADE_SEA') + ' ×' + car.sea);
+        incomeRows += noteRow('🛣️ ' + legs.join(' · ') + ' — ' + HF.t('TRADE_NOTE'));
+      }
+      if (!incomeRows) incomeRows = noteRow(HF.t('RD_NO_INCOME'));
 
-        // Terreno base
-        if (bd.income.terrain && Object.keys(bd.income.terrain).some(k => k !== 'detail' && bd.income.terrain[k])) {
-          const d = bd.income.terrain;
-          rows += `<tr class="section-header"><td colspan="5">${HF.t('INCOME_TERRAIN')}</td></tr>`;
-          if (d.detail) {
-            for (const [terrain, vals] of Object.entries(d.detail)) {
-              if (!vals) continue;
-              const g = vals.gold || 0, f = vals.food || 0, w = vals.wood || 0;
-              if (g || f || w) {
-                rows += `<tr><td>🗺️ ${HF.TNAME[terrain] || terrain}</td>${valCell(g,'gold')}${valCell(f,'food')}${valCell(w,'wood')}</tr>`;
-                totG += g; totF += f; totW += w;
-              }
-            }
-          }
-        }
+      // ---- Gastos ----
+      let expenseRows = '';
+      for (const [k, v] of Object.entries(bd.expenses.units.detail || {})) {
+        if (!v || (!n(v.gold) && !n(v.food))) continue;
+        expenseRows += costRow('⚔️ ' + unitLabel(k) + times(v.count), v);
+      }
+      if (n(bd.expenses.loans.gold) > 0) {
+        const loanDetail = (bd.expenses.loans.detail || {})['Préstamo'] || {};
+        const turns = loanDetail.turns || 0;
+        expenseRows += costRow('💳 ' + HF.t('LOAN_PAYMENT') + (turns ? ' · ' + turns + ' ' + HF.t('TURNS_LEFT') : ''), bd.expenses.loans);
+      }
+      if (!expenseRows) expenseRows = noteRow(HF.t('RD_NO_EXPENSE'));
 
-        // Recursos naturales
-        if (bd.income.resources && Object.keys(bd.income.resources).some(k => k !== 'detail' && bd.income.resources[k])) {
-          const d = bd.income.resources;
-          rows += `<tr class="section-header"><td colspan="5">${HF.t('INCOME_RESOURCES')}</td></tr>`;
-          if (d.detail) {
-            for (const [res, vals] of Object.entries(d.detail)) {
-              if (!vals) continue;
-              const g = vals.gold || 0, f = vals.food || 0, w = vals.wood || 0;
-              const count = vals.count ? ` (×${vals.count})` : '';
-              if (g || f || w) {
-                rows += `<tr><td>💎 ${HF.t('RES_' + res)}${count}</td>${valCell(g,'gold')}${valCell(f,'food')}${valCell(w,'wood')}</tr>`;
-                totG += g; totF += f; totW += w;
-              }
-            }
-          }
-        }
+      const deficit = RES.some(r => n(bd.net[r.key]) < 0);
+      const sk = HF.stockFor(g, f, prov) || { gold: 0, food: 0, wood: 0 };
 
-        // Edificios
-        if (bd.income.buildings && Object.keys(bd.income.buildings).some(k => k !== 'detail' && bd.income.buildings[k])) {
-          const d = bd.income.buildings;
-          rows += `<tr class="section-header"><td colspan="5">${HF.t('INCOME_BUILDINGS')}</td></tr>`;
-          if (d.detail) {
-            for (const [bld, vals] of Object.entries(d.detail)) {
-              if (!vals) continue;
-              const g = vals.gold || 0, f = vals.food || 0;
-              const count = vals.count ? ` (×${vals.count})` : '';
-              if (g || f) {
-                rows += `<tr><td>🏗️ ${bld}${count}</td>${valCell(g,'gold')}${valCell(f,'food')}${valCell(0,'wood')}</tr>`;
-                totG += g; totF += f;
-              }
-            }
-          }
-        }
-
-        // Doctrinas
-        if (bd.income.doctrines && Object.keys(bd.income.doctrines).some(k => k !== 'detail' && bd.income.doctrines[k])) {
-          const d = bd.income.doctrines;
-          rows += `<tr class="section-header"><td colspan="5">${HF.t('INCOME_DOCTRINES')}</td></tr>`;
-          if (d.detail) {
-            for (const [doc, vals] of Object.entries(d.detail)) {
-              if (!vals) continue;
-              const g = vals.gold || 0, f = vals.food || 0, w = vals.wood || 0;
-              if (g || f || w) {
-                rows += `<tr><td>📜 ${HF.t('DOCTRINE_' + doc) || doc}</td>${valCell(g,'gold')}${valCell(f,'food')}${valCell(w,'wood')}</tr>`;
-                totG += g; totF += f; totW += w;
-              }
-            }
-          }
-        }
-
-        // Rutas comerciales
-        if (bd.income.caravans && (bd.income.caravans.detail?.land || bd.income.caravans.detail?.sea)) {
-          rows += `<tr class="section-header"><td colspan="5">${HF.t('INCOME_TRADE')}</td></tr>`;
-          if (bd.income.caravans.detail.land) rows += `<tr><td>🛣️ ${HF.t('TRADE_LAND')} (${bd.income.caravans.detail.land})</td><td colspan="3" class="dim">${HF.t('TRADE_NOTE')}</td></tr>`;
-          if (bd.income.caravans.detail.sea) rows += `<tr><td>⛵ ${HF.t('TRADE_SEA')} (${bd.income.caravans.detail.sea})</td><td colspan="3" class="dim">${HF.t('TRADE_NOTE')}</td></tr>`;
-        }
-
-        // Total ingresos
-        rows += `<tr class="total-row"><td><b>${HF.t('TOTAL_INCOME')}</b></td>${valCell(totG,'gold')}${valCell(totF,'food')}${valCell(totW,'wood')}<td>${totalCell(totG, totF, totW)}</td></tr>`;
-        return rows;
-      };
-
-      // Construir filas de gastos
-      const buildExpenseRows = () => {
-        let rows = '';
-        let totG = 0, totF = 0, totW = 0;
-
-        // Mantenimiento unidades
-        if (bd.expenses.units && bd.expenses.units.detail) {
-          rows += `<tr class="section-header"><td colspan="5">${HF.t('EXPENSE_UNITS')}</td></tr>`;
-          for (const [unit, vals] of Object.entries(bd.expenses.units.detail)) {
-            if (!vals || vals.count === 0) continue;
-            const g = vals.gold || 0, f = vals.food || 0;
-            if (g || f) {
-              rows += `<tr><td>⚔️ ${unit} (×${vals.count})</td>${valCell(g,'gold')}${valCell(f,'food')}${valCell(0,'wood')}</tr>`;
-              totG += g; totF += f;
-            }
-          }
-        }
-
-        // Préstamos
-        if (bd.expenses.loans && bd.expenses.loans.gold > 0) {
-          rows += `<tr class="section-header"><td colspan="5">${HF.t('EXPENSE_LOANS')}</td></tr>`;
-          const g = bd.expenses.loans.gold;
-          const turns = bd.expenses.loans.detail?.['Préstamo']?.turns || 0;
-          rows += `<tr><td>💳 ${HF.t('LOAN_PAYMENT')} (${turns} ${HF.t('TURNS_LEFT')})</td>${valCell(g,'gold')}${valCell(0,'food')}${valCell(0,'wood')}</tr>`;
-          totG += g;
-        }
-
-        // Total gastos
-        rows += `<tr class="total-row"><td><b>${HF.t('TOTAL_EXPENSES')}</b></td>${valCell(totG,'gold')}${valCell(totF,'food')}${valCell(totW,'wood')}<td>${totalCell(totG, totF, totW)}</td></tr>`;
-        return rows;
-      };
-
-      // Balance neto
-      const netG = bd.net.gold, netF = bd.net.food, netW = bd.net.wood;
-      const netTotal = netG + netF + netW;
-      const netCls = netTotal < 0 ? 'neg' : netTotal > 0 ? 'pos' : '';
-      const netHtml = `
-        <tr class="net-row ${netTotal < 0 ? 'deficit' : 'surplus'}">
-          <td><b>${HF.t('NET_BALANCE')}</b></td>
-          ${resCell(netG, netF, netW)}
-          <td class="${netCls}"><b>${fmt(netTotal)}</b></td>
-        </tr>
-        <tr class="net-status">
-          <td colspan="5">
-            ${netTotal < 0 ? `<span class="warn">⚠️ ${HF.t('DEFICIT_WARNING')}</span>` : `<span class="ok">✅ ${HF.t('SURPLUS_OK')}</span>`}
-          </td>
-        </tr>
-      `;
-
-      HF.modal(`<h3>${RES_ICONS[focusRes]} ${HF.t('RESOURCE_DETAIL')} ${RES_NAMES[focusRes]}${scopeLabel}</h3>
+      const html = `<h3><img class="modal-ico" src="assets/ui/stats.webp" alt="" draggable="false"> ${HF.t('RD_TITLE')} · ${focusRes.label}</h3>
+        <div class="rd-sub">
+          <span class="rd-chip">${HF.esc(scope)}</span>
+          <span class="rd-chip">${HF.t('RESERVES')}: <b>${n(sk.gold)}</b> ${RES[0].label} · <b>${n(sk.food)}</b> ${RES[1].label} · <b>${n(sk.wood)}</b> ${RES[2].label}</span>
+        </div>
         <div class="res-table-wrapper">
-          <table class="res-matrix">
-            <thead>
-              <tr><th>${HF.t('CONCEPT')}</th><th>💰 ${HF.t('RES_GOLD')}</th><th>🌾 ${HF.t('RES_FOOD')}</th><th>🪵 ${HF.t('RES_WOOD')}</th><th>${HF.t('TOTAL')}</th></tr>
-            </thead>
+          <table class="res-matrix rd-grid">
+            <thead><tr><th class="rd-concept">${HF.t('CONCEPT')}</th>${head}</tr></thead>
             <tbody>
-              ${buildIncomeRows()}
-              ${buildExpenseRows()}
-              ${netHtml}
+              <tr class="rd-section rd-income"><td colspan="4">${HF.t('INCOME_SECTION')}</td></tr>
+              ${incomeRows}
+              <tr class="rd-total"><td class="rd-concept">${HF.t('TOTAL_INCOME')}</td>${cells(gain, bd.income.total)}</tr>
+              <tr class="rd-section rd-expense"><td colspan="4">${HF.t('EXPENSE_SECTION')}</td></tr>
+              ${expenseRows}
+              <tr class="rd-total"><td class="rd-concept">${HF.t('TOTAL_EXPENSES')}</td>${cells(loss, bd.expenses.total)}</tr>
+              <tr class="rd-net"><td class="rd-concept">${HF.t('NET_SECTION')}</td>${cells(net, bd.net)}</tr>
             </tbody>
           </table>
         </div>
-        <br><button id="resClose" class="pri" style="width:100%">${HF.t('CLOSE')}</button>`, m => {
-        m.querySelector('#resClose').onclick = HF.closeModal;
-      });
+        <div class="rd-status ${deficit ? 'bad' : 'good'}">${deficit ? '⚠️ ' + HF.t('DEFICIT_WARNING') : '✅ ' + HF.t('SURPLUS_OK')}</div>
+        <br><button id="resClose" class="pri" style="width:100%">${HF.t('CLOSE')}</button>`;
+
+      HF.modal(html, m => { const b = m.querySelector('#resClose'); if (b) b.onclick = HF.closeModal; });
     }
 
     // Barks diegéticos: 40% al tocar una unidad propia.
@@ -915,7 +908,13 @@
     function save() {
       if (g.over) return;
       if (HF.replays) HF.replays.flush(g);
-      HF.store.atomicSave('savegame_active', HF.serialize(g));
+      const ok = HF.store.atomicSave('savegame_active', HF.serialize(g));
+      if (ok === false) {
+        HF.toast(HF.lang() === 'en' ? 'Could not save: storage is full.' : 'No se pudo guardar: almacenamiento lleno.', 3000);
+        return;
+      }
+      // Marca para que un F5 sepa que el jugador estaba DENTRO de la partida.
+      HF.store.set('session_in_game', true);
     }
     // El puente de plataforma (js/platform.js) guarda por aquí antes de que el
     // sistema suspenda o cierre el proceso.
@@ -950,6 +949,8 @@
     const onHide = () => { if (document.visibilityState === 'hidden' && cur && cur.g === g) save(); };
     document.addEventListener('visibilitychange', onHide); G.addEventListener('pagehide', save);
     HF.onLeave = () => {
+      // Salir al Hub de forma deliberada desactiva la reanudación automática.
+      try { HF.store.del('session_in_game'); } catch (e) { }
       if (g._onlineStop) { try { g._onlineStop(); } catch (e) { } g._onlineStop = null; }
       if (g._clockStop) { try { g._clockStop(); } catch (e) { } g._clockStop = null; }
       if (HF.banter) HF.banter.stop();
@@ -979,6 +980,45 @@
     // ----- menús -----
     // Marcador por tarjetas: identidad, capital, recursos (+neto), ejército y
     // territorio. Cada tarjeta se expande al tocarla para ver el desglose.
+    // Ventana de convoyes: lista los visibles con dueño, ruta y botín, y
+    // centra el mapa al pulsarlos. Refuerza el bucle de caza comercial.
+    function caravanModal() {
+      const me = P;
+      const list = (g.caravans || []).filter(c => {
+        if (!c || c.dead) return false;
+        const cell = g.cells[c.path[c.pos]];
+        if (!cell) return false;
+        if (c.owner === me) return true;
+        if (c.owner === -1) return g.fog === 'NONE' || (g.fogMap && g.fogMap[cell.i] >= 1);
+        return HF.visible(g, cell.i);
+      });
+      if (!list.length) { HF.sfx('error'); return HF.toast(HF.lang() === 'en' ? 'No convoys in sight' : 'No hay convoyes a la vista'); }
+      const rows = list.map((c, k) => {
+        const cell = g.cells[c.path[c.pos]];
+        const who = c.owner === -1 ? 'Mercado neutral' : (g.f[c.owner] ? HF.esc(g.f[c.owner].name) : 'Rival');
+        const kind = c.kind === 'sea' ? 'Urca mercante' : c.kind === 'cargo' ? 'Urca de carga' : 'Carreta';
+        const loot = c.kind === 'cargo'
+          ? (({ gold: '💰', food: '🌾', wood: '🪵' }[c.cargo.res] || '📦') + c.cargo.qty)
+          : ('💰' + Math.max(0, c.gold | 0));
+        const a = g.cells[c.a], b = g.cells[c.b];
+        const route = ((a && a.city) || '?') + ' → ' + ((b && b.city) || '?');
+        return `<button class="node" data-car="${k}" style="margin:5px 0;text-align:left">
+          <b>${c.kind === 'sea' ? '⛵' : '🐫'} ${kind}</b> · ${who} · ${loot}
+          <div class="t dim small">${HF.esc(route)} · casilla (${cell.q},${cell.r})${c.owner === me ? ' · propio' : ' · saqueable'}</div>
+        </button>`;
+      }).join('');
+      HF.modal(`<h3>🐫 Convoyes a la vista</h3>
+        <div class="dim small">Los convoyes ocupan su hexágono: hay que asaltarlos para despejarlo. El mercado neutral nunca se bloquea.</div>
+        <div style="max-height:52vh;overflow:auto">${rows}</div>
+        <button id="carClose" class="pri" style="width:100%;margin-top:8px">Cerrar</button>`, m => {
+        m.querySelector('#carClose').onclick = HF.closeModal;
+        m.querySelectorAll('[data-car]').forEach(b => b.onclick = () => {
+          const c = list[+b.dataset.car];
+          if (c && c.path[c.pos] != null) { HF.closeModal(); board.centerOn(c.path[c.pos]); }
+        });
+      });
+    }
+
     function scoreboard() {
       const stats = g.f.map((f, idx) => Object.assign(HF.factionSummary(g, f), { idx }));
       const maxPower = Math.max(1, ...stats.map(s => s.power));
@@ -1043,6 +1083,7 @@
 
     function showEnd() {
       HF.store.del('savegame_active');
+      HF.store.del('session_in_game');
       if (HF.replays) HF.replays.finish(g);
       if (HF.bgm) HF.bgm.stop();
       const res = HF.recordResult(g) || {};

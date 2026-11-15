@@ -74,6 +74,7 @@
     const nF = o.factions.length;
     const g = {
       v: 1, mode: o.mode || 'skirmish', seed: o.seed >>> 0, R: o.R, biome: o.biome, fog: o.fog || 'FULL', difficulty: o.difficulty || 'normal',
+      aiNoFog: (o.difficulty === 'hard' || o.difficulty === 'brutal'),
       turn: 1, cur: 0, over: null, goal: o.goal || { type: 'conquer' }, meta: o.meta || {}, rs: (o.seed * 7 + 13) >>> 0,
       f: [], cells: null, fogMap: null, timeline: [], events: [], undo: [],
       caravans: [], tradeBlocked: {}, storms: [],
@@ -153,6 +154,9 @@
     if (HF.Diplomacy) { HF.Diplomacy.ensure(g); HF.Diplomacy.ensureCells(g); }
     HF.updateFog(g);
     HF.recordTimeline(g);
+    // El tráfico existe desde el primer turno: los pueblos sin dueño ya tienen
+    // sus convoyes en el mapa listos para ser asaltados.
+    HF.syncCaravans(g);
     save_rs(g);
     return g;
   };
@@ -312,14 +316,32 @@
   // Rutas comerciales: pares de asentamientos (PUEBLO/CIUDAD) unidos por una
   // calzada continua (tierra) o por agua (mar). Se eligen las parejas MÁS
   // LEJANAS de cada dominio y se guarda el camino completo para la caravana.
+  // Los pueblos SIN DUEÑO forman además un mercado libre: generan convoyes
+  // neutrales desde el primer turno, de modo que la guerra al comercio existe
+  // aunque nadie haya construido todavía una segunda aldea.
+  const NEUTRAL = -1;
+  const isTown = c => !!c && (c.b === B.PUEBLO || c.b === B.CIUDAD);
   function tradeEnds(g, f) {
     const out = [];
-    for (const c of g.cells) if (c && c.o === f.id && c.sup && (c.b === B.PUEBLO || c.b === B.CIUDAD)) out.push(c);
+    for (const c of g.cells) {
+      if (!isTown(c)) continue;
+      if (c.o === NEUTRAL) { out.push(c); continue; }        // mercado libre
+      if (f && c.o === f.id && c.sup) out.push(c);           // socio propio abastecido
+    }
     return out;
   }
-  function tradeWalkable(n, f, kind) {
-    if (!n || (n.o !== f.id && n.o !== -1)) return false;
-    return kind === 'sea' ? isWater(n) : isRoad(n);
+  // Tierra: las caravanas propias circulan por la red vial (camino y
+  // asentamientos). Las neutrales cruzan campo abierto porque nadie les
+  // construye calzadas. El mar exige agua y no cruza fuego.
+  function tradeWalkable(n, owner, kind) {
+    if (!n) return false;
+    if (kind === 'sea') {
+      if (!isWater(n) || n.fire > 0) return false;
+      return owner == null || n.o === owner || n.o === NEUTRAL;
+    }
+    if (n.fire > 0 || n.burn > 0) return false;
+    if (owner == null) return n.t !== T.MAR;
+    return isRoad(n) && (n.o === owner || n.o === NEUTRAL);
   }
   function tradePath(g, s, t, prev, kind) {
     if (kind === 'sea') {
@@ -338,46 +360,61 @@
     return path.reverse();
   }
   function tradePairs(g, f, kind) {
-    const gr = grid(g), ends = tradeEnds(g, f), out = [];
+    const gr = grid(g), owner = f ? f.id : null, ends = tradeEnds(g, f), out = [];
     for (const s of ends) {
       const prev = new Map(), q = [];
       if (kind === 'sea') {
         for (const j of gr.nb[s.i]) {
-          if (tradeWalkable(g.cells[j], f, 'sea')) { prev.set(j, s.i); q.push(j); }
+          if (tradeWalkable(g.cells[j], owner, 'sea')) { prev.set(j, s.i); q.push(j); }
         }
       } else { prev.set(s.i, -1); q.push(s.i); }
       for (let h = 0; h < q.length; h++) {
         const x = q[h];
         for (const y of gr.nb[x]) {
-          if (prev.has(y) || !tradeWalkable(g.cells[y], f, kind)) continue;
+          if (prev.has(y) || !tradeWalkable(g.cells[y], owner, kind)) continue;
           prev.set(y, x); q.push(y);
         }
       }
       for (const t of ends) {
         if (t.i <= s.i) continue;
+        // El mercado neutral no se duplica como ruta de cada facción, y una
+        // ruta de facción siempre toca al menos un asentamiento propio.
+        if (!f && (s.o !== NEUTRAL || t.o !== NEUTRAL)) continue;
+        if (f && s.o === NEUTRAL && t.o === NEUTRAL) continue;
         const path = tradePath(g, s, t, prev, kind);
         if (path) out.push({ a: s.i, b: t.i, kind, path });
       }
     }
     return out;
   }
+  const byLongest = (p, q) => q.path.length - p.path.length || p.a - q.a || p.b - q.b;
   function tradeRoutes(g, f) {
     if (!g._trade) g._trade = {};
     const cached = g._trade[f.id];
     if (cached && cached.turn === g.turn) return cached.routes;
     const maxL = Math.max(0, HF.CFG.commerce.maxRoutes || 3);
     const maxS = Math.max(0, HF.CFG.commerce.maxSeaRoutes || 3);
-    const byLen = (p, q) => q.path.length - p.path.length || p.a - q.a || p.b - q.b;
-    const land = tradePairs(g, f, 'land').sort(byLen).slice(0, maxL);
-    const sea = tradePairs(g, f, 'sea').sort(byLen).slice(0, maxS);
-    const routes = land.concat(sea);
+    const routes = tradePairs(g, f, 'land').sort(byLongest).slice(0, maxL)
+      .concat(tradePairs(g, f, 'sea').sort(byLongest).slice(0, maxS));
     g._trade[f.id] = { turn: g.turn, routes };
     return routes;
   }
   HF.tradeRoutes = tradeRoutes;
+  // Tráfico de los pueblos sin dueño: convoyes cazables en cualquier partida.
+  function neutralRoutes(g) {
+    if (!g._trade) g._trade = {};
+    const cached = g._trade.neutral;
+    if (cached && cached.turn === g.turn) return cached.routes;
+    const C = HF.CFG.commerce || {};
+    const maxL = Math.max(0, C.neutralRoutes == null ? 2 : C.neutralRoutes);
+    const maxS = Math.max(0, C.neutralSeaRoutes == null ? 1 : C.neutralSeaRoutes);
+    const routes = tradePairs(g, null, 'land').sort(byLongest).slice(0, maxL)
+      .concat(tradePairs(g, null, 'sea').sort(byLongest).slice(0, maxS));
+    g._trade.neutral = { turn: g.turn, routes };
+    return routes;
+  }
+  HF.neutralRoutes = neutralRoutes;
 
-  // ---------- caravanas físicas ----------
-  const caravanKey = r => r.kind + ':' + r.a + ':' + r.b;
   function creditGold(g, cellId, owner, amount) {
     if (!amount) return;
     const c = g.cells[cellId], f = g.f[owner];
@@ -390,60 +427,118 @@
   // « en Tarraco» (o vacío si la casilla no tiene nombre de ciudad).
   const cityAt = c => (c && c.city) ? ' en ' + c.city : '';
   const RES_ES = { gold: 'oro', food: 'comida', wood: 'madera' };
+
+  // ---------- caravanas físicas ----------
+  // Una caravana OCUPA su hexágono: no se puede atravesar, no se apila con
+  // otra y hay que asaltarla para quitarla de en medio. Los convoyes neutrales
+  // (pueblos sin dueño) son presa libre para cualquiera.
+  const blockKey = (owner, r) => owner + ':' + r.kind + ':' + r.a + ':' + r.b;
+  function caravanAt(g, cellId) {
+    return (g.caravans || []).find(c => !c.dead && c.path[c.pos] === cellId) || null;
+  }
+  HF.caravanAt = caravanAt;
+  HF.caravansAt = (g, cellId) => (g.caravans || []).filter(c => !c.dead && c.path[c.pos] === cellId);
+  // ¿La casilla impide el paso de un convoy? Una unidad, otra caravana, fuego
+  // o cenizas bloquean el hexágono.
+  function caravanBlocked(g, cellId, except) {
+    const c = g.cells[cellId];
+    if (!c) return true;
+    if (c.u) return true;
+    if (c.fire > 0 || c.burn > 0) return true;
+    return (g.caravans || []).some(k => k !== except && !k.dead && k.path[k.pos] === cellId);
+  }
+  function firstFreeOnPath(g, car) {
+    for (let k = 0; k < car.path.length; k++) if (!caravanBlocked(g, car.path[k], car)) return k;
+    return -1;
+  }
+  // Avanza casilla a casilla: nunca salta por encima de un bloqueo y entrega
+  // al llegar a un extremo. El mercado neutral repone su carga.
+  function moveCaravan(g, car, speed, f, baseGold) {
+    const last = car.path.length - 1;
+    let arrived = false;
+    for (let k = 0; k < speed && last > 0; k++) {
+      let next = car.pos + car.dir;
+      if (next > last) { car.dir = -1; next = car.pos - 1; }
+      else if (next < 0) { car.dir = 1; next = 1; }
+      if (next < 0 || next > last) break;
+      if (caravanBlocked(g, car.path[next], car)) break;
+      car.pos = next;
+      if (car.pos === last || car.pos === 0) { arrived = true; break; }
+    }
+    if (arrived) {
+      const cellId = car.path[car.pos];
+      if (f) {
+        const amount = Math.max(0, car.gold || 0);
+        if (amount) creditGold(g, cellId, f.id, amount);
+        car.gold = 0;
+      } else car.gold = Math.max(1, baseGold || 4);
+      car.dir = car.pos === last ? -1 : 1;
+    }
+  }
   // Al final de cada ronda: aparecen caravanas para las rutas activas, avanzan
-  // 4 casillas y devengan 5 de oro por turno. Al llegar entregan la carga.
+  // y devengan oro; al llegar a un extremo entregan la carga. Es idempotente
+  // por turno, así se puede llamar al arrancar, al construir y al cerrar ronda.
   HF.syncCaravans = function (g) {
     if (!g.caravans) g.caravans = [];
     if (!g.tradeBlocked) g.tradeBlocked = {};
+    if (g._carTurn === g.turn) return;
+    g._carTurn = g.turn;
     const C = HF.CFG.commerce || {};
     const speed = Math.max(1, C.caravanSpeed || 4);
+    const nSpeed = Math.max(1, C.neutralSpeed || 3);
     const perTurn = Math.max(1, C.caravanGold || 5);
-    const blockTurns = Math.max(0, C.blockTurns || 2);
-    const alive = new Set();
+    const nGold = Math.max(1, C.neutralGold || 4);
     // 1) urcas de carga manuales: navegan y entregan al llegar al puerto.
+    //    También ocupan su hexágono: avanzan casilla a casilla y esperan si el
+    //    paso está tapado por una unidad u otro convoy.
     for (const car of g.caravans) {
-      if (car.kind !== 'cargo') continue;
+      if (car.kind !== 'cargo' || car.dead) continue;
       const last = car.path.length - 1;
-      const pos = (car.pos || 0) + speed;
-      if (pos >= last) {
-        car.pos = last;
-        creditRes(g, car.path[last], car.owner, car.cargo.res, car.cargo.qty);
-        car.dead = true;
-      } else car.pos = pos;
+      for (let k = 0; k < speed; k++) {
+        const next = (car.pos || 0) + 1;
+        if (next > last) break;
+        if (caravanBlocked(g, car.path[next], car)) break;
+        car.pos = next;
+        if (car.pos === last) {
+          creditRes(g, car.path[last], car.owner, car.cargo.res, car.cargo.qty);
+          car.dead = true;
+          break;
+        }
+      }
     }
+    // 2) mercado neutral primero (siempre hay tráfico que cazar) y luego cada
+    //    facción viva. Un convoy por ruta; la ruta saqueada queda bloqueada.
+    const groups = [{ owner: NEUTRAL, f: null, routes: neutralRoutes(g), speed: nSpeed, gold: nGold }];
     for (const f of g.f) {
       if (!f || f.alive === false) continue;
-      const routes = tradeRoutes(g, f);
+      groups.push({ owner: f.id, f: f, routes: tradeRoutes(g, f), speed: speed, gold: perTurn });
+    }
+    for (const grp of groups) {
       const keys = new Set();
-      for (const r of routes) {
-        const key = caravanKey(r);
+      for (const r of grp.routes) {
+        const key = blockKey(grp.owner, r);
         keys.add(key);
-        let car = g.caravans.find(c => c.key === key);
+        let car = g.caravans.find(c => c.owner === grp.owner && c.kind === r.kind && c.a === r.a && c.b === r.b);
         if (!car) {
           if ((g.tradeBlocked[key] || 0) > g.turn) continue;
-          car = { key, owner: f.id, kind: r.kind, a: r.a, b: r.b, path: r.path.slice(), pos: 0, dir: 1, gold: 0 };
+          car = { key, owner: grp.owner, kind: r.kind, a: r.a, b: r.b, path: r.path.slice(), pos: 0, dir: 1, gold: grp.f ? 0 : grp.gold };
+          const p0 = firstFreeOnPath(g, car);
+          if (p0 < 0) continue;            // ruta taponada por unidades
+          car.pos = p0;
           g.caravans.push(car);
         } else if (car.path.length !== r.path.length || car.path[car.pos] !== r.path[car.pos]) {
-          // la red cambió: la caravana reaparece al inicio del recorrido
-          car.path = r.path.slice(); car.pos = 0; car.dir = 1;
+          // la red cambió: la caravana reaparece en el primer hueco del recorrido
+          car.path = r.path.slice(); car.dir = 1;
+          const p0 = firstFreeOnPath(g, car);
+          car.pos = p0 < 0 ? 0 : p0;
         }
-        car.gold = (car.gold || 0) + perTurn;
-        let pos = car.pos + speed * car.dir;
-        const last = car.path.length - 1;
-        if (pos >= last) {
-          pos = last;
-          creditGold(g, car.path[last], car.owner, car.gold || 0);
-          car.gold = 0; car.dir = -1;
-        } else if (pos <= 0) {
-          pos = 0;
-          creditGold(g, car.path[0], car.owner, car.gold || 0);
-          car.gold = 0; car.dir = 1;
-        }
-        car.pos = pos;
+        car.gold = (car.gold || 0) + grp.gold;
+        moveCaravan(g, car, grp.speed, grp.f, nGold);
       }
-      for (const car of g.caravans) if (car.owner === f.id && car.kind !== 'cargo' && !keys.has(car.key)) car.dead = true;
+      for (const car of g.caravans) if (car.owner === grp.owner && car.kind !== 'cargo' && !keys.has(car.key)) car.dead = true;
     }
-    g.caravans = g.caravans.filter(c => !c.dead);
+    g.caravans = g.caravans.filter(c => !c.dead &&
+      (c.owner === NEUTRAL || (g.f[c.owner] && g.f[c.owner].alive !== false)));
     for (const k in g.tradeBlocked) if (g.tradeBlocked[k] <= g.turn) delete g.tradeBlocked[k];
   };
   // Asalto: cualquier tropa con ataque disponible se lleva el oro (o la carga)
@@ -456,14 +551,16 @@
     if (u.at <= 0) return { ok: false, msg: 'Sin ataque disponible' };
     const t = g.cells[to];
     if (!t) return { ok: false, msg: 'Destino no válido' };
-    const list = (g.caravans || []).filter(k => k.owner !== u.owner && k.path[k.pos] === to);
+    const list = (g.caravans || []).filter(k => !k.dead && k.owner !== u.owner && k.path[k.pos] === to);
     if (!list.length) return { ok: false, msg: 'No hay comercio en esa casilla' };
+    // Prioridad: la caravana con más botín.
+    list.sort((a, b) => ((b.gold || (b.cargo && b.cargo.qty) || 0) - (a.gold || (a.cargo && a.cargo.qty) || 0)));
     const car = list[0], f = g.f[u.owner];
     const naval = u.type === 'BAR', seaTrade = car.kind !== 'land';
     const origin = src != null && g.cells[src] ? g.cells[src] : c;
     const range = tradeStrikeRange(g, u, origin);
     if (naval && !seaTrade) return { ok: false, msg: 'Un barco no puede asaltar una carreta' };
-    // Permitir que infantería ataque caravanas marítimas desde costa adyacente (range=1)
+    // La infantería alcanza las urcas que navegan pegadas a la costa.
     if (!naval && seaTrade && range <= 1) {
       const isCoastal = HF.nbs(g, origin.i).some(j => {
         const n = g.cells[j];
@@ -475,20 +572,25 @@
     if (HF.hexDist(origin, t) > range) return { ok: false, msg: 'El comercio queda fuera de alcance' };
     if (origin !== c && origin.u) return { ok: false, msg: 'La posición de asalto está ocupada' };
     const comp = c.comp != null ? c.comp : mainComp(g, f);
-    let loot = 0;
+    let loot = 0, res = 'gold';
     if (car.kind === 'cargo') {
       loot = Math.max(0, (car.cargo && car.cargo.qty) || 0);
-      const res = car.cargo.res;
+      res = car.cargo.res;
       if (f.stock && f.stock[comp]) { f.stock[comp][res] += loot; syncTotals(f); }
       else f[res] = (f[res] || 0) + loot;
-      ev(g, to, 'Urca capturada: +' + loot + ' ' + res, 'good');
+      ev(g, to, 'Urca capturada: +' + loot + ' ' + (RES_ES[res] || res), 'good');
     } else {
       loot = Math.max(0, car.gold || 0);
       if (f.stock && f.stock[comp]) { f.stock[comp].gold += loot; syncTotals(f); }
       else f.gold = (f.gold || 0) + loot;
-      g.tradeBlocked = g.tradeBlocked || {};
-      g.tradeBlocked[car.key || caravanKey(car)] = g.turn + Math.max(0, HF.CFG.commerce.blockTurns || 2);
-      ev(g, to, 'Caravana saqueada: +' + loot + ' oro', 'good');
+      // El mercado neutral no se bloquea: repone convoyes y sigue siendo caza.
+      if (car.owner !== NEUTRAL) {
+        g.tradeBlocked = g.tradeBlocked || {};
+        g.tradeBlocked[blockKey(car.owner, car)] = g.turn + Math.max(0, HF.CFG.commerce.blockTurns || 2);
+      }
+      const who = car.owner === NEUTRAL ? 'Caravana neutral saqueada'
+        : (car.kind === 'sea' ? 'Urca mercante saqueada' : 'Caravana saqueada');
+      ev(g, to, who + ': +' + loot + ' oro', 'good');
     }
     g.caravans = g.caravans.filter(k => k !== car);
     // Si el asalto se lanzó desde una casilla alcanzable, la tropa se planta
@@ -496,15 +598,17 @@
     if (origin !== c) { origin.u = u; c.u = null; u.mv = 0; }
     u.at = 0;
     g._trade = null;
-    return { ok: true, kind: 'raid', loot, res: car.cargo ? car.cargo.res : 'gold', movedTo: origin.i };
+    return { ok: true, kind: 'raid', loot, res: res, movedTo: origin.i, owner: car.owner };
   };
-  HF.caravansAt = (g, cellId) => (g.caravans || []).filter(c => c.path[c.pos] === cellId);
 
   // ---------- carga manual entre puertos ----------
   // Puerto: asentamiento propio con suministro y al menos una casilla de agua
   // adyacente. El stock es por provincia (f.stock[comp]).
+  // Un campamento costero también es puerto: es el destino natural del
+  // abastecimiento de una colonia incomunicada por tierra.
   HF.isPort = function (g, c) {
-    if (!c || !c.sup || (c.b !== B.PUEBLO && c.b !== B.CIUDAD)) return false;
+    if (!c || !c.sup) return false;
+    if (c.b !== B.PUEBLO && c.b !== B.CIUDAD && c.b !== B.CAMPAMENTO) return false;
     return grid(g).nb[c.i].some(j => isWater(g.cells[j]));
   };
   HF.ports = function (g, f) {
@@ -516,18 +620,37 @@
   HF.seaPath = function (g, f, aId, bId) {
     const gr = grid(g), a = g.cells[aId], b = g.cells[bId];
     if (!a || !b) return null;
+    const owner = f && f.id != null ? f.id : f;
     const prev = new Map(), q = [];
     for (const j of gr.nb[aId]) {
-      if (tradeWalkable(g.cells[j], f, 'sea')) { prev.set(j, aId); q.push(j); }
+      if (tradeWalkable(g.cells[j], owner, 'sea')) { prev.set(j, aId); q.push(j); }
     }
     for (let h = 0; h < q.length; h++) {
       const x = q[h];
       for (const y of gr.nb[x]) {
-        if (prev.has(y) || !tradeWalkable(g.cells[y], f, 'sea')) continue;
+        if (prev.has(y) || !tradeWalkable(g.cells[y], owner, 'sea')) continue;
         prev.set(y, x); q.push(y);
       }
     }
     return tradePath(g, a, b, prev, 'sea');
+  };
+  // ¿Dos casillas están comunicadas por tierra dentro del mismo territorio?
+  // Si lo están, no tiene sentido fletar una urca: el jugador debe usar la red
+  // vial. Se recorre el territorio propio por tierra (sin cruzar mar).
+  HF.landLinked = function (g, owner, aId, bId) {
+    if (aId === bId) return true;
+    const seen = new Set([aId]), q = [aId];
+    while (q.length) {
+      const x = q.pop();
+      for (const y of HF.nbs(g, x)) {
+        if (seen.has(y)) continue;
+        const n = g.cells[y];
+        if (!n || n.o !== owner || n.t === T.MAR) continue;
+        if (y === bId) return true;
+        seen.add(y); q.push(y);
+      }
+    }
+    return false;
   };
   function creditRes(g, cellId, owner, res, qty) {
     if (!qty) return;
@@ -539,13 +662,19 @@
     ev(g, cellId, 'Carga entregada' + cityAt(c) + ': +' + qty + ' ' + (RES_ES[res] || res), 'good');
   }
   // Crea una urca de carga: viaja sola y es saqueable como el comercio naval.
+  // Reglas: zarpa de una ciudad o pueblo y abastece una colonia INCOMUNICADA
+  // POR TIERRA (normalmente un campamento costero). Si el destino ya está
+  // conectado por tierra, el jugador debe usar la red vial, no el mar.
   HF.sendCargo = function (g, fromId, toId, res, qty) {
     const from = g.cells[fromId], to = g.cells[toId];
     if (!from || !to) return { ok: false, msg: 'Puerto no válido' };
     const f = g.f[from.o];
     if (!f || from.o !== to.o) return { ok: false, msg: 'Los puertos deben ser tuyos' };
     if (['gold', 'food', 'wood'].indexOf(res) < 0) return { ok: false, msg: 'Recurso no válido' };
-    if (!HF.isPort(g, from) || !HF.isPort(g, to)) return { ok: false, msg: 'No son puertos' };
+    if (from.b !== B.PUEBLO && from.b !== B.CIUDAD) return { ok: false, msg: 'La carga debe zarpar de una ciudad o pueblo' };
+    if (!HF.isPort(g, from) || !HF.isPort(g, to)) return { ok: false, msg: 'No son puertos: hace falta agua adyacente' };
+    if (HF.landLinked(g, f.id, fromId, toId)) return { ok: false, msg: 'Ya están comunicados por tierra: usa la red vial' };
+    if (caravanAt(g, fromId)) return { ok: false, msg: 'El puerto está ocupado por un convoy: espera a que zarpe' };
     const path = HF.seaPath(g, f, fromId, toId);
     if (!path) return { ok: false, msg: 'Sin ruta marítima entre los puertos' };
     const comp = from.comp != null ? from.comp : mainComp(g, f);
@@ -565,6 +694,15 @@
     // La repetición reconstruye la partida: registrar el envío manual.
     if (g.replayLog && !g.noReplay) g.replayLog.push([9, fromId, toId, res, q]);
     return { ok: true, qty: q };
+  };
+  // Destinos válidos para una carga: puertos propios (ciudad, pueblo o
+  // campamento costero) a los que NO se llega por tierra desde el origen.
+  HF.cargoDests = function (g, f, fromId) {
+    const from = g.cells[fromId];
+    if (!from || from.o !== f.id || (from.b !== B.PUEBLO && from.b !== B.CIUDAD)) return [];
+    if (!HF.isPort(g, from)) return [];
+    return HF.ports(g, f).filter(p => p.i !== fromId &&
+      !HF.landLinked(g, f.id, fromId, p.i) && HF.seaPath(g, f, fromId, p.i));
   };
   HF.income = (g, f, comp) => {
     const inc = { gold: 0, food: 0, wood: 0 }, C = HF.CFG.income;
@@ -763,6 +901,7 @@
     for (const j of HF.nbs(g, cell.i)) {
       const n = g.cells[j];
       if (!n || n.u) continue;
+      if (caravanAt(g, j)) continue;          // el convoy ocupa el hexágono
       const water = n.t === T.MAR || n.t === T.RIO;
       if (naval ? !water : water) continue;
       if (n.o !== f.id && n.o !== -1) continue;
@@ -1330,6 +1469,7 @@
     for (const y of gr.nb[ci]) {
       const n = g.cells[y];
       if (isWater(n) || !canStep(cu, n, f)) continue;
+      if (caravanAt(g, y)) continue;            // el convoy ocupa el hexágono
       if (n.o === u.owner) {
         if (n.u) continue;
         out.set(y, { k: n.b === B.ARBOL ? 'chop' : 'move', ship: true });
@@ -1364,7 +1504,7 @@
     const fixed = u.type === 'ARC' || u.type === 'SIE';
     const sources = (fixed ? [c.i] : (srces && srces.length ? srces : [c.i])).filter(i => g.cells[i]);
     for (const car of g.caravans) {
-      if (car.owner === u.owner) continue;
+      if (car.dead || car.owner === u.owner) continue;
       const seaTrade = car.kind !== 'land';
       const cid = car.path[car.pos];
       const t = cid != null ? g.cells[cid] : null;
@@ -1374,27 +1514,26 @@
       let from = null, best = 0;
       for (const s of sources) {
         const sc = g.cells[s], r = tradeStrikeRange(g, u, sc);
-        // Permitir que infantería ataque caravanas marítimas si está en costa adyacente
-        // (r=1 desde casilla costera adyacente al mar)
+        // Un barco no sube a una calzada.
+        if (naval && !seaTrade) continue;
+        // La infantería sólo alcanza las urcas que navegan junto a la costa.
         if (seaTrade && !naval && r <= 1) {
-          // Verificar si la fuente está en costa (adyacente a mar)
           const isCoastal = HF.nbs(g, s).some(j => {
             const n = g.cells[j];
             return n && isWater(n);
           });
           if (!isCoastal) continue;
         }
-        if (naval && !seaTrade) continue;             // un barco no sube a una calzada
         if (HF.hexDist(sc, t) > r) continue;
         if (r > best) { best = r; from = s; }
       }
       if (from == null) continue;
       const loot = car.kind === 'cargo' ? ((car.cargo && car.cargo.qty) || 0) : (car.gold || 0);
-      const opt = { k: 'raid', from, loot, res: car.cargo ? car.cargo.res : 'gold' };
+      const opt = { k: 'raid', from, loot, res: car.cargo ? car.cargo.res : 'gold', target: car.owner };
       const prev = out.get(cid);
       if (!prev) out.set(cid, opt);
       else if (prev.k === 'raid') { if (loot > (prev.loot || 0)) out.set(cid, opt); }
-      else if (!(prev.alt || []).some(a => a.k === 'raid')) (prev.alt = prev.alt || []).push(opt);
+      else putAlt(out, cid, opt);
     }
   }
 
@@ -1413,6 +1552,8 @@
           const n = g.cells[y];
           if (dist.has(y) || !isWater(n)) continue;
           if (winter && n.t === T.RIO) continue;   // río helado: los barcos no navegan
+          // Ningún convoy se atraviesa: ni enemigo, ni neutral ni propio.
+          if (caravanAt(g, y)) continue;
           if (n.u) {
             if (n.u.owner === u.owner && n.u.type === 'BAR' && !n.u.cargo && !u.cargo && HF.CFG.fuseTypes.includes('BAR') && n.u.tier + u.tier <= (has(g.f[u.owner], 'ASCETIC_COMMUNE') ? HF.CFG.fuseMaxAscetic : HF.CFG.fuseMax)) out.set(y, { k: 'fuse' });
             continue;
@@ -1431,8 +1572,9 @@
         const t = g.cells[d.i];
         if (t.i !== ci && HF.hexDist(c, t) <= HF.UNITS.BAR.shoot && t.u && t.u.owner !== u.owner && t.u.type !== 'BAR') out.set(t.i, { k: 'shoot' });
       }
-      // Urca enemiga a tiro de abordaje: el barco de guerra puede saquearla.
-      const sources = [ci].concat(reach ? [...reach.keys()].filter(k => k !== ci && !g.cells[k].u) : []);
+      // Urca enemiga o neutral: el barco de guerra la aborda desde su casilla o
+      // desde cualquier agua alcanzable.
+      const sources = [ci].concat(reach ? [...reach.keys()].filter(k => k !== ci && !g.cells[k].u && !caravanAt(g, k)) : []);
       tradeRaidOptions(g, c, u, out, sources);
     }
   }
@@ -1445,7 +1587,7 @@
     if (u.mv > 0 && HF.CFG.shipCarry) {
       for (const y of grid(g).nb[ci]) {
         const n = g.cells[y];
-        if (isWater(n) && n.u && n.u.owner === u.owner && n.u.type === 'BAR' && !n.u.cargo) out.set(y, { k: 'board' });
+        if (isWater(n) && n.u && n.u.owner === u.owner && n.u.type === 'BAR' && !n.u.cargo && !caravanAt(g, y)) out.set(y, { k: 'board' });
       }
     }
     const f = g.f[u.owner], gr = grid(g);
@@ -1501,6 +1643,8 @@
           }
           // Un enemigo sigue bloqueando por completo.
           if (n.u) continue;
+          // Los convoyes ocupan su hexágono: no se atraviesan, se asaltan.
+          if (caravanAt(g, y)) continue;
           if (!sea && n.o !== u.owner) continue;
           const old = dist.get(y);
           if (old !== undefined && old <= nd) continue;
@@ -1527,6 +1671,9 @@
         if (d >= rng) continue;
         gr.nb[x].forEach(y => {
           const n = g.cells[y];
+          // Un convoy ocupa el hexágono: no se conquista ni se atraviesa, solo
+          // se saquea (la opción de asalto la añade tradeRaidOptions).
+          if (caravanAt(g, y)) return;
           // Una casilla con un aliado queda fuera del asalto: no se le puede
           // atacar ni sirve de escalón (la unidad acabaría encima de él).
           if (n.u && n.u.owner === u.owner) return;
@@ -1695,6 +1842,10 @@
       const r = HF.raidCaravan(g, from, to, opt.from);
       if (r.ok) { HF.updateFog(g); HF.checkEnd(g); }
       return r;
+    }
+    // Defensa en profundidad: el hexágono de un convoy no se ocupa nunca.
+    if ((opt.k === 'move' || opt.k === 'atk' || opt.k === 'chop') && caravanAt(g, to)) {
+      return { ok: false, msg: 'Un convoy ocupa esa casilla: asáltalo para despejarla' };
     }
     const t = g.cells[to], f = g.f[u.owner], D = HF.CFG.doctrine;
     const human = f.human;

@@ -34,8 +34,10 @@
   const onlineAllowed = () => !(HF.security && HF.security.locked);
 
   // ---------- almacenamiento local ----------
-  const get = (k, d) => HF.store.get(k, d);
-  const set = (k, v) => HF.store.set(k, v);
+  // HF.storage replica player_id/secret_key en cookie: si localStorage está
+  // bloqueado o lleno, la identidad sobrevive a F5 en lugar de regenerarse.
+  const get = (k, d) => (HF.storage ? HF.storage.get(k, d) : HF.store.get(k, d));
+  const set = (k, v) => (HF.storage ? HF.storage.set(k, v) : HF.store.set(k, v));
 
   function makeId() {
     // Identidad opaca y persistente. Antes eran 4 dígitos: dos jugadores podían

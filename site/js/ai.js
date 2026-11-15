@@ -26,7 +26,7 @@
 (function (G) {
   'use strict';
   const HF = G.HF, B = HF.B, T = HF.T;
-  HF.aiBuild = '2026-11-13-6';
+  HF.aiBuild = '2026-11-13-17';
   const BIG = 999, MAX_ROUNDS = 2;
 
   // =====================================================================
@@ -35,7 +35,14 @@
   const has = (f, tag) => !!(f && f.tags && f.tags.indexOf(tag) >= 0);
   const grid = g => g._grid || (g._grid = HF.makeGrid(g.R));
   const isWater = c => !!c && (c.t === T.MAR || c.t === T.RIO);
-  const isSettle = c => !!c && HF.isSettle(c.b);
+  // Acepta tanto una casilla como un id de edificio: el archivo usa ambas
+  // formas y antes `isSettle(c.b)` recibía un número, por lo que devolvía
+  // siempre false y la IA no veía ciudades/pueblos/bastiones.
+  const isSettle = x => {
+    if (x == null) return false;
+    if (typeof x === 'number') return !!HF.isSettle(x);
+    return !!HF.isSettle(x.b);
+  };
   const rankOf = c => (c && HF.RANK[c.b]) || 0;
   const uOf = (g, i) => (g.cells[i] ? g.cells[i].u : null);
   const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -495,31 +502,93 @@
 
   function buildGuardMap(g, me, ctx) {
     const guard = Object.create(null);
-    for (let k = 0; k < ctx.mySettles.length; k++) {
-      const ci = ctx.mySettles[k], c = g.cells[ci];
+    eachCell(g, (c, ci) => {
+      if (c.o !== me || !isSettle(c.b)) return;
       let near = BIG, foes = 0;
       for (let j = 0; j < ctx.enemyUnits.length; j++) {
         const d = HEX(c, g.cells[ctx.enemyUnits[j]]);
         if (d < near) near = d;
         if (d <= 3) foes++;
       }
-      // Solo se guarnece lo que está cerca de un enemigo. Antes la capital
-      // siempre generaba guardia y las unidades se quedaban dando vueltas
-      // alrededor de ella en vez de expandirse por recursos.
-      if (near > 6) continue;
+      // Un bastión/ciudad en un paso estrecho es estratégico aunque el enemigo
+      // esté lejos: si se deja vacío, el único ejército rival pasa por ahí.
+      const ownNb = countAdjacent(g, ci, x => x.o === me && x.t !== T.MAR);
+      const fort = c.b === B.BASTION || c.b === B.CIUDAD;
+      const critical = fort && (ownNb <= 3 || ctx.frontier[ci] || (ctx.choke && ctx.choke[ci])) && ctx.enemy != null;
+      if (near > 6 && !critical) return;
       let p = 0;
       if (!c.u) p += c.b === B.CIUDAD ? 14 : c.b === B.BASTION ? 10 : 6;
       if (c.b === B.CIUDAD) p += 6;
       if (c.cap) p += 5;
+      if (critical) p += 16;
       p += Math.max(0, 5 - near) * 2;
       p += Math.min(9, foes * 3);
-      // Unidades navales enemigas cerca de una isla también amenazan la costa.
       for (let j = 0; j < ctx.enemyShips.length; j++) {
         if (HEX(c, g.cells[ctx.enemyShips[j]]) <= 5) p += 4;
       }
-      if (p > 0) guard[ci] = Math.min(18, p);
-    }
+      if (p > 0) guard[ci] = Math.min(c.u ? 12 : 30, p);
+    });
     return guard;
+  }
+
+  // Un cuello de botella real: si al ocupar/fortificar esa casilla una parte
+  // de la masa enemiga deja de poder llegar por tierra a nuestra capital, vale
+  // mucho más que un bastión cualquiera. Se usa la capital enemiga y todas sus
+  // unidades (IA difícil sin niebla) para no bloquear una ruta vacía.
+  function computeChoke(g, me, ctx) {
+    ctx.choke = new Uint8Array(g.cells.length);
+    ctx.chokeStrength = new Uint8Array(g.cells.length);
+    ctx.chokeActive = false;
+    if (ctx.enemy == null || ctx.capital == null) return;
+    const gr = grid(g);
+    const core = typeof ctx.capital === 'number' ? ctx.capital : (ctx.capital && ctx.capital.i);
+    if (core == null) return;
+    const sources = [];
+    const addSource = i => { if (i != null && i !== core && sources.indexOf(i) < 0) sources.push(i); };
+    const enemyCap = g.cells.find(c => c && c.cap && c.o === ctx.enemy);
+    if (enemyCap) addSource(enemyCap.i);
+    for (let k = 0; k < ctx.enemyUnits.length && k < 12; k++) addSource(ctx.enemyUnits[k]);
+    if (!sources.length) return;
+
+    const reach = (src, block) => {
+      const seen = new Uint8Array(g.cells.length); seen[src] = 1;
+      const q = [src];
+      for (let h = 0; h < q.length; h++) {
+        const x = q[h];
+        if (x === core) return true;
+        for (const y of (gr.nb[x] || [])) {
+          if (seen[y] || y === block) continue;
+          const c = g.cells[y];
+          if (!c || c.t === T.MAR) continue;
+          seen[y] = 1; q.push(y);
+        }
+      }
+      return false;
+    };
+    const active = sources.filter(src => reach(src, -1));
+    if (!active.length) return;             // ya están separados por mar
+    const cands = buildCandidates(g, B.BASTION);
+    for (const ci of cands) {
+      let blocked = 0;
+      for (const src of active) if (!reach(src, ci)) blocked++;
+      if (blocked > 0) {
+        ctx.choke[ci] = 1;
+        ctx.chokeStrength[ci] = Math.min(255, blocked);
+        ctx.chokeActive = true;
+      }
+    }
+    // Fallback para pasos de 1-2 hexágonos entre agua/montaña: aunque haya un
+    // rodeo largo, un bastión aquí sigue siendo el punto que bloquea el paso.
+    for (const ci of cands) {
+      if (ctx.choke[ci] || !ctx.frontier[ci]) continue;
+      const ownNb = countAdjacent(g, ci, x => x.o === me && x.t !== T.MAR);
+      const coast = coastNeighbor(g, ci) >= 0;
+      if (ownNb <= 2 || (coast && ownNb <= 3)) {
+        ctx.choke[ci] = 1;
+        ctx.chokeStrength[ci] = Math.max(1, ctx.chokeStrength[ci]);
+        ctx.chokeActive = true;
+      }
+    }
   }
 
   function analyze(g, me) {
@@ -565,6 +634,17 @@
 
     const net = safePreview(g, f, null);
     const income = net.inc || {};
+    // Recurso escaso del momento: guía dónde conviene un pueblo de producción.
+    let scarceRes = null;
+    try {
+      const vals = [
+        { r: HF.RES.TRIGO, v: (f.food || 0) + (income.food || 0) * 4 },
+        { r: HF.RES.ORO, v: (f.gold || 0) + (income.gold || 0) * 4 },
+        { r: HF.RES.MADERA, v: (f.wood || 0) + (income.wood || 0) * 4 }
+      ];
+      vals.sort((a, b) => a.v - b.v);
+      scarceRes = vals[0].r;
+    } catch (e) { scarceRes = null; }
     let myPower = 0, enemyPower = 0;
     const powerByFaction = Object.create(null);
     for (let k = 0; k < myUnits.length; k++) myPower += unitPower(g, g.cells[myUnits[k]]);
@@ -576,7 +656,7 @@
     }
 
     const ctx = {
-      g, me, f, comp, df, waterDist, coastDist, threat, net, income,
+      g, me, f, comp, df, waterDist, coastDist, threat, net, income, scarceRes,
       myComps, myUnits, enemyUnits, myShips, enemyShips,
       mySettles, myCities, enemySettles, enemyCities,
       myPower, enemyPower,
@@ -679,7 +759,70 @@
       }
     }
 
+    // Objetivo ofensivo único: una ciudad/pueblo enemigo al que concentrar el
+    // ejército. Sin esto cada unidad persigue su propia casilla y la IA tiene
+    // muchas tropas pero ninguna ofensiva.
+    ctx.warTarget = ctx.siegeTarget;
+    if (ctx.warTarget == null && ctx.enemySettles.length) {
+      let bd = BIG;
+      for (const si of ctx.enemySettles) {
+        let d = BIG;
+        for (let j = 0; j < myUnits.length; j++) d = Math.min(d, HEX(g.cells[si], g.cells[myUnits[j]]));
+        if (d < bd) { bd = d; ctx.warTarget = si; }
+      }
+    }
+    ctx.offensive = !!(ctx.contactTurn && ctx.enemy != null && ctx.warTarget != null);
+    ctx.myBastions = [];
+    eachCell(g, (c, i) => { if (c.o === me && c.b === B.BASTION) ctx.myBastions.push(i); });
+    ctx.maxBastions = Math.max(2, Math.min(4, 1 + Math.floor((ctx.mySettles.length || 1) / 4)));
+
+    // El bastión no depende de un turno fijo: se prepara cuando la IA entra
+    // realmente en contacto con el humano (unidad enemiga cerca, o pisando
+    // nuestra frontera). El turno 10 es solo el mínimo absoluto; si el choque
+    // llega en el 12, 15 o 18, el bastión llega con él.
+    ctx.contact = false;
+    ctx.contactTurn = f._aiContactTurn || null;
+    ctx.chokeReady = false;
+    try {
+      let nearestFoe = BIG;
+      for (let k = 0; k < ctx.enemyUnits.length; k++) {
+        const u = g.cells[ctx.enemyUnits[k]];
+        if (ctx.capital) nearestFoe = Math.min(nearestFoe, HEX(ctx.capital, u));
+        for (let j = 0; j < ctx.myUnits.length && j < 6; j++) nearestFoe = Math.min(nearestFoe, HEX(u, g.cells[ctx.myUnits[j]]));
+      }
+      let contact = nearestFoe <= 6;
+      if (!contact) {
+        for (let k = 0; k < ctx.enemyUnits.length && !contact; k++) {
+          for (const y of (grid(g).nb[ctx.enemyUnits[k]] || [])) {
+            const n = g.cells[y];
+            if (n && n.o === me) { contact = true; break; }
+          }
+        }
+      }
+      if (contact) {
+        if (!f._aiContactTurn) f._aiContactTurn = g.turn;
+        ctx.contact = true;
+        ctx.contactTurn = f._aiContactTurn;
+      }
+      ctx.chokeReady = g.turn >= 10 && !!ctx.contactTurn;
+    } catch (e) { fail('contact', e); }
+
+    // ¿El frente terrestre está bloqueado por un bastión/ciudad rival?
+    // Si lo está, la IA debe abrir un frente nuevo por mar en vez de
+    // estrellarse una y otra vez contra la misma muralla.
+    ctx.landBlocked = false;
+    try {
+      for (let k = 0; k < ctx.enemySettles.length; k++) {
+        const si = ctx.enemySettles[k], sc = g.cells[si];
+        if (sc.b !== B.BASTION && sc.b !== B.CIUDAD) continue;
+        let near = BIG;
+        for (let j = 0; j < ctx.myUnits.length; j++) near = Math.min(near, HEX(sc, g.cells[ctx.myUnits[j]]));
+        if (near <= 8 && cellDefense(g, si, sc.u || null) >= 4) { ctx.landBlocked = true; break; }
+      }
+    } catch (e) { fail('landBlocked', e); }
+
     try { ctx.naval = navalPlan(g, me, ctx); } catch (e) { fail('navalPlan', e); ctx.naval = emptyNaval(); }
+    try { computeChoke(g, me, ctx); } catch (e) { fail('choke', e); ctx.choke = new Uint8Array(g.cells.length); ctx.chokeActive = false; }
     try { ctx.guard = buildGuardMap(g, me, ctx); } catch (e) { fail('guard', e); ctx.guard = Object.create(null); }
     return ctx;
   }
@@ -688,7 +831,7 @@
     return {
       targetComp: -1, beach: -1, wf: null, needTransport: false, shipsWanted: 0,
       loadCells: new Set(), stranded: new Set(), threat: 0, value: 0, scores: [], staging: -1, beaches: [],
-      raidCell: -1, raidOnly: false
+      raidCell: -1, raidOnly: false, flank: false, targetHasSettle: false
     };
   }
 
@@ -878,17 +1021,21 @@
       }
       if (wd < BIG && (!compWd.has(k) || wd < compWd.get(k))) compWd.set(k, wd);
     });
+    let flankComp = -1;
     eachCell(g, (c, i) => {
       if (c.t === T.MAR) return;
       const k = comp[i];
       if (k < 0) return;
       const mine = ctx.myComps.has(k);
-      // Si ya tenemos un asentamiento en esa masa de tierra, se llega por
-      // tierra: no gastamos barcos en invadir lo que ya es nuestro.
-      if (mine && ownSettleComps.has(k)) return;
       const enemyHere = c.o >= 0 && c.o !== me;
       const neutralHere = c.o === -1 && (c.res || isSettle(c.b));
+      const sameComp = mine && ownSettleComps.has(k);
+      // Un frente terrestre bloqueado se rodea por mar: se permite atacar
+      // celdas enemigas de la MISMA masa de tierra desde la costa.
+      if (sameComp && !ctx.landBlocked) return;
+      if (sameComp && !enemyHere) return;
       if (!enemyHere && !neutralHere) return;
+      if (sameComp && enemyHere) flankComp = k;
       const wd = compWd.get(k);
       if (wd == null || wd >= BIG) return;
       let v = cellTargetValue(g, me, c);
@@ -896,6 +1043,9 @@
       // La capital rival manda: es la victoria. Las islas neutrales solo son
       // un premio secundario.
       if (ctx.enemy != null && c.o === ctx.enemy && c.b === B.CIUDAD) v *= 2.6;
+      // Con contacto, abrir un frente contra el enemigo real vale más que
+      // colonizar una isla neutral lejana.
+      if (enemyHere && ctx.contactTurn) v += 35;
       const cut = enemyHere ? cutInfo(g, ctx, i).v : 0;
       if (cut) v += cut * 1.4;
       if (mine) v *= 0.75;
@@ -940,6 +1090,7 @@
       (best.settle > 0 || best.coast >= Math.max(2, HF.CFG.isolatedCampMin || 3));
     if (best && (best.score > 18 || colonize)) {
       plan.targetComp = best.comp;
+      plan.flank = (best.comp === flankComp && ctx.landBlocked);
       plan.value = best.score;
       // Las tropas que ya están en la isla objetivo son una cabeza de playa,
       // no náufragos: deben empujar tierra adentro, no volver al barco.
@@ -984,6 +1135,7 @@
         let v = cellTargetValue(g, me, c) + (c.u && c.u.owner !== me ? 12 : 0);
         v += cut * 2;
         v -= def * 14 + dng * 2.5 + wd * 2;
+        if (plan.flank && c.o === me) v -= 25;   // desembarcar detrás, no en casa
         if (c.o === me && c.u) v -= 6;       // ya hay tropa: no repetir
         beach.push({ i, v, def, cut });
       });
@@ -1051,15 +1203,15 @@
     // forman una provincia solo al llegar a isolatedCampMin. Si desembarca una
     // unidad por turno, muere de hambre antes de fundar el campamento.
     let targetHasSettle = false;
-    if (plan.targetComp >= 0) eachCell(g, (c) => {
+    if (plan.targetComp >= 0 && !plan.flank) eachCell(g, (c) => {
       if (c.o === me && comp[c.i] === plan.targetComp && isSettle(c.b)) targetHasSettle = true;
     });
     const waveMin = Math.max(2, HF.CFG.isolatedCampMin || 3);
     const raidOnly = plan.raidCell >= 0 && !targetHasSettle && plan.beaches.length < waveMin;
     plan.raidOnly = raidOnly;
-    const wanted = plan.targetComp >= 0
-      ? (raidOnly ? 1 : (targetHasSettle ? 2 : waveMin))
-      : 0;
+    // Apoyo sostenido: una cabeza de playa consolidada no debe bajar la
+    // oleada a 2 transportes; se mantiene el grupo de 3.
+    const wanted = plan.targetComp >= 0 ? (raidOnly ? 1 : Math.max(3, waveMin)) : 0;
     plan.targetHasSettle = targetHasSettle;
     const shipCount = ctx.myShips.length;
     const slots = Math.max(shipCount, wanted);
@@ -1069,7 +1221,7 @@
       const i = ctx.myUnits[k], c = cells[i], u = c.u;
       if (!u || u.type === 'BAR' || u.cargo) continue;
       // Las tropas ya desembarcadas en el objetivo no vuelven a subir.
-      if (plan.targetComp >= 0 && comp[i] === plan.targetComp) continue;
+      if (plan.targetComp >= 0 && comp[i] === plan.targetComp && !plan.flank) continue;
       if (u.mv <= 0 && !plan.stranded.has(i)) continue;
       const cd = ctx.coastDist[i];
       if (cd >= BIG && !plan.stranded.has(i)) continue;
@@ -1158,6 +1310,11 @@
 
     // Guarnición: acudir a una ciudad/pueblo amenazado.
     if (ctx.guard && ctx.guard[to]) s += ctx.guard[to];
+    // No abandonar un bastión/ciudad que es el único paso: una unidad N2
+    // allí bloquea a todo un ejército; si sale, el rival pasa sin combatir.
+    if (ctx.guard && ctx.guard[ci] && (c.b === B.BASTION || c.b === B.CIUDAD)) {
+      s -= Math.min(50, ctx.guard[ci] * 3);
+    }
     // Sin amenaza, encerrarse en un asentamiento propio no produce recursos.
     // Las unidades deben salir a capturar casillas y recursos.
     if (isSettle(t.b) && t.o === me && !ctx.threatened) s -= 18;
@@ -1208,6 +1365,16 @@
         if (to === raid.goal) s += 50;
       }
     }
+    // Ofensiva concentrada: todas las unidades de ataque convergen en el mismo
+    // objetivo, en vez de repartirse capturando parcelas y guarneciendo todo.
+    if (ctx.offensive && ctx.warTarget >= 0 && u.type !== 'BAR' &&
+      !(ctx.guard && ctx.guard[ci]) && !(ctx.naval && ctx.naval.loadCells && ctx.naval.loadCells.has(ci))) {
+      const deadNow = lethal(cellDefense(g, ci, u), ctx.threat.dangerNow[ci], ctx.threat.elite[ci]);
+      if (!deadNow) {
+        const goal = g.cells[ctx.warTarget];
+        if (goal) s += (HEX(c, goal) - HEX(t, goal)) * 3.2;
+      }
+    }
     return s;
   }
 
@@ -1232,8 +1399,7 @@
       return s;
     }
     let s = 10;
-    if (t.u) s += 16 + t.u.tier * 7;
-    if (t.b === B.CIUDAD) s += 100;
+    if (t.u) s += 16 + t.u.tier * 7;    if (t.b === B.CIUDAD) s += 100;
     else if (t.b === B.BASTION) s += 34;
     else if (t.b === B.PUEBLO) s += 30;
     else if (t.b === B.CAMPAMENTO) s += 12;
@@ -1242,6 +1408,18 @@
     if (t.u && t.o === 0) s += 2;
     if (t.o === ctx.enemy) s += 6;
     if (o && o.lastStand) s -= 18;
+    // Atacar desde un bastión/ciudad clave también lo abandona. Si hay otra
+    // unidad propia al lado, una puede salir y la otra mantiene el paso. Y si
+    // aún le queda movimiento, puede atacar y volver al mismo bastión: eso no
+    // deja la puerta abierta y debe permitirse.
+    const friends = countAdjacent(g, ci, x => x.u && x.u.owner === me);
+    const canReturn = u.mv > 0 && HEX(g.cells[ci], t) <= 1;
+    if (ctx.guard && ctx.guard[ci] && (g.cells[ci].b === B.BASTION || g.cells[ci].b === B.CIUDAD)) {
+      if (friends > 0) s -= 8;
+      else if (canReturn) s -= 4;
+      else s -= Math.min(45, ctx.guard[ci] * 2);
+      if (canReturn) s += 6;                 // salir, golpear y regresar
+    }
 
     // Corte logístico: capturar este punto deja a parte del ejército rival sin
     // asentamiento y, por tanto, sin suministro. Vale más que una muerte.
@@ -1249,6 +1427,7 @@
     if (cut) s += cut * 1.8;
     const raid = ctx.raid && ctx.raid[ci];
     if (raid && raid.goal === to) s += 45;
+    if (ctx.warTarget === to) s += 20;       // objetivo ofensivo común
 
     // Exposición tras ocupar la casilla.
     const defAfter = cellDefense(g, to, u);
@@ -1265,9 +1444,15 @@
     const t = g.cells[to];
     if (!t) return -BIG;
     let s = 16 + (t.u ? t.u.tier * 5 : 0);
+    if (t.o === ctx.enemy) s += 6;
     if (t.b === B.CIUDAD || t.b === B.BASTION) s += 12;
     if (t.u && t.u.type === 'SIE') s += 8;
     if (t.u && t.u.tier >= 3) s += 6;
+    // Disparar desde una posición protegida es apoyo sostenido: el arquero no
+    // cambia de sitio, no pierde cobertura y desgasta la defensa enemiga.
+    const here = g.cells[ci];
+    if ((ctx.guard && ctx.guard[ci]) || coverScore(here) >= 10) s += 8;
+    if (u.type === 'ARC') s += 4;
     return s;
   }
 
@@ -1278,12 +1463,16 @@
     if (t.b === B.CIUDAD) s += 55;
     else if (t.b === B.BASTION) s += 35;
     else if (t.b === B.PUEBLO) s += 28;
+    // La catapulta/asedio golpea desde la distancia: no abandona la cobertura.
+    const here = g.cells[ci];
+    if ((ctx.guard && ctx.guard[ci]) || coverScore(here) >= 10) s += 8;
     return s;
   }
 
   function scoreChop(g, me, ctx, ci, u, to) {
     const f = g.f[me], c = g.cells[ci], t = g.cells[to];
     let s = 5;
+    if (ctx.guard && ctx.guard[ci] && (c.b === B.BASTION || c.b === B.CIUDAD)) s -= 25;
     if (t.res) s += 18;
     if (ctx.trees[to]) s += 7 * ctx.trees[to];
     const wood = f.wood || 0;
@@ -1336,8 +1525,9 @@
     let s = 0;
     const def = cellDefense(g, ci, u);
     if (lethal(def, ctx.threat.dangerNow[ci], ctx.threat.elite[ci])) s -= 25;
-    if (ctx.guard && ctx.guard[ci]) s += Math.min(14, ctx.guard[ci]);
+    if (ctx.guard && ctx.guard[ci]) s += Math.min(24, ctx.guard[ci]);
     if (isSettle(c.b) && (ctx.stance === 'defend' || (ctx.guard && ctx.guard[ci]))) s += 5;
+    if (ctx.guard && ctx.guard[ci] && (c.b === B.BASTION || c.b === B.CIUDAD)) s += 8;
     if (u.type === 'ARC' || u.type === 'SIE') s += 3;
     if (ctx.trees[ci]) s -= 8;
     return s;
@@ -1372,23 +1562,51 @@
   function actUnit(g, me, ctx, ci, u) {
     const opts = HF.options(g, ci);
     if (!opts || !opts.size) return false;
-    let best = null;
+    let best = null, bestShoot = null, bestSiege = null;
     const consider = (to, o) => {
       const cand = evalOption(g, me, ctx, ci, u, to, o);
-      if (cand && (!best || cand.score > best.score)) best = cand;
+      if (!cand) return;
+      if (!best || cand.score > best.score) best = cand;
+      if (cand.kind === 'shoot' && (!bestShoot || cand.score > bestShoot.score)) bestShoot = cand;
+      if (cand.kind === 'siege' && (!bestSiege || cand.score > bestSiege.score)) bestSiege = cand;
     };
     opts.forEach((o, to) => {
       consider(to, o);
       if (o.alt) for (let k = 0; k < o.alt.length; k++) consider(to, o.alt[k]);
     });
+    // Un arquero/asedio con un objetivo a tiro NO se reposiciona: dispara o
+    // asedia desde donde está. Así mantiene la distancia, no pierde cobertura y
+    // desgasta al enemigo turno tras turno. Puede hacerlo aunque esté sola en el
+    // bastión: es atacar sin dejar el paso vacío.
+    const ranged = u.type === 'ARC' ? bestShoot : (u.type === 'SIE' ? (bestSiege || bestShoot) : null);
+    if (ranged && ranged.score > 0) {
+      const def = cellDefense(g, ci, u);
+      if (!lethal(def, ctx.threat.dangerNow[ci], ctx.threat.elite[ci])) best = ranged;
+    }
     if (!best) return false;
+    // Disparar/asediar no abandona la posición: no se compara con la guarnición.
+    if ((best.kind === 'shoot' || best.kind === 'siege') && best.score > 0) {
+      const rs = HF.act(g, ci, best.to, best.kind);
+      return !!(rs && rs.ok);
+    }
     const hold = holdScore(g, me, ctx, ci, u);
     // Si quedarse es peor que moverse (por ejemplo, hay un N3 adyacente), una
     // jugada con puntuación negativa sigue siendo la mejor: retirarse.
     if (best.score <= hold) return false;
     if (best.score <= 0 && hold >= 0) return false;
+    const guardedHome = !!(ctx.guard && ctx.guard[ci] &&
+      (g.cells[ci].b === B.BASTION || g.cells[ci].b === B.CIUDAD));
     const r = HF.act(g, ci, best.to, best.kind);
-    return !!(r && r.ok);
+    if (!r || !r.ok) return false;
+    // Ataque de guarnición y regreso: si el ataque no consumió el movimiento,
+    // la unidad vuelve al bastión en la misma jugada. No queda el paso vacío.
+    if (guardedHome && best.kind === 'atk' && HEX(g.cells[best.to], g.cells[ci]) <= 1) {
+      const atk = g.cells[best.to] && g.cells[best.to].u;
+      if (atk && atk.owner === me && atk.mv > 0 && (!g.cells[ci].u || g.cells[ci].u.owner === me)) {
+        try { HF.act(g, best.to, ci, 'move'); } catch (e) { fail('return', e); }
+      }
+    }
+    return true;
   }
 
   function playUnits(g, me, ctx) {
@@ -1465,6 +1683,7 @@
     const c = g.cells[ci];
     let s = 0;
     if (c.res) s += 7;
+    if (ctx.scarceRes && c.res === ctx.scarceRes) s += 5;
     const nb = cellsAround(g, ci, 1);
     for (let k = 0; k < nb.length; k++) {
       const x = nb[k];
@@ -1484,6 +1703,7 @@
     const c = g.cells[ci];
     if (c.b === B.PUEBLO || c.b === B.CIUDAD) return -100;   // reservar para ciudad
     let s = 0;
+    if (ctx.choke && ctx.choke[ci]) s += 40 + Math.min(6, (ctx.chokeStrength ? ctx.chokeStrength[ci] : 1)) * 8;
     const foes = countAdjacent(g, ci, x => x.o >= 0 && x.o !== me && x.t !== T.MAR);
     s += foes * 6;
     if (ctx.df[ci] <= 2) s += 6;
@@ -1597,7 +1817,7 @@
   function macro(g, me, ctx) {
     const f = g.f[me];
     const net = ctx.net || {};
-    const wood = f.wood || 0, food = f.food || 0;
+    const wood = f.wood || 0, food = f.food || 0, gold = f.gold || 0;
     // Si falta flota para una invasión, el oro y la madera se reservan para los
     // transportes: construir una ciudad en ese momento dejaba a la IA sin 60
     // de oro y bloqueaba la operación anfibia durante decenas de turnos.
@@ -1629,7 +1849,15 @@
       return false;
     };
 
-    // 0. Flota: si no hay ninguna casilla de agua junto a un asentamiento,
+    // 0. Cuello de botella: un bastión aquí cierra el único paso terrestre
+    //    entre el enemigo y nuestra capital. Tiene prioridad incluso sobre la
+    //    flota: si el humano puede cruzar por tierra, no hay colonia que valga.
+    if (ctx.chokeActive && ctx.chokeReady && (ctx.myBastions || []).length < ctx.maxBastions && wood >= 30 && food >= 20 && gold >= 20) {
+      const b = bestCandidate(g, me, ctx, B.BASTION, ci => ctx.choke[ci] ? bastionSpotScore(g, me, ctx, ci) + 40 : -1000);
+      if (b && ctx.choke[b.ci] && b.score > 0) tryBuild(B.BASTION, b.ci, 0, !!ctx.threatened);
+    }
+
+    // 0b. Flota: si no hay ninguna casilla de agua junto a un asentamiento,
     //    el Barco no se puede reclutar. Se funda un asentamiento costero
     //    (bastión si se puede; pueblo como mal menor), nunca un campamento.
     if (navyNeed && !ctx.threatened) {
@@ -1657,13 +1885,32 @@
     //    pagados: son un espejismo económico y no son refugio real.
 
     // 2. Defensa urgente: bastión junto a una ciudad amenazada sin fortaleza.
-    if (ctx.stance === 'defend' || ctx.threatened) {
+    if ((ctx.stance === 'defend' || ctx.threatened) && (ctx.myBastions || []).length < ctx.maxBastions + 1) {
       const b = bestCandidate(g, me, ctx, B.BASTION, ci => bastionSpotScore(g, me, ctx, ci));
       if (b && b.score >= 10 && wood >= 30) tryBuild(B.BASTION, b.ci, 0, true);
     }
 
-    // 3. No se construyen pueblos intermedios: si hay campamento, se mejora
-    //    directamente a bastión o ciudad (el pueblo también se sustituye).
+    // 3. Pueblo de producción cerca del frente: a partir del turno 7 las
+    //    unidades ya salen lejos de la capital; un pueblo junto a un recurso
+    //    escaso acerca el reclutamiento y consolida la frontera. No es un
+    //    bastión: se construye por economía/expansión, no por defensa.
+    if (g.turn >= 7 && ctx.frontierActive && !ctx.threatened && !navyNeed) {
+      const p = bestCandidate(g, me, ctx, B.PUEBLO, ci => {
+        const c = g.cells[ci];
+        if (isSettle(c.b)) return -100;
+        let s = settleSpotScore(g, me, ctx, ci);
+        if (ctx.frontier[ci]) s += 4;
+        let nearOwn = BIG;
+        for (const si of ctx.mySettles) nearOwn = Math.min(nearOwn, HEX(c, g.cells[si]));
+        if (nearOwn < 4) s -= 10;
+        let foe = BIG;
+        for (const ui of ctx.enemyUnits) foe = Math.min(foe, HEX(c, g.cells[ui]));
+        if (foe >= 3 && foe <= 10) s += 4;
+        else if (foe > 10) s -= 3;
+        return s;
+      });
+      if (p && p.score >= 12 && wood >= 25 && food >= 25 && gold >= 20) tryBuild(B.PUEBLO, p.ci);
+    }
 
     // 4. Calzadas: conectan provincias, habilitan caravanas y aceleran marchas.
     if (wood >= 24 && ctx.mySettles.length >= 2) {
@@ -1684,12 +1931,9 @@
       }
     }
 
-    // 5. Fortalecer el frente con un bastión aunque no haya urgencia. Es el
-    //    edificio intermedio correcto: 30 de coste, Defensa 3 y +3/+3.
-    if (wood >= 36 && food >= 24 && ctx.frontierActive) {
-      const b = bestCandidate(g, me, ctx, B.BASTION, ci => bastionSpotScore(g, me, ctx, ci));
-      if (b && b.score >= 14) tryBuild(B.BASTION, b.ci);
-    }
+    // 5. No se construyen bastiones "por si acaso" en cualquier frontera:
+    //    eso convertía a la IA en un erizo con 10-15 fortalezas y sin ejército
+    //    ofensivo. Solo cuello de botella (paso 0) o defensa urgente (paso 2).
 
     // 6. Ciudad: se construye DIRECTAMENTE sobre el mejor racimo de recursos
     //    (el pueblo intermedio no hace falta). Cuesta 60 de cada recurso, así
@@ -1702,7 +1946,7 @@
         if (c.b === B.CAMPAMENTO || c.b === B.PUEBLO || c.b === B.BASTION) s += 6;
         return s;
       });
-      const richCity = (f.gold || 0) > 100 && (f.food || 0) > 100 && (f.wood || 0) > 100;
+      const richCity = g.turn >= 7 && (f.gold || 0) > 100 && (f.food || 0) > 100 && (f.wood || 0) > 100;
       if (!navyNeed && b && b.score > 0 && richCity && net.netFood > 0 && net.netGold > 0) tryBuild(B.CIUDAD, b.ci, 4);
     }
   }
@@ -1797,12 +2041,12 @@
     if (ctx.naval && ctx.naval.needTransport && myShips < Math.max(1, ctx.naval.shipsWanted)) out.push('BAR');
     if (ctx.stance === 'defend') {
       if (ctx.siegeTarget != null && mySiege < 1 && turn > 4) out.push('SIE');
-      if (myArc < Math.ceil(myInf / 2) && turn > 3) out.push('ARC');
+      if (myArc < Math.max(1, Math.ceil(myInf / 2)) && (ctx.contactTurn || ctx.threatened)) out.push('ARC');
       out.push('INF');
       if (myShips > 0 && myShips < 2 && ctx.enemyShips.length) out.push('BAR');
     } else {
       if (ctx.siegeTarget != null && mySiege < 1 && turn > 4) out.push('SIE');
-      if (myArc < Math.ceil(myInf / 3) + 1 && turn > 3) out.push('ARC');
+      if (myArc < Math.ceil(myInf / 3) + 1 && (ctx.contactTurn || ctx.threatened)) out.push('ARC');
       if ((has(f, 'TACTIC_MOBILE_WAR') || has(f, 'CIV_TYPE_NOMAD')) && myCab < 2 && surplus) out.push('CAB');
       if (myEng < 1 && turn > 4 && (ctx.frontierActive || has(f, 'MIL_SIEGE_ENGINEERING'))) out.push('ENG');
       if (ctx.naval && ctx.naval.needTransport && myShips < 2) out.push('BAR');
@@ -1978,7 +2222,7 @@
     const waveMin = Math.max(2, HF.CFG.isolatedCampMin || 3);
     let targetHasSettle = !!plan.targetHasSettle;
     let ownTargetCells = 0;
-    if (targetComp >= 0) eachCell(g, (c, i) => {
+    if (targetComp >= 0 && !plan.flank) eachCell(g, (c, i) => {
       if (c.o !== me || ctx.comp[i] !== targetComp) return;
       ownTargetCells++;
       if (isSettle(c.b)) targetHasSettle = true;
@@ -2010,6 +2254,7 @@
             // Desembarco de la carga.
             const toComp = ctx.comp[to];
             if (plan.targetComp >= 0 && toComp !== plan.targetComp) return;
+            if (plan.flank && t.o === me) return;   // el flanco desembarca en tierra rival
             if (plan.targetComp < 0 && !ctx.myComps.has(toComp) && t.o !== me) return;
             // Nunca desembarcar de vuelta en nuestra masa de tierra de origen;
             // sí se puede reforzar una cabeza de playa del objetivo, aunque ya
@@ -2112,6 +2357,9 @@
     try { manageBank(g, me, ctx); } catch (e) { fail('banca', e); }
     try { playUnits(g, me, ctx); } catch (e) { fail('unidades', e); }
     try { macro(g, me, ctx); } catch (e) { fail('construccion', e); }
+    // La obra puede haber creado un bastión nuevo: recalcular guarniciones
+    // antes de la segunda pasada para que alguien lo ocupe ese mismo turno.
+    try { ctx.guard = buildGuardMap(g, me, ctx); } catch (e) { fail('guard2', e); }
     try { recruit(g, me, ctx); } catch (e) { fail('reclutamiento', e); }
     try { playUnits(g, me, ctx); } catch (e) { fail('unidades2', e); }
     try { playShips(g, me, ctx); } catch (e) { fail('naval', e); }
@@ -2165,6 +2413,8 @@
       const raid = Object.keys(a.raid || {}).map(k => ({ unit: +k, goal: a.raid[k].goal, value: a.raid[k].value }));
       return {
         build: HF.aiBuild || '?', turn: g.turn, me, stance: a.stance, enemy: a.enemy,
+        vision: g.aiNoFog ? 'full' : 'normal',
+        contactTurn: a.contactTurn, chokeReady: !!a.chokeReady,
         resources: { gold: g.f[me].gold, food: g.f[me].food, wood: g.f[me].wood },
         net: a.net ? { food: a.net.netFood, gold: a.net.netGold } : null,
         territory: terr, units,
@@ -2174,6 +2424,7 @@
         naval: {
           targetComp: naval.targetComp, beach: naval.beach, raidCell: naval.raidCell,
           raidOnly: !!naval.raidOnly, needTransport: !!naval.needTransport,
+          flank: !!naval.flank,
           shipsWanted: naval.shipsWanted, ships: a.myShips.slice(),
           loadCells: Array.from(naval.loadCells || []),
           stranded: Array.from(naval.stranded || []),

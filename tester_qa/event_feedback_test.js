@@ -176,7 +176,7 @@ const sandbox = {
 };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-for (const f of ['util.js', 'config.js', 'i18n.js', 'event-feedback-langs.js']) {
+for (const f of ['util.js', 'config.js', 'i18n.js', 'i18n/survey-i18n.js', 'event-feedback-langs.js']) {
   vm.runInContext(fs.readFileSync(path.join(JS, f), 'utf8'), sandbox, { filename: f });
 }
 
@@ -583,6 +583,34 @@ function submitCall() { return rpcCalls.find(c => c.fn === 'fn_ef_submit_respons
     ok(cards[1].querySelectorAll('.ef-opt')[0].textContent === 'OPCIÓN DB',
       'usa option_labels de la BD para la opción');
   }
+  EF.reset();
+
+  // -------------------------------------------------------------------------
+  // 12c-bis. BD sembrada con texto literal en español + jugador en francés
+  // -------------------------------------------------------------------------
+  resetAll();
+  HF.setLang('fr');
+  activePayload = payload({
+    campaign: {
+      campaign_id: 'campaign-lit', name: 'Reddit Playtest Nov 2026',
+      description: 'Feedback inicial de la comunidad de Reddit.',
+      description_label: 'Feedback inicial de la comunidad de Reddit.'
+    },
+    questions: [
+      { question_id: Q.text, question_text: '¿Hubo algún momento en el que te sintieras perdido o no supieras qué hacer a continuación?', question_label: '¿Hubo algún momento en el que te sintieras perdido o no supieras qué hacer a continuación?', question_type: 'TEXT', display_order: 1, is_required: true },
+      { question_id: Q.select, question_text: '¿Volverás a jugar?', question_label: '¿Volverás a jugar?', question_type: 'SELECT', options: ['Sí, sin duda', 'Tal vez, depende de las mejoras', 'No'], option_labels: ['Sí, sin duda', 'Tal vez, depende de las mejoras', 'No'], display_order: 2, is_required: true }
+    ]
+  });
+  {
+    await open();
+    const s = sheet();
+    const text = s.textContent;
+    ok(/Allez-vous rejouer/.test(text), 'literal de la BD: pregunta traducida al francés');
+    ok(!/¿Volverás a jugar\?/.test(text), 'literal de la BD: no queda la pregunta en español');
+    ok(/Oui, absolument/.test(text), 'literal de la BD: opción traducida al francés');
+    ok(/Retours initiaux/.test(s.querySelector('.ef-desc').textContent), 'descripción de campaña traducida');
+  }
+  HF.setLang('es');
   EF.reset();
 
   // -------------------------------------------------------------------------

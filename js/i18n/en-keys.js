@@ -377,7 +377,7 @@
   "SETTINGS_EF_DIAG_LABEL": "🔎 Survey diagnostics",
   "SETTINGS_EF_DIAG_DESC": "Check whether there is an active campaign, which questions exist and which local blocks are set, without opening DevTools.",
   "SETTINGS_EF_DIAG_BUTTON": "Open diagnostics",
-  "SETTINGS_VERSION": "Federati v1.2 · build 208 · IA 2026-11-13-6 · 🌐 Online multiplayer",
+  "SETTINGS_VERSION": "Federati v1.2 · build 219 · IA 2026-11-13-17 · 🌐 Online multiplayer",
   "ONLINE_JOIN_TITLE": "Join a room",
   "ONLINE_JOIN_DESC": "Ask the host for the code; they choose the map, the biome and the fog.",
   "ONLINE_CODE_LABEL": "Code",

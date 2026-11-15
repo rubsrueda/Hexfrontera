@@ -1,0 +1,7 @@
+colapso.png
+las publicaciones de imagen permiten escribir texto debajo de la foto. Si te aparece ese recuadro, pega ahí mismo el texto con el enlace ([https://federati.org/?m=5R65M](https://federati.org/?m=5R65M)).
+
+Título:A big army won't save you if your supply line is cut. Can you save this position on Turn 1?
+
+Primer comentario (inmediatamente después de publicar la imagen):This is Turn 1 of a custom tactical scenario in Federati (a deterministic hex-based 4X with zero combat RNG—just supply chains and terrain).   Your main force is trapped and starving because a single red cavalry unit severed your connection to the capital.   Click here to play this exact map directly in your browser (no download or sign-up)Let me know in how many turns you manage to break the encirclement.
+

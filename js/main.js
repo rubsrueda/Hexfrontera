@@ -45,6 +45,12 @@
     HF.store.recover('savegame_active');
     HF.store.recover('tribe_profile');
 
+    // AuthManager: conserva la identidad persistida y valida en segundo plano.
+    // No bloquea el arranque ni crea una cuenta nueva si ya hay una.
+    if (HF.auth && HF.auth.boot) {
+      Promise.resolve(HF.auth.boot()).catch(() => { });
+    }
+
     const hash = location.hash || '';
 
     // Enlace corto de repetición: federati.org/?r=X9K2A
@@ -107,6 +113,25 @@
       dropBootSplash();
       HF.playReplayFromCode(hash.slice(8));
       return;
+    }
+
+    // Reanudación tras F5 / reapertura: solo si el jugador estaba DENTRO de
+    // una partida (session_in_game) y hay un guardado válido. Salir al Hub
+    // borra la marca, así que el menú no se secuestra.
+    const inGame = HF.store.get('session_in_game', false);
+    const activeSave = HF.store.get('savegame_active', null);
+    if (!activeSave && inGame) HF.store.del('session_in_game');
+    if (inGame && activeSave && !activeSave.over) {
+      dropBootSplash();
+      try {
+        HF.startGame(HF.deserialize(activeSave));
+        return;
+      } catch (e) {
+        console.error('[resume] no se pudo reanudar la partida:', e);
+        HF.store.del('savegame_active');
+        HF.store.del('session_in_game');
+        HF.toast(HF.lang() === 'en' ? 'Could not resume the game.' : 'No se pudo reanudar la partida.');
+      }
     }
 
     // Pantalla de introducción (especificacion_pantalla_lore.md):
