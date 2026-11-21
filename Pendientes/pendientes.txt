@@ -1,0 +1,2 @@
+# 1 [RESUELTO] Los barcos los sufraga la capital con mayor producción para evitar que se pierdan por intentar pagarse en una provincia recién creada.
+# 2 [RESUELTO] La pantalla de Fin del Juego resume el tiempo total de la partida.

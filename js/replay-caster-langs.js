@@ -70,19 +70,19 @@
 
   const BANK = {
     es: {
-      supply: ['¡Números rojos para {victim}! ¡Se le corta el suministro y el vestuario está en llamas!'],
-      expansion: ['¡{actor} se expande como un vendaval! {gain} hexágonos ganados; al cierre del turno suma {hexes} hexágonos y {recursos} recursos ({gold} de oro, {food} de trigo, {wood} de madera), con {cities} ciudades y {units} tropas; el turno deja {perdidas} bajas.'],
+      supply: ['¡Números rojos para {victim}! ¡Se le corta el suministro!'],
+      expansion: ['¡{actor} al cierre del turno suma {hexes} hexágonos y {recursos} recursos, con {cities} ciudades y {units} tropas; el turno deja {perdidas} bajas.'],
       keyPoints: ['¡{actor} pone la directa sobre los recursos! {key} puntos clave bajo control: oro y madera para rato.'],
-      siege: ['¡Ratonera! ¡{unit} de {victim} queda rodeada y sin salida! ¡No hay por dónde escapar!'],
-      massacre: ['¡Masacre! ¡{unit} de {victim} desaparece del tablero! ¡{actor} no deja ni las cenizas!'],
+      siege: ['¡Ratonera! ¡{unit} de {victim} queda rodeada y sin salida!'],
+      massacre: ['¡Masacre! ¡{unit} de {victim} desaparece del tablero por {actor}!'],
       cityFall: ['¡{actor} toma {place} de {victim}! ¡La defensa se parte por la mitad!'],
       rhythm: ['¡Cambio de ritmo! {actor} aguantó y ahora lanza el contragolpe: {gain} hexágonos de golpe. ¡Se acabó la defensa pasiva!'],
       pyrrhic: ['¡Victoria pírrica para {actor}! Gana terreno, pero pierde {lost} unidades por el camino. ¡Triunfo con sabor amargo!'],
       finalSummary: ['¡Silbatazo final! La repetición termina en el turno {turn}. {actor}: {wcities} ciudades, {wgold} de oro, {wfood} de trigo, {wwood} de madera y {wunits} tropas. {victim}: {lcities} ciudades, {lgold} de oro, {lfood} de trigo, {lwood} de madera y {lunits} tropas. ¡Un cierre de campeonato!']
     },
     en: {
-      supply: ['Red numbers for {victim}! The supply line is cut and the locker room is on fire!'],
-      expansion: ['{actor} expands like a storm! {gain} hexes gained; at the close of the turn they hold {hexes} hexes and {recursos} resources ({gold} gold, {food} food, {wood} wood), with {cities} cities and {units} troops; the turn leaves {perdidas} casualties.'],
+      supply: ['Red numbers for {victim}! The supply line is cut!'],
+      expansion: ['{actor} at the close of the turn they hold {hexes} hexes and {recursos} resources, with {cities} cities and {units} troops; leaves {perdidas} casualties.'],
       keyPoints: ['{actor} locks down the resources! {key} key points under control: gold and timber for days.'],
       siege: ['Mousetrap! {victim}’s {unit} is surrounded with no way out! There’s no escape!'],
       massacre: ['Massacre! {victim}’s {unit} is wiped off the board! {actor} leaves nothing behind!'],

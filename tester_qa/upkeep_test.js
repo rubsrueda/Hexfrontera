@@ -22,6 +22,7 @@ for (const f of ['util.js', 'config.js', 'data.js', 'engine.js'])
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), sandbox);
 // El tablero no existe en la prueba: se neutralizan los ganchos de presentación.
 HF.updateFog = () => {};
+const realCheckEnd = HF.checkEnd;
 HF.checkEnd = () => {};
 
 const T = HF.T, B = HF.B;
@@ -144,6 +145,55 @@ ok(HF.UNITS.INF.upGold.join(',') === '1,2,5', 'INF oro por nivel = 1/2/5');
   // verdad (2/2 y «no paga más»), no el 3/2 de la tabla cruda.
   ok(g.events.some(e => /paga 2 comida y 2 oro\/turno/.test(e.txt) && /no paga más que antes/.test(e.txt)),
     'con ASCETIC el aviso refleja el coste real y que el total no sube');
+}
+
+// --- 7. Los barcos dependen de la capital que más produce, no de la más cercana ---
+{
+  const { g, gr, prov: mainProv } = makeGame();
+  const newCapital = gr.list.find(d => d.q === 3 && d.r === 0);
+  const sea = gr.list.find(d => d.q === 4 && d.r === 0);
+  const low = g.cells[newCapital.i];
+  low.o = 0;
+  low.sup = 1;
+  low.b = B.CIUDAD;
+  low.cap = 1;
+  g.cells[sea.i].t = T.MAR;
+  g.cells[sea.i].o = -1;
+  g.cells[sea.i].u = { type: 'BAR', tier: 1, owner: 0, mv: 1, at: 1 };
+
+  HF.supply(g);
+  const lowProv = low.comp;
+  ok(lowProv !== mainProv, 'la capital nueva constituye otra provincia');
+  ok(HF.upkeepOf(g, g.f[0], 'up', mainProv) === 3,
+    'la provincia más productiva asume la comida del barco');
+  ok(HF.upkeepOf(g, g.f[0], 'upGold', mainProv) === 3,
+    'la provincia más productiva asume el oro del barco');
+  ok(HF.upkeepOf(g, g.f[0], 'up', lowProv) === 0,
+    'la capital recién creada no intenta pagar el barco');
+
+  g.f[0].stock[mainProv] = { gold: 20, food: 20, wood: 0 };
+  g.f[0].stock[lowProv] = { gold: 0, food: 0, wood: 0 };
+  g.turn = 2;
+  HF.startTurn(g, g.f[0]);
+  ok(g.cells[sea.i].u && g.cells[sea.i].u.tier === 1,
+    'el barco sobrevive aunque la provincia cercana no tenga reservas');
+}
+
+// --- 8. El fin guarda y formatea la duración total ---
+{
+  const { g } = makeGame();
+  const now = Date.now();
+  g.startedAt = now - 3723000;
+  g.f[1].alive = false;
+  HF.checkEnd = realCheckEnd;
+  HF.checkEnd(g);
+  ok(g.over && g.over.elapsedMs >= 3723000 && g.over.elapsedMs < 3728000,
+    'el resultado conserva los milisegundos transcurridos');
+  ok(g.endedAt >= g.startedAt, 'la partida registra la marca temporal de cierre');
+  ok(HF.formatGameDuration(3723000) === '1 h 2 min 3 s',
+    'la duración se resume en horas, minutos y segundos');
+  ok(HF.formatGameDuration(65000) === '1 min 5 s' && HF.formatGameDuration(-1) === '0 s',
+    'la duración corta y los valores negativos se formatean con seguridad');
 }
 
 if (fail) { console.error(`\n${fail} comprobaciones CON FALLOS`); process.exit(1); }

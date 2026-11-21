@@ -79,6 +79,7 @@
       v: 1, mode: o.mode || 'skirmish', seed: o.seed >>> 0, R: o.R, biome: o.biome, fog: o.fog || 'FULL', difficulty: o.difficulty || 'normal',
       aiNoFog: (o.difficulty === 'hard' || o.difficulty === 'brutal'),
       turn: 1, cur: 0, over: null, goal: o.goal || { type: 'conquer' }, meta: o.meta || {}, rs: (o.seed * 7 + 13) >>> 0,
+      startedAt: Date.now(),
       f: [], cells: null, fogMap: null, timeline: [], events: [], undo: [],
       caravans: [], tradeBlocked: {}, storms: [],
       replayLog: o.isReplay ? null : [], isReplay: !!o.isReplay, noReplay: !!o.isReplay,
@@ -250,6 +251,22 @@
     for (const c of g.cells) if (c && c.o === f.id && c.sup && c.cap && (!best || HF.RANK[c.b] > HF.RANK[best.b])) best = c;
     return best ? best.comp : -1;
   }
+  function mostProductiveComp(g, f) {
+    const main = mainComp(g, f);
+    let best = main, score = -Infinity;
+    const seen = new Set();
+    for (const c of g.cells) {
+      if (!c || c.o !== f.id || !c.sup || !c.cap || c.comp == null || seen.has(c.comp)) continue;
+      seen.add(c.comp);
+      const inc = HF.income(g, f, c.comp);
+      const total = (inc.gold || 0) + (inc.food || 0) + (inc.wood || 0);
+      if (total > score || (total === score && c.comp === main)) {
+        best = c.comp;
+        score = total;
+      }
+    }
+    return best;
+  }
   HF.initStock = g => {
     for (const f of g.f) {
       if (f.stock) continue;
@@ -286,6 +303,10 @@
         }
         m[c.i] = best;
       }
+    }
+    const shipPayer = mostProductiveComp(g, f);
+    if (shipPayer >= 0) {
+      for (const c of g.cells) if (c && c.u && c.u.owner === f.id && c.u.type === 'BAR') m[c.i] = shipPayer;
     }
     return m;
   }
@@ -2505,9 +2526,24 @@
     return null;
   };
   function finish(g, winner, reason) {
-    g.over = { winner, reason, turn: g.turn, won: winner === 0 };
+    const endedAt = Date.now();
+    if (!(g.startedAt > 0)) g.startedAt = endedAt;
+    g.over = {
+      winner, reason, turn: g.turn, won: winner === 0,
+      elapsedMs: Math.max(0, endedAt - g.startedAt)
+    };
+    g.endedAt = endedAt;
     HF.recordTimeline(g);
   }
+  HF.formatGameDuration = function (ms) {
+    const totalSeconds = Math.max(0, Math.floor((+ms || 0) / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor(totalSeconds % 3600 / 60);
+    const seconds = totalSeconds % 60;
+    if (hours) return hours + ' h ' + minutes + ' min ' + seconds + ' s';
+    if (minutes) return minutes + ' min ' + seconds + ' s';
+    return seconds + ' s';
+  };
   HF.recordTimeline = g => {
     g.timeline.push({ t: g.turn, terr: g.f.map(f => HF.territory(g, f.id)), gold: g.f.map(f => f.gold), units: g.f.map(f => g.cells.filter(c => c && c.u && c.u.owner === f.id).length) });
   };

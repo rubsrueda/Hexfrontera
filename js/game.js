@@ -55,6 +55,7 @@
   };
 
   HF.startGame = function (g) {
+    if (!(g.startedAt > 0)) g.startedAt = Date.now();
     // Facción que controla este cliente (0 en local; asiento en multijugador).
     let P = g.mySeat || 0;
     if (typeof document !== 'undefined' && document.body && document.body.classList) document.body.classList.remove('hub-bg');
@@ -1184,7 +1185,9 @@
       }
       if (g.mode === 'daily') extra = `<div style="text-align:center;font-size:20px">${res.official ? (won ? 'Resultado oficial ' + HF.medal(g.turn) : 'Intento oficial fallido') : 'Práctica (no cuenta)'}</div>`;
       const kd = s.lost ? (s.kills / s.lost).toFixed(2) : (s.kills ? '∞' : '0.00');
-      HF.modal(`<h2 style="text-align:center">${won ? '🏆 ¡Victoria!' : '💀 Derrota'}</h2><div style="text-align:center" class="dim">${HF.esc(g.over.reason)} · Turno ${g.turn}</div>${extra}
+      const elapsed = g.over.elapsedMs != null ? g.over.elapsedMs : Math.max(0, (g.endedAt || Date.now()) - g.startedAt);
+      const duration = HF.formatGameDuration(elapsed);
+      HF.modal(`<h2 style="text-align:center">${won ? '🏆 ¡Victoria!' : '💀 Derrota'}</h2><div style="text-align:center" class="dim">${HF.esc(g.over.reason)} · Turno ${g.turn} · Duración total: <b>${duration}</b></div>${extra}
         <div class="kpis">
           <div class="kpi"><span>⚔️</span><b>${kd}</b><small>Eficiencia militar</small><em>${s.kills} bajas / ${s.lost} pérdidas</em></div>
           <div class="kpi"><span>🔗</span><b>${s.cuts}</b><small>Asfixia logística</small><em>hexágonos aislados</em></div>
