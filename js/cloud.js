@@ -9,7 +9,6 @@
   const API_KEY = 'sb_publishable_9jlzQGRdEZhBtbofd-poZw_pIG74t42';
   const HEADERS = {
     apikey: API_KEY,
-    Authorization: 'Bearer ' + API_KEY,
     'Content-Type': 'application/json',
     Prefer: 'return=representation'
   };
@@ -100,8 +99,8 @@
   async function request(endpoint, options) {
     options = options || {};
     if (!onlineAllowed()) return { ok: false, blocked: true, offline: false };
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) { lastOffline = true; return { ok: false, offline: true }; }
-    if (typeof G.fetch !== 'function') { lastOffline = true; return { ok: false, offline: true }; }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { lastOffline = true; return { ok: false, offline: true, networkError: 'navigator.onLine=false' }; }
+    if (typeof G.fetch !== 'function') { lastOffline = true; return { ok: false, offline: true, networkError: 'fetch API no disponible' }; }
     const ms = options.timeout || TIMEOUT;
     const ctrl = typeof G.AbortController === 'function' ? new G.AbortController() : null;
     const timer = G.setTimeout(() => { if (ctrl) ctrl.abort(); }, ms);
@@ -120,7 +119,12 @@
     } catch (e) {
       G.clearTimeout(timer);
       lastOffline = true;
-      return { ok: false, offline: true };
+      return {
+        ok: false,
+        offline: true,
+        timeout: !!(e && (e.name === 'AbortError' || /aborted/i.test(String(e.message || e)))),
+        networkError: String((e && e.message) || e || 'Error de red')
+      };
     }
   }
 

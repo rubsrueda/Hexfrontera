@@ -7,6 +7,8 @@
   const KEY = 'online_session';
   const SKEY = KEY;
   const SS = (() => { try { return G.sessionStorage || null; } catch (e) { return null; } })();
+  const LS = (() => { try { return G.localStorage || null; } catch (e) { return null; } })();
+  const MY_ROOMS_KEY = 'hf_online_my_rooms';
   const POLL_MS = 1600;
   const HEARTBEAT_MS = 9000;
   const CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -33,6 +35,11 @@
     }
     return myId;
   }
+  function usePlayerId(value) {
+    if (!value) return;
+    myId = String(value);
+    try { if (SS) SS.setItem('hf_online_pid', myId); } catch (e) { }
+  }
   const rpc = (fn, args) => (HF.cloud && HF.cloud.rpc ? HF.cloud.rpc(fn, args) : Promise.resolve({ ok: false, offline: true }));
   const row = data => (Array.isArray(data) ? data[0] : data) || null;
 
@@ -53,7 +60,17 @@
       }
       return lastError;
     }
-    lastError = r && r.offline ? 'Sin conexión' : 'No se pudo completar (HTTP ' + ((r && r.status) || '?') + ')';
+    if (r && r.blocked) {
+      lastError = 'Servicios en línea desactivados para este dominio. Abre federati.org o una dirección local de prueba.';
+    } else if (r && r.offline) {
+      if (r.networkError === 'navigator.onLine=false') lastError = 'El navegador indica que no hay conexión de red.';
+      else if (r.timeout) lastError = 'Supabase tardó demasiado en responder. Revisa la conexión y vuelve a intentar.';
+      else lastError = 'No se pudo contactar con Supabase (posible bloqueo de red/CORS o endpoint no disponible).';
+    } else if (r && (r.status === 401 || r.status === 403)) {
+      lastError = 'Supabase rechazó la clave pública o los permisos de la sala.';
+    } else {
+      lastError = 'No se pudo completar (HTTP ' + ((r && r.status) || '?') + ')';
+    }
     console.warn('[online]', r);
     return lastError;
   }
@@ -63,6 +80,44 @@
   }
 
   let timer = 0, beat = 0, lastRoom = null, listeners = [], lastError = '';
+
+  function rememberRoom(room) {
+    if (!room || !room.room_code) return;
+    if (!LS) {
+      console.warn('[online] localStorage no disponible: no se podrá conservar Mis salas');
+      return;
+    }
+    try {
+      const rooms = storedRooms();
+      const code = room.room_code;
+      const playerId = pid();
+      const next = rooms.filter(x => !(x.code === code && x.player_id === playerId));
+      next.unshift({
+        code,
+        player_id: playerId,
+        status: room.status || 'WAITING',
+        updated: room.updated_at || new Date().toISOString(),
+        turn: Number(room.current_turn || 1),
+        public: !!room.is_public
+      });
+      LS.setItem(MY_ROOMS_KEY, JSON.stringify(next.slice(0, 40)));
+    } catch (e) { console.warn('[online] no se pudo guardar Mis salas', e); }
+  }
+  function storedRooms() {
+    if (!LS) return [];
+    try {
+      const data = JSON.parse(LS.getItem(MY_ROOMS_KEY) || '[]');
+      if (Array.isArray(data)) return data;
+      const migrated = [];
+      Object.keys(data || {}).forEach(key => {
+        const owner = key.endsWith(':rooms') ? key.slice(0, -6) : '';
+        (Array.isArray(data[key]) ? data[key] : []).forEach(item => {
+          migrated.push(Object.assign({ player_id: owner }, item));
+        });
+      });
+      return migrated;
+    } catch (e) { return []; }
+  }
 
   const api = {
     session: getSession,
@@ -95,6 +150,7 @@
           const room = row(r.data);
           setSession({ room_code: room.room_code, player_id: pid() });
           lastRoom = room;
+          rememberRoom(room);
           return { ok: true, room };
         }
         if (!/ya existe/i.test(errMsg(r))) return { ok: false, msg: errMsg(r) };
@@ -112,6 +168,111 @@
       const room = row(r.data);
       setSession({ room_code: room.room_code, player_id: pid() });
       lastRoom = room;
+      rememberRoom(room);
+      return { ok: true, room };
+    },
+
+    myRooms: storedRooms,
+
+    async refreshMyRooms() {
+      const result = [];
+      const currentPlayerId = pid();
+      let onlineError = '';
+      try {
+        for (const saved of storedRooms()) {
+          if (!HF.cloud || !HF.cloud.select) { result.push(saved); continue; }
+          usePlayerId(saved.player_id);
+          const r = await HF.cloud.select('hf_online_matches',
+            'room_code=eq.' + encodeURIComponent(saved.code) + '&select=*');
+          if (r.ok) {
+            const room = row(r.data);
+            if (room) {
+              rememberRoom(room);
+              result.push(Object.assign({}, room, { _resumePlayerId: saved.player_id }));
+            }
+          } else {
+            result.push(saved);
+            onlineError = errMsg(r);
+          }
+        }
+        if (HF.cloud && HF.cloud.rpc) {
+          const r = await rpc('fn_hf_list_my_rooms', { p_player: currentPlayerId });
+          if (r.ok) {
+            let rooms = r.data;
+            if (typeof rooms === 'string') {
+              try { rooms = JSON.parse(rooms); } catch (e) { rooms = []; }
+            }
+            if (!Array.isArray(rooms)) rooms = row(rooms) ? [row(rooms)] : [];
+            rooms.forEach(room => {
+              usePlayerId(currentPlayerId);
+              rememberRoom(room);
+              result.unshift(Object.assign({}, room, { _resumePlayerId: currentPlayerId }));
+            });
+          } else {
+            onlineError = errMsg(r);
+          }
+        } else {
+          onlineError = 'Cliente de Supabase no disponible.';
+        }
+      } finally {
+        usePlayerId(currentPlayerId);
+      }
+      const unique = [];
+      result.forEach(room => {
+        const code = room.room_code || room.code;
+        const owner = room._resumePlayerId || room.player_id;
+        if (!unique.some(x => (x.room_code || x.code) === code && (x._resumePlayerId || x.player_id) === owner)) unique.push(room);
+      });
+      return { rooms: unique, error: onlineError };
+    },
+
+    async resume(saved) {
+      if (!saved || !saved.code) return { ok: false, msg: 'Sala guardada no válida' };
+      usePlayerId(saved.player_id);
+      return api.join(saved.code);
+    },
+
+    suspend() {
+      api.stop();
+      setSession(null);
+      lastRoom = null;
+    },
+
+    async publicRooms() {
+      const r = await rpc('fn_hf_list_public_rooms', {});
+      if (!r.ok) return { ok: false, msg: errMsg(r), rooms: [] };
+      let rooms = r.data;
+      if (typeof rooms === 'string') {
+        try { rooms = JSON.parse(rooms); } catch (e) { rooms = []; }
+      }
+      if (!Array.isArray(rooms)) rooms = row(rooms) ? [row(rooms)] : [];
+      return { ok: true, rooms };
+    },
+
+    async fillBots() {
+      const s = getSession();
+      if (!s) return { ok: false, msg: 'Sin sala' };
+      const r = await rpc('fn_hf_fill_bots', { p_room: s.room_code, p_player: pid() });
+      return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
+    },
+
+    async quickMatch(opts) {
+      opts = opts || {};
+      const t = myTribe();
+      const setup = opts.setup || {
+        mode: 'skirmish', seed: (Math.random() * 1e9) | 0, size: 'medium',
+        n: opts.max || 4, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }
+      };
+      setup.is_public = true;
+      const r = await rpc('fn_hf_quick_match', {
+        p_room: makeCode(), p_player: pid(), p_name: t.name, p_crest: t.crest,
+        p_color: t.color, p_setup: setup, p_max: opts.max || 4
+      });
+      if (!r.ok) return { ok: false, msg: errMsg(r) };
+      const room = row(r.data);
+      setSession({ room_code: room.room_code, player_id: pid() });
+      lastRoom = room;
+      rememberRoom(room);
       return { ok: true, room };
     },
 
@@ -124,6 +285,7 @@
       const room = row(r.data);
       if (!room) { setSession(null); return { ok: true, room: null }; }
       lastRoom = room;
+      rememberRoom(room);
       return { ok: true, room };
     },
 
@@ -239,7 +401,7 @@
           g = HF.makeGame(spec, HF.loadTribe());
           g.f.forEach((f, i) => {
             const p = ps.find(x => x.seat === i + 1);
-            if (p) { f.name = p.name; f.crest = p.crest; f.color = SEAT_COLORS[i % SEAT_COLORS.length]; f.human = true; }
+            if (p) { f.name = p.name; f.crest = p.crest; f.color = SEAT_COLORS[i % SEAT_COLORS.length]; f.human = !p.is_bot; }
             else { f.human = false; f.color = SEAT_COLORS[i % SEAT_COLORS.length]; }
           });
           // El anfitrión aplicará desde la primera acción recibida.
@@ -289,7 +451,16 @@
     // Comprueba que el SQL del multijugador está instalado en Supabase.
     async ping() {
       const r = await rpc('fn_hf_ping', {});
-      return r.ok ? { ok: true, data: r.data } : { ok: false, msg: errMsg(r) };
+      if (!r.ok) return { ok: false, msg: errMsg(r) };
+      const required = [
+        ['fn_hf_list_public_rooms', {}],
+        ['fn_hf_list_my_rooms', { p_player: pid() }]
+      ];
+      for (const [fn, args] of required) {
+        const check = await rpc(fn, args);
+        if (!check.ok) return { ok: false, msg: errMsg(check) };
+      }
+      return { ok: true, data: r.data };
     },
 
     // Sondeo de la partida: el anfitrión aplica acciones ajenas y publica;
@@ -463,6 +634,19 @@
         <div class="row"><input id="scCode" maxlength="5" placeholder="ABCDE" style="text-transform:uppercase;flex:1;min-width:0"><button id="scJoin" class="pri">Entrar</button></div>
       </div>
       <div class="card">
+        <b>Jugar ahora</b>
+        <p class="dim small">Empareja con una partida pública o inicia una partida contra rivales controlados por la IA.</p>
+        <div class="row" style="gap:6px"><button id="scQuick" class="pri grow">⚡ Búsqueda rápida</button><button id="scBot" class="grow">🤖 Jugar con bots</button></div>
+      </div>
+      <div class="card" id="scPublicCard">
+        <b>Partidas públicas</b>
+        <div id="scPublicList" class="dim small">Cargando partidas…</div>
+      </div>
+      <div class="card" id="scMyRoomsCard">
+        <b>Mis salas</b>
+        <div id="scMyRooms" class="dim small">Consultando salas guardadas y Supabase…</div>
+      </div>
+      <div class="card">
         <div class="dim small">Para crear una sala, elige la configuración en <b>Nueva partida</b> y pulsa “🌐 Crear sala en línea”.</div>
         <button id="scConfig" style="margin-top:6px">⚙️ Configurar partida</button>
         <button id="scTest" style="margin-top:6px">🔌 Probar conexión</button>
@@ -489,14 +673,79 @@
       <div class="row" style="gap:6px;flex-wrap:wrap">
         ${room && room.status === 'ACTIVE' ? `<button class="pri grow" id="scEnter">⚔️ Entrar al tablero</button>` : ''}
         ${room && room.status === 'WAITING' && api.isHost(room) ? `<button class="pri grow" id="scStart" ${ps.length < 2 ? 'disabled' : ''}>Iniciar partida</button>` : ''}
+        ${room && room.status === 'WAITING' && api.isHost(room) ? `<button id="scFillBots">🤖 Rellenar con bots</button>` : ''}
         ${room && room.status === 'ACTIVE' && room.game_phase === 'SIMULTANEOUS' && me && !me.is_ready ? `<button class="pri grow" id="scReady">Estoy listo</button>` : ''}
-        <button id="scLeave">Salir de la sala</button>
+        <button id="scLeave">Volver a Mis salas</button>
       </div>
-      ${room && room.status === 'ACTIVE' ? `<p class="dim small" style="margin-top:8px">Niebla por jugador. La partida empieza en turnos simultáneos y pasa a turnos individuales con reloj cuando dos facciones se ven.</p>` : ''}`;
+      ${room && room.status === 'ACTIVE' ? `<p class="dim small" style="margin-top:8px">Niebla por jugador. La partida empieza en turnos simultáneos y pasa a turnos individuales con reloj cuando dos facciones se ven.</p>` : ''}
+      <div class="card" id="scMyRoomsCard"><b>Mis salas</b><div id="scMyRooms" class="dim small">Consultando salas guardadas y Supabase…</div></div>`;
       el.innerHTML = `<div class="screen">${HF.header('🌐 Multijugador')}<div class="scroll">${!s ? joinCard : roomCards}<p class="dim small" id="scMsg" style="min-height:16px"></p></div></div>`;
       HF.wireBack(el);
       const msg = t => { const m = el.querySelector('#scMsg'); if (m) m.textContent = t || ''; };
       const q = s2 => el.querySelector(s2);
+      const publicBox = q('#scPublicList');
+      if (publicBox) {
+        api.publicRooms().then(res => {
+          if (!publicBox.isConnected) return;
+          if (!res.ok) { publicBox.textContent = res.msg || 'No se pudieron cargar las partidas públicas'; return; }
+          if (!res.rooms.length) { publicBox.textContent = 'No hay partidas públicas disponibles.'; return; }
+          publicBox.innerHTML = res.rooms.map(room => `<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line)">
+            <div class="grow"><b>${HF.esc(room.room_code)}</b><div class="dim small">${room.status === 'WAITING' ? 'Esperando' : 'Activa'} · ${api.players(room).length}/${room.max_players} · turno ${room.current_turn || 1}</div></div>
+            <button class="pubJoin" data-code="${HF.esc(room.room_code)}" ${room.status !== 'WAITING' ? 'disabled' : ''}>Entrar</button>
+          </div>`).join('');
+          publicBox.querySelectorAll('.pubJoin').forEach(btn => btn.onclick = async () => {
+            btn.disabled = true;
+            const r = await api.join(btn.dataset.code);
+            if (!r.ok) return msg(r.msg);
+            HF.sfx('good'); startWatch(); render(r.room);
+          });
+        });
+      }
+      const myBox = q('#scMyRooms');
+      if (myBox) {
+        const saved = api.myRooms();
+        if (saved.length) myBox.innerHTML = saved.map(item => `<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line)">
+          <div class="grow"><b>${HF.esc(item.code)}</b><div class="dim small">${item.status === 'ACTIVE' ? 'Activa' : item.status === 'FINISHED' ? 'Terminada' : 'Esperando'} · turno ${item.turn || 1}</div></div>
+          ${item.status !== 'FINISHED' ? `<button class="myJoin" data-code="${HF.esc(item.code)}" data-player="${HF.esc(item.player_id || '')}">Abrir</button>` : ''}
+        </div>`).join('');
+        myBox.querySelectorAll('.myJoin').forEach(btn => btn.onclick = async () => {
+          btn.disabled = true;
+          const r = await api.resume({ code: btn.dataset.code, player_id: btn.dataset.player });
+          if (!r.ok) { btn.disabled = false; return msg(r.msg); }
+          HF.sfx('good'); startWatch(); render(r.room);
+        });
+        api.refreshMyRooms().then(({ rooms, error }) => {
+          if (!myBox.isConnected) return;
+          if (!rooms.length) {
+            myBox.textContent = error
+              ? 'No se pudieron consultar tus salas en Supabase: ' + error
+              : 'No hay salas guardadas ni partidas asociadas a este jugador.';
+            return;
+          }
+          myBox.innerHTML = rooms.map(room => typeof room.room_code === 'undefined'
+            ? `<div class="row" style="padding:5px 0"><div class="grow"><b>${HF.esc(room.code)}</b><div class="dim small">${room.status === 'ACTIVE' ? 'Activa' : room.status === 'FINISHED' ? 'Terminada' : 'Estado guardado'} · turno ${room.turn || 1}</div></div><button class="myJoin" data-code="${HF.esc(room.code)}" data-player="${HF.esc(room.player_id || '')}">Abrir</button></div>`
+            : `<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line)">
+                <div class="grow"><b>${HF.esc(room.room_code)}</b><div class="dim small">${room.status === 'ACTIVE' ? 'Activa' : room.status === 'FINISHED' ? 'Terminada' : 'Esperando'} · turno ${room.current_turn || 1}</div></div>
+                ${room.status !== 'FINISHED' ? `<button class="myJoin" data-code="${HF.esc(room.room_code)}" data-player="${HF.esc(room._resumePlayerId || room.host_id || '')}">Abrir</button>` : ''}
+              </div>`).join('');
+          myBox.querySelectorAll('.myJoin').forEach(btn => btn.onclick = async () => {
+            btn.disabled = true;
+            const r = await api.resume({ code: btn.dataset.code, player_id: btn.dataset.player });
+            if (!r.ok) { btn.disabled = false; return msg(r.msg); }
+            HF.sfx('good'); startWatch(); render(r.room);
+          });
+          if (error) {
+            const note = document.createElement('p');
+            note.className = 'dim small';
+            note.textContent = 'Algunas salas muestran el estado guardado localmente: ' + error;
+            myBox.appendChild(note);
+          }
+        }).catch(e => {
+          if (!myBox.isConnected) return;
+          console.error('[online] cargar Mis salas', e);
+          if (!saved.length) myBox.textContent = 'No se pudo consultar Supabase. Revisa la conexión y vuelve a intentar.';
+        });
+      }
       if (q('#scConfig')) q('#scConfig').onclick = () => HF.go('newgame');
       if (q('#scJoin')) q('#scJoin').onclick = async () => {
         const code = (q('#scCode').value || '').trim().toUpperCase();
@@ -506,14 +755,72 @@
         if (!r.ok) return msg(r.msg);
         HF.sfx('good'); startWatch(); render(api.room());
       };
+      if (q('#scQuick')) q('#scQuick').onclick = async () => {
+        const btn = q('#scQuick');
+        btn.disabled = true; btn.textContent = 'Buscando…';
+        const r = await api.quickMatch({ max: 4 });
+        btn.disabled = false; btn.textContent = '⚡ Búsqueda rápida';
+        if (!r.ok) return msg(r.msg);
+        HF.sfx('good'); startWatch(); render(r.room);
+      };
+      if (q('#scBot')) q('#scBot').onclick = async () => {
+        const btn = q('#scBot');
+        btn.disabled = true; btn.textContent = 'Preparando IA…';
+        const r = await api.create({
+          max: 2,
+          setup: { mode: 'skirmish', seed: (Math.random() * 1e9) | 0, size: 'medium',
+            n: 2, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }, is_public: false }
+        });
+        if (!r.ok) { btn.disabled = false; btn.textContent = '🤖 Jugar con bots'; return msg(r.msg); }
+        const bots = await api.fillBots();
+        btn.disabled = false; btn.textContent = '🤖 Jugar con bots';
+        if (!bots.ok) return msg(bots.msg);
+        HF.sfx('good'); startWatch(); render(bots.room);
+      };
       if (q('#scCopy')) q('#scCopy').onclick = () => {
         const code = room ? room.room_code : s.room_code;
-        try { navigator.clipboard.writeText(code); msg('Código copiado: ' + code); } catch (e) { msg('Código: ' + code); }
+        const btn = q('#scCopy');
+        let copied = false;
+        const showCopied = () => {
+          copied = true;
+          if (btn) { btn.textContent = '✓ Copiado'; btn.classList.add('pri'); }
+          msg('Código copiado: ' + code);
+          HF.toast('Código copiado: ' + code);
+          setTimeout(() => { if (btn && el.isConnected) { btn.textContent = 'Copiar'; btn.classList.remove('pri'); } }, 1800);
+        };
+        const fallback = () => {
+          const ta = document.createElement('textarea');
+          ta.value = code;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            if (document.execCommand('copy')) showCopied();
+            else { msg('No se pudo copiar automáticamente. Código: ' + code); HF.toast('Código: ' + code); }
+          } catch (e) {
+            msg('No se pudo copiar automáticamente. Código: ' + code);
+            HF.toast('Código: ' + code);
+          } finally { ta.remove(); }
+        };
+        try {
+          if (G.navigator && navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(showCopied).catch(fallback);
+          } else fallback();
+        } catch (e) { fallback(); }
       };
       if (q('#scStart')) q('#scStart').onclick = async () => {
         const r = await api.start();
         msg(r.ok ? '' : r.msg);
         if (r.ok) render(r.room);
+      };
+      if (q('#scFillBots')) q('#scFillBots').onclick = async () => {
+        msg('Añadiendo rivales IA…');
+        const r = await api.fillBots();
+        if (!r.ok) return msg(r.msg);
+        HF.sfx('good');
+        render(r.room);
       };
       if (q('#scReady')) q('#scReady').onclick = async () => {
         const r = await api.ready();
@@ -523,10 +830,10 @@
       if (q('#scTest')) q('#scTest').onclick = async () => {
         msg('Probando conexión…');
         const r = await api.ping();
-        if (r.ok) msg('✅ Conexión correcta · funciones del multijugador instaladas');
+        if (r.ok) msg('✅ Supabase responde y las funciones de salas públicas/guardadas están instaladas');
         else msg('❌ ' + r.msg);
       };
-      if (q('#scLeave')) q('#scLeave').onclick = async () => { await api.leave(); render(null); };
+      if (q('#scLeave')) q('#scLeave').onclick = () => { stopWatch(); api.suspend(); render(null); };
       if (q('#scEnter')) q('#scEnter').onclick = async () => {
         msg('Abriendo el tablero…');
         const r = await api.enterMatch();
@@ -541,7 +848,12 @@
       cleanups.push(api.onChange(room => { if (el.isConnected) render(room); }));
     }
 
-    HF.onLeave = () => { api.stop(); cleanups.forEach(f => { try { f(); } catch (e) { } }); };
+    function stopWatch() {
+      watching = false;
+      cleanups.splice(0).forEach(f => { try { f(); } catch (e) { console.warn('[online] limpieza', e); } });
+    }
+
+    HF.onLeave = () => { stopWatch(); api.stop(); };
     render(api.room());
     if (getSession()) {
       startWatch();

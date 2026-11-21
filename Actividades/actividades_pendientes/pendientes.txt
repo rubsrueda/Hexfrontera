@@ -1,0 +1,3 @@
+
+Solo enviar entre capitales no todos los puertos. 
+Estás haciendo un problema de carga y descarga de caravanas, aunque está bien crear embudos, no impedir y que no haya movimiento. Quedando acumulándose y sin moverse caravanas en un bug

@@ -1,78 +1,60 @@
-# Wrappers de Hexfrontier · Electron/Steam + Capacitor
+﻿# Wrappers de Hexfrontier: Electron/Steam y Capacitor
 
-Este directorio **no contiene código del juego**: empaqueta `../` (el shell web
-tal cual) sin bundlers. El juego sigue siendo el de siempre; aquí solo hay
-procesos anfitriones.
+Los wrappers alojan el runtime web; no contienen una versión independiente del juego. `scripts/stage-web.js` copia los recursos del proyecto a `www/` (salida generada, no editar a mano). Capacitor usa `webDir: www`.
 
-```
-wrappers/
-├── package.json            Electron + Capacitor + scripts
-├── capacitor.config.json   webDir: www (generado)
-├── electron-builder.yml    NSIS / dir (Steam) / dmg / AppImage
-├── scripts/stage-web.js    copia runtime → www/
-├── electron/main.js        ventana, protocolo app://, IPC, cierre ordenado
-├── electron/preload.js     contextBridge (única superficie Node ↔ renderer)
-├── electron/saves.js       guardado atómico en userData/saves
-└── www/                    generado por `npm run stage` (no editar a mano)
-```
+## Windows / escritorio
 
-## Escritorio
-
-```bat
-npm install
-npm start                  :: stage + Electron (carga www/)
-npm start -- --devtools
-npm run dist               :: instalador NSIS x64 → dist/
-npm run steam              :: carpeta para el depot → dist/win-unpacked/
-```
-
-- El juego se sirve desde `app://hexfrontier/index.html`, no desde `file://`.
-- Guardados: `%APPDATA%\Hexfrontier\saves\hf_*.json`
-  (`app.getPath('userData')`). En macOS/Linux, la ruta equivalente.
-- **Steam Auto-Cloud**: root `WinAppDataRoaming`, subdir `Hexfrontier`,
-  pattern `saves/*.json` (y `saves/*.tmp`, recursive). No requiere código.
-- `steam_appid.txt` solo para pruebas locales; no se sube al depot.
-- Si el overlay de Steam no aparece: `set HF_STEAM_OVERLAY=1` antes de arrancar.
-
-## Móvil
+Desde `wrappers/`, instala primero las dependencias de este paquete:
 
 ```bat
 npm install
 npm run stage
-npx cap add android
-npx cap add ios            :: macOS + Xcode
-npm run cap:android        :: stage + sync + abre Android Studio
-npm run cap:ios            :: stage + sync + abre Xcode
+npm start
+npm run dist
+npm run steam
 ```
 
-- `webDir` es `www/`: **siempre** `npm run stage` antes de `cap sync`.
-- No añadas `server.url` al config: dejaría la app publicada apuntando al
-  dev-server.
-- Los guardados usan localStorage (síncrono) con espejo en
-  `LIBRARY/saves/` vía Filesystem; `HF.platform.ready` restaura antes del Hub.
+- `start` prepara `www/` e inicia Electron.
+- `dist` genera el instalador Windows NSIS x64.
+- `steam` genera el directorio Windows desempaquetado `dist/win-unpacked/` para preparar un depot. No carga ni publica archivos en SteamPipe.
+- El config de Electron Builder también declara destinos macOS (DMG) y Linux (AppImage); no son una build móvil ni quedan validados por los comandos Windows anteriores.
 
-## Diagnóstico rápido
+## Android e iOS
 
-| Síntoma | Causa probable | Solución |
-|---|---|---|
-| Ventana en blanco en Electron | `www/` vacío o ruta mal | `npm run stage`; revisar `WEB_DIR` |
-| Ventana en blanco en Android | `webDir` sin generar | `npm run stage && npx cap sync` |
-| Guardados no persisten en Electron | `HFNative` no inyectado | cargar `preload.js`; revisar `contextIsolation` |
-| Música no suena en la app | sin red (Wikimedia) | cae al sintetizador procedural; vendorizar pistas si se quiere offline |
-| CSP bloquea algo | nueva API/arte remoto | ampliar `connect-src`/`img-src` en `electron/main.js` o `HF_NO_CSP=1` |
-| Tras actualizar sigo viendo el JS viejo | service worker de la versión web | en nativo `sw.js` no se incluye ni se registra; en web subir `sw.js` |
+```bat
+npm run cap:add:android
+npm run cap:android
+```
+
+`cap:android` vuelve a preparar `www/`, sincroniza el proyecto y abre Android Studio. El paquete no define un comando de APK/AAB firmado. Para compilar y firmar hay que completar la configuración del proyecto Android y usar Android Studio/SDK.
+
+En macOS con Xcode:
+
+```sh
+npm run cap:add:ios
+npm run cap:ios
+```
+
+No añadas `server.url` al config de una publicación. `www/` debe generarse de nuevo antes de sincronizar. El host nativo usa guardados locales; Electron almacena archivos en `userData/saves`.
+
+## Estado y bloqueos observados (21-11-2026)
+
+El usuario reporta que el juego pasó una prueba funcional manual en navegador, sin errores aparentes. No equivale a una ejecución automatizada ni valida wrappers. En la PC corporativa actual no se pueden instalar Node.js/npm ni Android SDK por falta de privilegios administrativos; builds y pruebas de plataforma se retomarán tras migrar el proyecto.
+
+- **Android/APK:** Capacitor está declarado (`appId: com.hexfrontier.game`, `webDir: www`) y `@capacitor/android` está en dependencias. Aún no existe `wrappers/android/`; los scripts `cap:add:android` y `cap:android` están declarados, pero no hay comando APK/AAB ni firma de release. En la otra computadora: instalar Node.js 18+, npm, JDK y Android Studio/SDK; ejecutar `npm install` en `wrappers/`, `npm run cap:add:android` una vez y `npm run cap:android`; generar APK de prueba desde Android Studio o `.\gradlew.bat assembleDebug` dentro de `wrappers/android`. Release firmado requiere configurar la firma fuera del repositorio.
+- **Steam/Windows x64:** `npm run steam` ejecuta stage y Electron Builder `--win --x64 --dir`; la salida configurada es `wrappers/dist/win-unpacked/`. Falta el archivo requerido `wrappers/build/icon.ico` (formato ICO); `electron-builder.yml` no fija medidas en píxeles. También faltan `build/icon.icns` y `build/icon.png`, pero corresponden a macOS/Linux, no al target Windows. La carpeta de build, runtime/dependencias y salida no están presentes. No hay configuración/manifiestos SteamPipe/depot ni comando de publicación: hacen falta para publicar, no para crear localmente la carpeta desempaquetada.
+- **iOS:** el proyecto nativo no está generado; compilar requiere macOS y Xcode.
 
 ## Pruebas
 
-Desde `../` (la raíz del juego):
+Desde la raíz del proyecto, con Node.js disponible:
 
 ```bat
-node tester_qa\run_all.js          :: toda la batería (21 suites)
-node tester_qa\platform_test.js    :: puente, pausa y cierre
-node tester_qa\saves_test.js       :: atomicidad y validación de claves
-node tester_qa\boot_test.js        :: arranque web completo
-node tester_qa\telemetry_test.js   :: interceptor de errores y copia de emergencia
+npm test
+node tester_qa\platform_test.js
+node tester_qa\saves_test.js
+node tester_qa\boot_test.js
+node tester_qa\telemetry_test.js
 ```
 
-El wrapper móvil usa Filesystem: recuerda el `PrivacyInfo.xcprivacy` descrito
-en `../FASE4_CI_TELEMETRIA.md` y en la documentación de Capacitor.
+El runner descubre 58 archivos `tester_qa/*_test.js` según el diagnóstico estático; no se ejecutó en esta revisión. La configuración de plataforma está en `capacitor.config.json`, `electron/main.js` y `electron-builder.yml`. El reporte técnico de cierre y las tareas post-migración están en `resultados/02_cierre_fase4.md` y `Actividades/actividades_pendientes/`.

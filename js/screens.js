@@ -617,7 +617,7 @@
 
   // ---------- NUEVA PARTIDA ----------
   HF.screen('newgame', el => {
-    const o = Object.assign({ size: 'medium', biome: 'plains', n: 2, fog: 'FULL', difficulty: 'normal' }, HF.store.get('newgame_opts', {}));
+    const o = Object.assign({ size: 'medium', biome: 'plains', n: 2, fog: 'FULL', difficulty: 'normal', is_public: false }, HF.store.get('newgame_opts', {}));
     const seg = (key, items) => `<div class="seg">${items.map(([v, n]) => `<button data-k="${key}" data-v="${v}" class="${String(o[key]) === String(v) ? 'sel' : ''}">${n}</button>`).join('')}</div>`;
     const draw = () => {
       const sz = HF.SIZES[o.size];
@@ -628,11 +628,12 @@
         <label>Facciones (tú + IA; en línea, jugadores)</label>${seg('n', Array.from({ length: sz.maxF - sz.minF + 1 }, (_, i) => [sz.minF + i, sz.minF + i]))}
         <label>Niebla de guerra</label>${seg('fog', [['FULL', 'Completa'], ['EXPLORED', 'Explorada'], ['NONE', 'Sin niebla']])}
         <label>Dificultad IA</label>${seg('difficulty', [['easy', 'Fácil'], ['normal', 'Normal'], ['hard', 'Difícil']])}
+        <label>Visibilidad de la sala</label>${seg('is_public', [[false, '🔒 Privada'], [true, '🌍 Pública']])}
         <label>Semilla (vacío = aleatoria)</label><input type="text" id="seed" value="${HF.esc(o.seed || '')}">
         <div class="dim small" style="margin-top:6px">Los barcos se reclutan en agua junto a un campamento o edificio superior.</div>
         <div class="card" style="margin-top:8px"><b>🌐 Partida en línea</b>
-          <div class="dim small">Crea una sala con esta configuración: ${HF.SIZES[o.size].name} · ${HF.BIOMES[o.biome].name} · niebla ${({ FULL: 'completa', EXPLORED: 'explorada', NONE: 'sin niebla' })[o.fog]}, hasta ${o.n} jugadores.</div>
-          <button class="pri" id="onlineHost" style="width:100%;margin-top:6px">🌐 Crear sala en línea</button>
+          <div class="dim small">Crea una sala ${o.is_public ? 'pública' : 'privada'} con esta configuración: ${HF.SIZES[o.size].name} · ${HF.BIOMES[o.biome].name} · niebla ${({ FULL: 'completa', EXPLORED: 'explorada', NONE: 'sin niebla' })[o.fog]}, hasta ${o.n} jugadores.</div>
+          <button class="pri" id="onlineHost" style="width:100%;margin-top:6px">${o.is_public ? '🌍 Crear sala pública' : '🌐 Crear sala privada'}</button>
           <button id="onlineJoin" style="width:100%;margin-top:6px">Unirse a una sala</button>
         </div>
         <br><button class="pri big" id="go" style="width:100%">Empezar</button>
@@ -640,7 +641,12 @@
         <br><br><button id="code" style="width:100%">🌍 Mapas de la Comunidad</button>
       </div></div>`;
       wireBack(el);
-      el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { const k = b.dataset.k; o[k] = (k === 'n') ? +b.dataset.v : b.dataset.v; o.seed = el.querySelector('#seed').value; draw(); });
+      el.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+        const k = b.dataset.k;
+        o[k] = k === 'n' ? +b.dataset.v : k === 'is_public' ? b.dataset.v === 'true' : b.dataset.v;
+        o.seed = el.querySelector('#seed').value;
+        draw();
+      });
       el.querySelector('#go').onclick = () => {
         const sv = el.querySelector('#seed').value.trim(); o.seed = sv;
         HF.store.set('newgame_opts', o);
@@ -663,7 +669,7 @@
         try {
           const r = await HF.online.create({
             max: o.n,
-            setup: { mode: 'skirmish', seed, size: o.size, n: o.n, biome: o.biome, fog: o.fog, difficulty: o.difficulty, goal: { type: 'conquer' } }
+            setup: { mode: 'skirmish', seed, size: o.size, n: o.n, biome: o.biome, fog: o.fog, difficulty: o.difficulty, goal: { type: 'conquer' }, is_public: !!o.is_public }
           });
           if (!r.ok) { btn.disabled = false; btn.textContent = '🌐 Crear sala en línea'; HF.sfx('error'); return HF.toast(r.msg); }
           HF.sfx('good');
