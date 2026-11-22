@@ -30,6 +30,8 @@
 
 ## Pendiente de aceptación
 
-Confirmar el despliegue de `hf_turns_v3.sql` y repetir con dos jugadores reales el movimiento, vencimiento de reloj, reentrada, resultado completo y relevo. Revisar los fallos de las suites generales y determinar si afectan a esta actividad. Hasta entonces la actividad permanece en pendientes.
+Actualización posterior: la prueba real mostró que al primer contacto se activan turnos individuales y un humano podía haber quedado marcado como bot. El usuario ejecutó `sql/hf_turns_v4.sql` y el servidor respondió versión 4; también ejecutó `tester_qa/online_turns_v4_test.sql` sin errores, con rollback. Se probaron transición repetida, reloj de ambos asientos, vencimiento, funciones antiguas, relevo y recuperación humana. Las rutas antiguas de timeout y relevo se reemplazaron para no transformar humanos en IA y la señal recupera la marca humana. El reloj comienza con 210 segundos y añade 15 por movimiento, ataque, construcción o reclutamiento aceptados por el servidor. La validación del anfitrión ocurre después del envío invitado y las demás acciones no están aún integradas en el reloj: no se garantiza el bono exacto para todas las acciones cerradas. Falta repetir la partida real con ambos clientes actualizados.
+
+Repetir con dos jugadores reales el contacto, el control humano, movimiento, vencimiento de reloj, reentrada, resultado completo y relevo. Completar y verificar el bono de todas las acciones cerradas. Revisar los fallos de las suites generales y determinar si afectan a esta actividad. Hasta entonces la actividad permanece en pendientes.
 
 El anfitrión conectado sigue dirigiendo la partida; no hay motor servidor autónomo ni turnos asíncronos garantizados al cerrar todos los clientes. Steam Cloud y la moderación comunitaria quedan como propuestas.

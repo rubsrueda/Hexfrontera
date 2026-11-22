@@ -66,6 +66,9 @@ HF.cloud.select = async () => ({ ok: true, data: [fakeRoom] });
   ok(left <= 200 && left >= 195, `banco de tiempo descontado (${left}s)`);
   ok(HF.online.fmtTime(210) === '3:30', 'formatea el tiempo');
   ok(HF.online.phaseLabel(room) === 'Turnos individuales', 'etiqueta de turnos individuales');
+  ok(!HF.online.isBot({ player_id: 'P-HUMAN', is_bot: true }), 'una identidad humana marcada por error nunca se trata como IA');
+  ok(HF.online.isBot({ player_id: 'BOT-2', is_bot: true }), 'un asiento de IA explícito sigue siendo bot');
+  ok(!HF.online.isBot({ player_id: 'BOT-2', is_bot: false }), 'una identidad de bot sin marca activa no ejecuta IA');
 
   const state = await HF.online.state();
   ok(state.ok && state.room && state.room.room_code === room.room_code, 'descarga el estado de la sala');
@@ -87,6 +90,8 @@ HF.cloud.select = async () => ({ ok: true, data: [fakeRoom] });
   ok(called === 'fn_hf_skip_expired_turn', 'un turno vencido no usa la RPC que sustituía al jugador por un bot');
   await HF.online.claimHost();
   ok(called === 'fn_hf_claim_host_v2', 'el relevo usa la RPC que conserva a los jugadores humanos');
+  await HF.online.hostActionTime('2026-01-01T00:00:00Z');
+  ok(called === 'fn_hf_host_action_time', 'el anfitrión solicita tiempo tras una acción realizada');
 
   const savedState = HF.online.state, savedPublish = HF.online.publish;
   const syncRoom = {
@@ -108,6 +113,37 @@ HF.cloud.select = async () => ({ ok: true, data: [fakeRoom] });
   ok(attempts >= 2 && !syncGame._onlineDirty && confirmations > 0, 'reintenta y confirma el resultado tras publicar');
   HF.online.state = savedState;
   HF.online.publish = savedPublish;
+
+  const savedContact = HF.online.contact, savedEndTurn = HF.online.endTurn;
+  const contactRoom = {
+    host_id: pid, status: 'ACTIVE', game_phase: 'SIMULTANEOUS', current_turn: 1,
+    turn_started_at: new Date().toISOString(), active_player: pid,
+    players_data: [
+      { player_id: pid, seat: 1, is_bot: false, time_bank_seconds: 210 },
+      { player_id: 'P-HUMAN', seat: 2, is_bot: true, time_bank_seconds: 210 }
+    ], actions: []
+  };
+  let botCalls = 0, contactCalls = 0;
+  HF.aiPlay = () => { botCalls++; };
+  HF.hasContact = () => true;
+  HF.online.state = async () => ({ ok: true, room: contactRoom });
+  HF.online.contact = async () => {
+    contactCalls++;
+    contactRoom.game_phase = 'TURN_BASED';
+    contactRoom.active_player = 'P-HUMAN';
+    return { ok: true, room: contactRoom };
+  };
+  HF.online.endTurn = async () => { throw new Error('No debe ceder el turno del humano'); };
+  const controlGame = { online: { host: true, seat: 0 }, mySeat: 0, turn: 1,
+    f: [{ human: true }, { human: false }] };
+  const stopControl = HF.online.bind(controlGame, () => {});
+  await new Promise(resolve => setTimeout(resolve, 900));
+  stopControl();
+  ok(contactCalls === 1 && contactRoom.game_phase === 'TURN_BASED', 'el contacto cambia a turnos individuales una sola vez');
+  ok(botCalls === 0 && controlGame.f[1].human, 'la IA no controla al humano marcado erróneamente al contacto');
+  HF.online.state = savedState;
+  HF.online.contact = savedContact;
+  HF.online.endTurn = savedEndTurn;
 
   await HF.online.leave();
   ok(HF.online.session() === null, 'salir borra la sesión');

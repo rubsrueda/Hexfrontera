@@ -54,8 +54,8 @@
       lastError = String(d.message || d.error).replace(/^.*?:\s*/, '');
       console.warn('[online]', r.status || '', d);
       if (/Could not find the function/i.test(lastError)) {
-        lastError = /(?:skip_expired_turn|claim_host_v2)/i.test(lastError)
-          ? 'Falta la actualización de turnos: ejecuta sql/hf_turns_v3.sql en Supabase'
+        lastError = /(?:turns_version|host_action_time|skip_expired_turn|claim_host_v2)/i.test(lastError)
+          ? 'Falta la actualización de turnos: ejecuta sql/hf_turns_v4.sql en Supabase'
           : /(?:quick_match_v2|list_public_rooms_v2|join_public_room_v2)/i.test(lastError)
             ? 'Falta la actualización de emparejamiento: ejecuta sql/hf_matchmaking_v2.sql en Supabase'
             : 'Faltan las funciones en Supabase: ejecuta sql/hf_multiplayer.sql en el proyecto configurado';
@@ -379,6 +379,9 @@
     // Abre el tablero: el anfitrión crea la partida desde el setup y publica el
     // estado; los invitados deserializan el último snapshot.
     async enterMatch() {
+      const version = await rpc('fn_hf_turns_version', {});
+      if (!version.ok) return { ok: false, msg: errMsg(version) };
+      if (Number(version.data) !== 4) return { ok: false, msg: 'La versión de turnos del servidor no es compatible; ejecuta sql/hf_turns_v4.sql.' };
       let r = await api.state();
       if (!r.ok || !r.room) return { ok: false, msg: 'Sin sala' };
       let room = r.room;
@@ -407,7 +410,7 @@
           g = HF.makeGame(spec, HF.loadTribe());
           g.f.forEach((f, i) => {
             const p = ps.find(x => x.seat === i + 1);
-            if (p) { f.name = p.name; f.crest = p.crest; f.color = SEAT_COLORS[i % SEAT_COLORS.length]; f.human = !p.is_bot; }
+            if (p) { f.name = p.name; f.crest = p.crest; f.color = SEAT_COLORS[i % SEAT_COLORS.length]; f.human = !api.isBot(p); }
             else { f.human = false; f.color = SEAT_COLORS[i % SEAT_COLORS.length]; }
           });
           // El anfitrión aplicará desde la primera acción recibida.
@@ -418,7 +421,7 @@
       }
       g.fog = g.fog || (room.setup_json && room.setup_json.fog) || 'FULL';
       g.fogMap = null;
-      g.mySeat = host ? 0 : seat;
+      g.mySeat = seat;
       g.online = { host, seat: g.mySeat, room_code: room.room_code };
       lastRoom = room;
       HF.updateFog(g);
@@ -435,6 +438,14 @@
       const s = getSession();
       if (!s) return { ok: false };
       const r = await rpc('fn_hf_end_turn', { p_room: s.room_code, p_player: pid() });
+      return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
+    },
+    async hostActionTime(startedAt) {
+      const s = getSession();
+      if (!s) return { ok: false, msg: 'Sin sala' };
+      const r = await rpc('fn_hf_host_action_time', {
+        p_room: s.room_code, p_player: pid(), p_turn_started_at: startedAt
+      });
       return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
     async timeoutPlayer(playerId) {
@@ -460,7 +471,8 @@
       if (!r.ok) return { ok: false, msg: errMsg(r) };
       const required = [
         ['fn_hf_list_public_rooms_v2', {}],
-        ['fn_hf_list_my_rooms', { p_player: pid() }]
+        ['fn_hf_list_my_rooms', { p_player: pid() }],
+        ['fn_hf_turns_version', {}]
       ];
       for (const [fn, args] of required) {
         const check = await rpc(fn, args);
@@ -472,7 +484,7 @@
     // Sondeo de la partida: el anfitrión aplica acciones ajenas y publica;
     // los invitados recargan el snapshot. Incluye relojes, bots y relevo.
     bind(g, refresh) {
-      let seq = -1, stopped = false, nextClaimAt = 0, contactSent = false, ticking = false;
+      let seq = -1, stopped = false, nextClaimAt = 0, contactPending = false, ticking = false;
       let lastSyncError = '';
       const reportSyncError = result => {
         const msg = result.msg || 'No se pudo actualizar la partida';
@@ -539,6 +551,12 @@
         const r = await api.state();
         if (!r.ok || !r.room) return;
         let room = r.room;
+        if (g.f) {
+          for (const p of api.players(room)) {
+            const f = g.f[p.seat - 1];
+            if (f) f.human = !api.isBot(p);
+          }
+        }
 
         // El relevo cambia el anfitrión sin sustituir a un humano por un bot.
         if (room.host_id !== pid()) {
@@ -561,7 +579,7 @@
             if (room.current_turn > g.turn && !g.over) { try { HF.mpEndRound(g); ended = true; } catch (e) { } }
             const act = (room.players_data || []).find(p => p.player_id === room.active_player);
             if (act) {
-              if (act.is_bot && !g.over) {
+              if (api.isBot(act) && !g.over) {
                 acted = runBot(act.seat - 1);
                 refresh(); g._onlineDirty = true;
                 const e = await api.endTurn();
@@ -572,13 +590,8 @@
               }
             }
           } else if (room.current_turn > g.turn && !g.over) {
-            for (const p of api.players(room)) if (p.is_bot && p.player_id !== pid()) runBot(p.seat - 1);
+            for (const p of api.players(room)) if (api.isBot(p)) runBot(p.seat - 1);
             try { HF.mpEndRound(g); ended = true; } catch (e) { console.warn(e); }
-          }
-          if (room.game_phase === 'SIMULTANEOUS' && !contactSent && HF.hasContact(g)) {
-            contactSent = true;
-            const c = await api.contact();
-            if (c.ok) room = c.room || room;
           }
           if (changed || ended || acted) { refresh(); g._onlineDirty = true; }
           if (g._onlineDirty) {
@@ -593,15 +606,18 @@
           if (!g._onlineDirty && !stopped && (g.over || (g.f && g.f[g.mySeat] && g.f[g.mySeat].alive === false))) refresh(true);
         } else {
           if (applyGuest(room)) refresh(true);
-          if (room.game_phase === 'SIMULTANEOUS' && !contactSent && HF.hasContact(g)) {
-            contactSent = true;
-            await api.contact();
-          }
+        }
+        if (!g.over && room.game_phase === 'SIMULTANEOUS' && !contactPending && HF.hasContact(g)) {
+          contactPending = true;
+          const c = await api.contact();
+          contactPending = false;
+          if (c.ok) { room = c.room || room; lastSyncError = ''; }
+          else reportSyncError(c);
         }
         // Un turno vencido se cede sin cambiar el control humano.
         if (!g.over && room.game_phase === 'TURN_BASED') {
           const act = (room.players_data || []).find(p => p.player_id === room.active_player);
-          if (act && !act.is_bot && api.timeLeft(room, act.player_id) <= 0) {
+          if (act && !api.isBot(act) && api.timeLeft(room, act.player_id) <= 0) {
             const result = await api.timeoutPlayer(act.player_id);
             if (!result.ok) reportSyncError(result);
             else lastSyncError = '';
@@ -617,10 +633,11 @@
 
     // --- ayudas de presentación ---
     players(room) { return (room && room.players_data) || []; },
+    isBot(p) { return !!p && p.is_bot === true && /^BOT-\d+$/.test(p.player_id || ''); },
     me(room) { return api.players(room).find(p => p.player_id === pid()) || null; },
     isHost(room) { return !!room && room.host_id === pid(); },
     allReady(room) {
-      const ps = api.players(room).filter(p => !p.is_bot);
+      const ps = api.players(room).filter(p => !api.isBot(p));
       return ps.length > 0 && ps.every(p => p.is_ready);
     },
     timeLeft(room, playerId) {
@@ -707,7 +724,7 @@
       </div>`;
       const rows = ps.map(p => `<div class="row" style="padding:5px 0;border-bottom:1px solid var(--line)">
         ${HF.crestHTML(p.crest, 24)}
-        <div class="grow"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${SEAT_COLORS[(p.seat - 1) % SEAT_COLORS.length]};margin-right:6px;vertical-align:middle"></span><b>${HF.esc(p.name)}</b>${p.player_id === pid() ? ' <span class="sc-you">Tú</span>' : ''}${p.is_bot ? ' <span class="dim small">bot</span>' : ''}${room && room.active_player === p.player_id ? ' <span class="small" style="color:var(--acc)">▶ turno</span>' : ''}</div>
+        <div class="grow"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${SEAT_COLORS[(p.seat - 1) % SEAT_COLORS.length]};margin-right:6px;vertical-align:middle"></span><b>${HF.esc(p.name)}</b>${p.player_id === pid() ? ' <span class="sc-you">Tú</span>' : ''}${api.isBot(p) ? ' <span class="dim small">bot</span>' : ''}${room && room.active_player === p.player_id ? ' <span class="small" style="color:var(--acc)">▶ turno</span>' : ''}</div>
         <span class="dim small">${p.is_ready ? '✔ listo' : '…'}</span>
       </div>`).join('');
       const bank = room && room.game_phase === 'TURN_BASED' && me

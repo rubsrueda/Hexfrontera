@@ -682,6 +682,20 @@
       }
     }
 
+    async function addHostActionTime(room) {
+      if (!room || room.game_phase !== 'TURN_BASED') return;
+      st.busy = true;
+      try {
+        const result = await HF.online.hostActionTime(room.turn_started_at);
+        if (!result.ok) HF.toast(result.msg || 'No se pudo añadir tiempo al reloj');
+      } catch (e) {
+        console.error('[online] ampliar reloj', e);
+        HF.toast('No se pudo añadir tiempo al reloj');
+      } finally {
+        st.busy = false;
+      }
+    }
+
     function act(from, to, kind) {
       if (st.busy) return;
       // En partida en red el invitado envía la acción al anfitrión; el estado
@@ -705,7 +719,10 @@
         if (wasBastion && (kind === 'atk' || kind === 'siege')) board.burst('stone', to, 7);
         HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); return;
       }
-      if (g.online) HF.online.dirty(g);
+      if (g.online) {
+        HF.online.dirty(g);
+        addHostActionTime(HF.online.room());
+      }
       HF.sfx(r.kind === 'atk' ? 'good' : r.kind === 'raid' ? 'star' : 'click');
       // salto parabólico del soldado al moverse, talar o conquistar
       if (uBefore && !r.shot && (r.kind === 'move' || r.kind === 'chop' || (r.kind === 'atk' && g.cells[to].u))) board.hopTo(from, to, uBefore);
@@ -768,7 +785,10 @@
             g.cur = P;
           }
           const r = p.kind === 'unit' ? HF.recruit(g, p.item, i, undefined, tier) : HF.build(g, p.item, i);
-          if (r.ok && g.online) HF.online.dirty(g);
+          if (r.ok && g.online) {
+            HF.online.dirty(g);
+            addHostActionTime(HF.online.room());
+          }
           st.focus = i;
           if (!r.ok) { HF.sfx('error'); HF.vibrate(50); HF.toast(r.msg); } else { HF.sfx('good'); }
           if (p.kind === 'unit') p.cells = new Set(HF.recruitCells(g, p.item, tier)); else p.cells = new Set(HF.buildCells(g, p.item));
@@ -1046,14 +1066,15 @@
       g._setSeat = seat => { P = seat; };
       g._onlineStop = HF.online.bind(g, refresh);
       console.info('[online] asiento', P + 1, g.online.host ? 'anfitrión' : 'invitado', 'jugador', HF.online.playerId());
-      // Reloj del jugador activo (banco de 210 s, +3 s por acción).
+      // Reloj del jugador activo.
       let clockId = 0;
       const tickClock = () => {
         const el = q('#clock'); if (!el) return;
         const room = HF.online.room && HF.online.room();
         if (!room || room.game_phase !== 'TURN_BASED') { el.textContent = ''; return; }
         const act = (room.players_data || []).find(p => p.player_id === room.active_player);
-        el.textContent = '⏱' + HF.online.fmtTime(act ? HF.online.timeLeft(room, act.player_id) : null);
+        const mine = act && act.player_id === HF.online.playerId();
+        el.textContent = (mine ? 'Tu turno · ' : 'Turno rival · ') + '⏱' + HF.online.fmtTime(act ? HF.online.timeLeft(room, act.player_id) : null);
       };
       clockId = setInterval(tickClock, 1000); tickClock();
       g._clockStop = () => clearInterval(clockId);
