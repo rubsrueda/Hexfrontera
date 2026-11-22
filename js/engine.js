@@ -2498,6 +2498,16 @@
   HF.territory = (g, i) => g.cells.filter(c => c && c.o === i).length;
   HF.checkEnd = function (g) {
     if (g.over) return;
+    if (g.online) {
+      const alive = g.f.filter(f => f.alive);
+      if (g.f.length > 1 && alive.length === 1) return finish(g, alive[0].id, 'Dominación total');
+      if (!alive.length) return finish(g, -1, 'Todas las civilizaciones han caído');
+      for (const f of alive) {
+        const w = HF.winTag(g, f);
+        if (w) return finish(g, f.id, w);
+      }
+      return;
+    }
     const me = g.f[0];
     if (!me.alive) return finish(g, -1, 'Tu civilización ha caído');
     if (g.f.slice(1).every(f => !f.alive) && g.f.length > 1) return finish(g, 0, 'Dominación total');

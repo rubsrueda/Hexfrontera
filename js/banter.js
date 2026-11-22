@@ -46,6 +46,15 @@
       this._turnCount = 0;
       this._used = {};
       this._ambientReady = 0;
+      let profile = {};
+      try {
+        const saved = HF.store && HF.store.get && HF.store.get('banter_discovery_profile', {});
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) profile = saved;
+      } catch (e) { }
+      if (g) {
+        g._banterDiscoveryFlags = Object.assign({}, profile, g._banterDiscoveryFlags || {});
+        delete g._banterDiscoveryFlags.turnEnded;
+      }
       this.resetIdle(g);
       this.startAmbient(g);
       // Diálogo de apertura: la capital habla con la primera unidad.
@@ -168,6 +177,236 @@
       const out = [];
       for (const c of g.cells) if (c && c.u && c.u.owner === me) out.push(c);
       return out;
+    },
+
+    noteDiscovery(g, key) {
+      if (!g || !key) return;
+      const flags = g._banterDiscoveryFlags || (g._banterDiscoveryFlags = {});
+      flags[key] = true;
+      if (key === 'resourcesViewed' || key === 'diplomacyOpened') {
+        try {
+          const saved = HF.store && HF.store.get && HF.store.get('banter_discovery_profile', {});
+          const profile = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+          profile[key] = true;
+          if (HF.store && HF.store.set) HF.store.set('banter_discovery_profile', profile);
+        } catch (e) { }
+      }
+    },
+
+    recordMap(g) {
+      if (!g) return;
+      const meta = g.meta || {};
+      const identity = meta.mapId != null
+        ? 'id:' + meta.mapId
+        : 'seed:' + (g.seed == null ? '' : g.seed) + '|R:' + (g.R == null ? '' : g.R) + '|biome:' + (g.biome || '');
+      let history = [];
+      try {
+        const saved = HF.store && HF.store.get && HF.store.get('banter_seen_maps', []);
+        if (Array.isArray(saved)) history = saved.filter(x => typeof x === 'string').slice(-24);
+      } catch (e) { }
+      if (identity && history.indexOf(identity) < 0) {
+        history.push(identity);
+        history = history.slice(-24);
+        try { if (HF.store && HF.store.set) HF.store.set('banter_seen_maps', history); } catch (e) { }
+      }
+      g._banterMapHistorySize = history.length;
+    },
+
+    discoverySpeaker(g, near) {
+      const own = this.ownUnits(g);
+      if (own.length) {
+        if (near && HF.hexDist) {
+          return own.reduce((best, c) => HF.hexDist(c, near) < HF.hexDist(best, near) ? c : best);
+        }
+        return own[0];
+      }
+      const me = (g && g.mySeat) || 0;
+      return (g && g.cells || []).find(c => c && c.b && c.o === me && c.b !== HF.B.ARBOL) || null;
+    },
+
+    showDiscovery(g, key, text, near) {
+      if (!text || !this.canBanter(g)) return false;
+      const seen = g._banterDiscoveries || (g._banterDiscoveries = {});
+      if (seen[key]) return false;
+      const speaker = this.discoverySpeaker(g, near);
+      if (!speaker) return false;
+      seen[key] = true;
+      this._g = g;
+      this.mark(g);
+      this.startSequence(g, [{ i: speaker.i, text, kind: 'ally', life: 4.2 }]);
+      return true;
+    },
+
+    triggerOnlineWait(g) {
+      const online = HF.online;
+      if (!g || !g.online || !online || !online.room || !online.playerId) return false;
+      let room;
+      try { room = online.room(); } catch (e) { return false; }
+      if (!room || room.status !== 'ACTIVE') return false;
+      const players = Array.isArray(room.players_data) ? room.players_data.filter(p => p && p.player_id) : [];
+      const me = players.find(p => p.player_id === online.playerId());
+      if (!me || players.length < 2) return false;
+      const others = players.filter(p => p.player_id !== me.player_id);
+      const cycle = room.current_turn == null ? g.turn : room.current_turn;
+      if (room.game_phase === 'SIMULTANEOUS') {
+        if (me.is_ready) {
+          const waiting = others.filter(p => !p.is_ready).length;
+          if (waiting > 0) {
+            const text = waiting === 1
+              ? 'Has terminado. Aún falta que un jugador confirme su turno.'
+              : `Has terminado. Aún faltan ${waiting} jugadores por confirmar su turno.`;
+            return this.showDiscovery(g, 'online-ready-' + cycle + '-' + waiting,
+              text);
+          }
+        } else if (others.length && others.every(p => p.is_ready)) {
+          return this.showDiscovery(g, 'online-all-wait-' + cycle,
+            'Todos los demás están listos; esperan a que termines tu turno.');
+        }
+      } else if (room.game_phase === 'TURN_BASED' && room.active_player !== me.player_id) {
+        if (!g._banterDiscoveryFlags || !g._banterDiscoveryFlags.turnEnded) return false;
+        const active = players.find(p => p.player_id === room.active_player);
+        if (active && active.seat != null && me.seat != null) {
+          const total = Math.max(1, ...players.map(p => Number(p.seat) || 0));
+          const distance = (Number(me.seat) - Number(active.seat) + total) % total;
+          if (distance > 0) {
+            const shown = this.showDiscovery(g, 'online-turn-wait-' + cycle + '-' + distance,
+              `Turno entregado. ${distance === 1 ? 'Un jugador debe' : distance + ' jugadores deben'} jugar antes de que vuelva el tuyo.`);
+            if (shown) delete g._banterDiscoveryFlags.turnEnded;
+            return shown;
+          }
+        }
+      }
+      return false;
+    },
+
+    visibleEnemyGroups(g) {
+      const me = (g && g.mySeat) || 0;
+      const foes = (g && g.cells || []).filter(c => c && c.u && c.u.owner !== me &&
+        (!HF.visible || HF.visible(g, c.i)));
+      const groups = [];
+      const used = new Set();
+      for (const cell of foes) {
+        if (used.has(cell.i)) continue;
+        const group = [cell];
+        used.add(cell.i);
+        for (let cursor = 0; cursor < group.length; cursor++) {
+          for (const other of foes) {
+            if (used.has(other.i)) continue;
+            if (HF.hexDist && HF.hexDist(group[cursor], other) <= 2) {
+              group.push(other);
+              used.add(other.i);
+            }
+          }
+        }
+        groups.push(group);
+      }
+      return groups;
+    },
+
+    triggerDiscoveries(g) {
+      if (!g || g.over) return false;
+      if (this.triggerOnlineWait(g)) return true;
+
+      const me = (g.mySeat) || 0;
+      const treaties = Array.isArray(g.treaties) ? g.treaties : [];
+      const expiring = treaties.filter(t => t && t.status === 'active' &&
+        Array.isArray(t.factions) && t.factions.indexOf(me) >= 0 &&
+        Number.isFinite(t.expiryTurn) && t.expiryTurn >= g.turn - 1 &&
+        t.expiryTurn - g.turn + 1 <= 2)
+        .sort((a, b) => a.expiryTurn - b.expiryTurn)[0];
+      if (expiring) {
+        const left = Math.max(0, expiring.expiryTurn - g.turn + 1);
+        const other = expiring.factions.find(id => id !== me);
+        const name = g.f[other] && g.f[other].name ? ' con ' + g.f[other].name : '';
+        if (this.showDiscovery(g, 'treaty-expiry-' + expiring.id,
+          `El tratado${name} vence ${left === 0 ? 'este turno' : 'en ' + left + (left === 1 ? ' turno' : ' turnos')}.`)) return true;
+      }
+
+      if (g.turn >= 3 && !g._banterDiscoveryFlags?.resourcesViewed) {
+        if (this.showDiscovery(g, 'resource-statistics',
+          'Toca oro, trigo o madera arriba para consultar ingresos, gastos y balance.')) return true;
+      }
+      if (g.turn >= 4 && !g._banterDiscoveryFlags?.diplomacyOpened) {
+        if (this.showDiscovery(g, 'diplomacy-menu',
+          'En Diplomacia puedes revisar pactos, comercio y banca; abre el menú con 🕊️.')) return true;
+      }
+      if (g.turn >= 3 && !g._banterDiscoveryFlags?.mapViewsChanged) {
+        if (this.showDiscovery(g, 'map-views',
+          'Cambia la vista del mapa para consultar combate, política y recursos.')) return true;
+      }
+      if (g.turn >= 4 && g._banterMapHistorySize === 1) {
+        const mapName = g.meta && g.meta.name ? ` «${g.meta.name}»` : '';
+        if (this.showDiscovery(g, 'try-another-map',
+          `Este es el único mapa${mapName} anotado en el historial local; al terminar, prueba otro escenario.`)) return true;
+      }
+
+      const ownFaction = g.f && g.f[me];
+      const cargoSent = (g._banterDiscoveryFlags && g._banterDiscoveryFlags.cargoSent) ||
+        (Array.isArray(g.replayLog) && g.replayLog.some(a => Array.isArray(a) && a[0] === 9)) ||
+        (Array.isArray(g.caravans) && g.caravans.some(c => c && c.kind === 'cargo' && c.owner === me));
+      const cargoSource = !cargoSent && HF.cargoDests && ownFaction
+        ? (g.cells || []).find(c => c && c.o === me && (c.b === HF.B.CIUDAD || c.b === HF.B.PUEBLO) &&
+          HF.cargoDests(g, ownFaction, c.i).length > 0)
+        : null;
+      if (g.turn >= 4 && cargoSource) {
+        const destination = HF.cargoDests(g, ownFaction, cargoSource.i)[0];
+        const sourceName = cargoSource.city || (HF.BNAME && HF.BNAME[cargoSource.b]) || 'puerto';
+        const destinationName = destination.city || (HF.BNAME && HF.BNAME[destination.b]) || 'puerto';
+        const routeKey = 'sea-cargo-' + cargoSource.i + '-' + destination.i;
+        if (this.showDiscovery(g, routeKey,
+          `El puerto ${sourceName} tiene una ruta marítima hasta ${destinationName}, aislado por tierra. Puedes enviarle recursos.`,
+          cargoSource)) return true;
+      }
+
+      const log = Array.isArray(g.diplomacyLog) ? g.diplomacyLog : [];
+      const loanRequested = log.some(e => e && e.type === 'loan_request' &&
+        Array.isArray(e.factions) && e.factions.indexOf(me) >= 0);
+      const loanTreaty = treaties.some(t => t && t.type === 'loan_contract' &&
+        Array.isArray(t.factions) && t.factions.indexOf(me) >= 0);
+      const activeLoans = ownFaction && ownFaction.economy &&
+        Array.isArray(ownFaction.economy.activeLoans) && ownFaction.economy.activeLoans.length > 0;
+      if (g.turn >= 5 && log.length < 40 && !loanRequested && !loanTreaty && !activeLoans) {
+        if (this.showDiscovery(g, 'loan-request',
+          'No consta una solicitud de préstamo en este registro; puedes consultar las condiciones en Banca.')) return true;
+      }
+
+      const activeRoutes = treaties.some(t => t && t.status === 'active' &&
+        Array.isArray(t.factions) && t.factions.indexOf(me) >= 0 &&
+        t.type === 'trade_agreement' && t.tradeTerms &&
+        Array.isArray(t.tradeTerms.routes) && t.tradeTerms.routes.some(r => r && r.active));
+      if (g.turn >= 6 && !activeRoutes) {
+        if (this.showDiscovery(g, 'trade-routes',
+          'No veo rutas comerciales activas; puedes revisar los envíos de recursos en Diplomacia.')) return true;
+      }
+
+      if (g.turn >= 4) {
+        const groups = this.visibleEnemyGroups(g);
+        const concentration = groups.find(group => group.length >= 3);
+        if (concentration) {
+          const anchor = concentration[0];
+          if (this.showDiscovery(g, 'enemy-cluster-' + concentration.map(c => c.i).sort((a, b) => a - b).join('-'),
+            `Veo ${concentration.length} unidades rivales concentradas cerca de (${anchor.q}, ${anchor.r}).`, anchor)) return true;
+        }
+
+        const ownUnits = this.ownUnits(g).length;
+        const enemyUnits = (g.cells || []).filter(c => c && c.u && c.u.owner !== me &&
+          (!HF.visible || HF.visible(g, c.i))).length;
+        if (enemyUnits) {
+          const comparison = ownUnits > enemyUnits
+            ? `Tienes ${ownUnits} unidades; superas a las ${enemyUnits} rivales visibles.`
+            : ownUnits < enemyUnits
+              ? `Cuentas ${ownUnits} unidades; las ${enemyUnits} rivales visibles te superan.`
+              : `Tú y el enemigo tenéis ${ownUnits} unidades visibles en el frente.`;
+          const ownCells = (g.cells || []).filter(c => c && c.o === me).length;
+          const enemyCells = (g.cells || []).filter(c => c && c.o >= 0 && c.o !== me &&
+            (!HF.visible || HF.visible(g, c.i))).length;
+          const territory = enemyCells && ownCells !== enemyCells
+            ? ` Tú controlas ${ownCells} casillas; hay ${enemyCells} casillas rivales visibles.`
+            : '';
+          if (this.showDiscovery(g, 'force-comparison-' + g.turn, comparison + territory)) return true;
+        }
+      }
+      return false;
     },
 
     roleUnit(g, role, used) {

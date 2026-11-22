@@ -25,6 +25,13 @@
     return { conquer: 'Conquista: elimina todas las ciudades rivales', survive: `Sobrevive hasta el turno ${gl.n}`, gold: `Reúne ${gl.n} de oro`, territory: `Controla ${gl.n} casillas`, city: `Ten ${gl.n} ciudades`, maxTurns: `Gana antes del turno ${gl.n}` }[gl.type] || 'Conquista';
   };
 
+  HF.onlineResult = function (g, seat) {
+    if (!g.online || !g.f[seat]) return null;
+    if (g.over) return { won: g.over.winner === seat, reason: g.over.reason };
+    if (g.f[seat].alive === false) return { won: false, reason: 'Tu civilización ha caído' };
+    return null;
+  };
+
   // Resumen de una facción para el marcador: reservas y neto por recurso,
   // ejército y su desglose, mantenimiento, territorio, estructuras y estado de
   // la capital. Se expone para poder probarlo sin navegador.
@@ -87,7 +94,9 @@
       // Mismo ámbito que la barra: si hay una provincia seleccionada, el
       // detalle es de esa provincia (antes abría siempre el total de la
       // facción y los números no coincidían con los de arriba).
-      showResourceDetail(chip && chip.dataset ? chip.dataset.res : 'gold', !(st.prov >= 0));
+      if (showResourceDetail(chip && chip.dataset ? chip.dataset.res : 'gold', !(st.prov >= 0)) && HF.banter) {
+        HF.banter.noteDiscovery(g, 'resourcesViewed');
+      }
     });
     const st = { sel: -1, opts: new Map(), pending: null, drawer: null, busy: false, focus: -1, evPtr: g.events.length, bubbles: [] };
     cur = { g, st };
@@ -109,7 +118,17 @@
     if (HF.bgm) { HF.bgm.start(); HF.bgm.update(g); }
     cur.board = board; HF.cur = () => cur;
     if (HF.replays) HF.replays.init(g);
-    if (HF.banter) HF.banter.init(g);
+    if (HF.banter) {
+      HF.banter.init(g);
+      HF.banter.recordMap(g);
+    }
+    let discoveryTimer = null;
+    if (g.online && HF.banter) {
+      discoveryTimer = setInterval(() => {
+        if (g.over) { clearInterval(discoveryTimer); discoveryTimer = null; return; }
+        HF.banter.triggerDiscoveries(g);
+      }, 2200);
+    }
 
     function nextIdleUnit(g) {
       // Solo unidades con las DOS acciones intactas: mover y atacar.
@@ -224,7 +243,8 @@
       }
       board.draw();
     }
-    function refresh() {
+    let onlineResultShown = false;
+    function refresh(onlineConfirmed) {
       if (g.online) g.cur = P;
       sync(); hud(); overlay();
       if (HF.replays) HF.replays.touch(g);
@@ -233,6 +253,22 @@
       if (HF.banter && g.f[P] && g.f[P].deficit && g._banterPanicTurn !== g.turn) {
         g._banterPanicTurn = g.turn;
         HF.banter.triggerSupplyPanic(g);
+      }
+      if (HF.banter) HF.banter.triggerDiscoveries(g);
+      if (onlineConfirmed && !onlineResultShown) {
+        const result = HF.onlineResult(g, P);
+        if (result) {
+          onlineResultShown = true;
+          if (HF.bgm) HF.bgm.stop();
+          HF.sfx(result.won ? 'win' : 'lose');
+          const continuing = !g.over && g.online.host;
+          HF.modal(`<h2 style="text-align:center">${result.won ? '🏆 ¡Victoria!' : '💀 Derrota'}</h2>
+            <p style="text-align:center">${HF.esc(result.reason)} · Turno ${g.turn}</p>
+            ${continuing ? '<p>La partida continúa. Si sales, otro jugador deberá asumir la dirección de la sala.</p>' : ''}
+            <button id="onlineEndMenu" class="pri" style="width:100%">Volver al menú principal</button>`, mm => {
+            mm.querySelector('#onlineEndMenu').onclick = () => HF.go('hub');
+          });
+        }
       }
     }
     function clearSel() { st.sel = -1; st.opts = new Map(); }
@@ -440,6 +476,7 @@
           const r = HF.sendCargo(g, fromIdx, dst, m.querySelector('#ckRes').value, +m.querySelector('#ckQty').value);
           HF.closeModal();
           if (!r.ok) { HF.sfx('error'); return HF.toast(r.msg); }
+          if (HF.banter) HF.banter.noteDiscovery(g, 'cargoSent');
           HF.sfx('good');
           const dest = g.cells[dst] && g.cells[dst].city;
           HF.toast(`⛵ ${r.qty} rumbo a ${dest || 'el puerto'}`);
@@ -459,10 +496,11 @@
     function showResourceDetail(resKey, totalFaction) {
       // Un fallo al calcular el desglose no puede quedarse en silencio: antes
       // cualquier excepción dejaba el clic sin pantalla y sin aviso.
-      try { resourceDetailModal(resKey, totalFaction); }
+      try { return resourceDetailModal(resKey, totalFaction) === true; }
       catch (err) {
         console.error('[detalle de recursos]', err);
         HF.toast(HF.lang() === 'en' ? 'The resource detail could not be opened' : 'No se pudo abrir el detalle de recursos', 2600);
+        return false;
       }
     }
     function resourceDetailModal(resKey, totalFaction = false) {
@@ -582,6 +620,7 @@
         <br><button id="resClose" class="pri" style="width:100%">${HF.t('CLOSE')}</button>`;
 
       HF.modal(html, m => { const b = m.querySelector('#resClose'); if (b) b.onclick = HF.closeModal; });
+      return true;
     }
 
     // Barks diegéticos: 40% al tocar una unidad propia.
@@ -700,7 +739,7 @@
       else clearSel();
       pumpEvents(); refresh(); afterAction();
     }
-    function afterAction() { if (g.over) showEnd(); }
+    function afterAction() { if (g.over && !g.online) showEnd(); }
 
     function tap(i) {
       hideTip();
@@ -914,6 +953,7 @@
     let viewIdx = 0;
     q('#bView').onclick = () => {
       viewIdx = (viewIdx + 1) % VIEWS.length;
+      if (HF.banter) HF.banter.noteDiscovery(g, 'mapViewsChanged');
       const v = VIEWS[viewIdx];
       board.viewMode = v.key;
       q('#bView').innerHTML = `${viewHTML(v)}<small>${v.name}</small>`;
@@ -951,7 +991,7 @@
     // El puente de plataforma (js/platform.js) guarda por aquí antes de que el
     // sistema suspenda o cierre el proceso.
     HF.requestSave = save;
-    q('#bEnd').onclick = () => {
+    q('#bEnd').onclick = async () => {
       if (st.busy || g.over) return;
       if (g.online) {
         // En red no se cierra el turno local: en simultáneo cada jugador marca
@@ -959,10 +999,13 @@
         const room = HF.online.room && HF.online.room();
         if (room && room.game_phase === 'TURN_BASED') {
           if (room.active_player !== HF.online.playerId()) { HF.toast(HF.lang() === 'en' ? 'Wait for your turn' : 'Espera tu turno'); return; }
-          HF.online.endTurn();
+          const result = await HF.online.endTurn();
+          if (!result.ok) { HF.toast(result.msg || 'No se pudo entregar el turno'); return; }
+          if (HF.banter) HF.banter.noteDiscovery(g, 'turnEnded');
           HF.toast(HF.lang() === 'en' ? 'Turn ended' : 'Turno entregado', 1500);
         } else {
-          HF.online.ready();
+          const result = await HF.online.ready();
+          if (!result.ok) { HF.toast(result.msg || 'No se pudo confirmar el turno'); return; }
           HF.toast(HF.lang() === 'en' ? '✅ Ready — waiting for the others' : '✅ Listo — esperando a los demás', 1500);
         }
         return;
@@ -985,6 +1028,7 @@
       try { HF.store.del('session_in_game'); } catch (e) { }
       if (g._onlineStop) { try { g._onlineStop(); } catch (e) { } g._onlineStop = null; }
       if (g._clockStop) { try { g._clockStop(); } catch (e) { } g._clockStop = null; }
+      if (discoveryTimer) { clearInterval(discoveryTimer); discoveryTimer = null; }
       if (HF.banter) HF.banter.stop();
       HF.bubbleAt = null;
       HF.requestSave = null;
@@ -1094,12 +1138,18 @@
         m.querySelectorAll('[data-sc]').forEach(el => el.onclick = () => el.classList.toggle('open'));
       });
     }
-    q('#board').onclick = scoreboard;
+    q('#board').onclick = () => {
+      if (HF.banter) HF.banter.noteDiscovery(g, 'resourcesViewed');
+      scoreboard();
+    };
     // DIPLOMACIA: el panel se abre como modal propio. Antes se inyectaba en
     // #info, que tiene pointer-events:none (botones muertos) y se repinta en
     // cada clic sobre el mapa, así que la pantalla "desaparecía".
     q('#bDiplomacy')?.addEventListener('click', () => {
-      if (HF.DiplomacyUI) HF.DiplomacyUI.open(g, P);
+      if (HF.DiplomacyUI) {
+        HF.DiplomacyUI.open(g, P);
+        if (HF.banter) HF.banter.noteDiscovery(g, 'diplomacyOpened');
+      }
     });
     q('#menu').onclick = () => HF.modal(`<h3>${HF.t('GAME_MENU')}</h3><div class="dim small">🎯 ${goalText(g)}</div><br>
       <div class="grid3" style="grid-template-columns:1fr"><button id="r" class="pri">${HF.t('GAME_CONTINUE')}</button><button id="c">${HF.t('GAME_CENTER')}</button><button id="w">${HF.t('GAME_CODEX')}</button><button id="sm">🔗 Enlace del mapa</button><button id="rp">🎬 Compartir partida</button><button id="s">${HF.t('GAME_SAVE_EXIT')}</button><button id="a">${HF.t('GAME_ABANDON')}</button></div>`, m => {

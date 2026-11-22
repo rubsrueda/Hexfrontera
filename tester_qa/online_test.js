@@ -70,6 +70,41 @@ HF.cloud.select = async () => ({ ok: true, data: [fakeRoom] });
   const state = await HF.online.state();
   ok(state.ok && state.room && state.room.room_code === room.room_code, 'descarga el estado de la sala');
 
+  let called = '';
+  HF.cloud.rpc = async (fn, args) => {
+    called = fn;
+    return { ok: true, data: Object.assign({}, fakeRoom, {
+      room_code: args.p_room || fakeRoom.room_code, setup_json: { quick_match: true }
+    }) };
+  };
+  const quick = await HF.online.quickMatch();
+  ok(quick.ok && called === 'fn_hf_quick_match_v2', 'búsqueda rápida usa la RPC con verificación de presencia');
+  await HF.online.join('ABCDE', true);
+  ok(called === 'fn_hf_join_public_room_v2', 'la entrada pública valida la presencia del anfitrión');
+  await HF.online.join('ABCDE');
+  ok(called === 'fn_hf_join_room', 'la entrada privada conserva la RPC por código');
+
+  const savedState = HF.online.state, savedPublish = HF.online.publish;
+  const syncRoom = {
+    host_id: pid, status: 'ACTIVE', game_phase: 'SIMULTANEOUS', current_turn: 1,
+    players_data: [{ player_id: pid, seat: 1 }], actions: []
+  };
+  HF.online.state = async () => ({ ok: true, room: syncRoom });
+  let attempts = 0, confirmations = 0, warnings = 0;
+  HF.online.publish = async () => ++attempts === 1 ? { ok: false, msg: 'error de prueba' } : { ok: true };
+  HF.serialize = () => ({});
+  HF.hasContact = () => false;
+  HF.toast = () => { warnings++; };
+  const syncGame = { online: { host: true, seat: 0 }, mySeat: 0, turn: 1, _onlineDirty: true };
+  const stop = HF.online.bind(syncGame, confirmed => { if (confirmed) confirmations++; });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  ok(syncGame._onlineDirty && confirmations === 0 && warnings === 1, 'fallo de publicación conserva el estado y no confirma el resultado');
+  await new Promise(resolve => setTimeout(resolve, 1800));
+  stop();
+  ok(attempts >= 2 && !syncGame._onlineDirty && confirmations > 0, 'reintenta y confirma el resultado tras publicar');
+  HF.online.state = savedState;
+  HF.online.publish = savedPublish;
+
   await HF.online.leave();
   ok(HF.online.session() === null, 'salir borra la sesión');
 

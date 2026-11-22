@@ -9,7 +9,7 @@ const HF = {};
 const sandbox = { console, HF, window: null, navigator: { onLine: false }, localStorage: null, setTimeout, clearTimeout };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-for (const f of ['util.js', 'config.js', 'data.js', 'mapgen.js', 'engine.js', 'progress.js'])
+for (const f of ['util.js', 'config.js', 'data.js', 'names.js', 'mapgen.js', 'engine.js', 'progress.js', 'game.js'])
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), sandbox);
 
 let fail = 0;
@@ -32,6 +32,20 @@ for (const c of g.cells) if (c && c.u) { total++; if (c.u.mv === 1 && c.u.at ===
 ok(total > 0 && ready === total, `todas las unidades recuperan PA (${ready}/${total})`);
 ok(g.f.every((f, i) => f.gold >= before[i].gold), 'todas las facciones cobran ingresos');
 ok(g.cur === 0, 'el cursor vuelve al jugador 0');
+
+const multiplayer = HF.makeGame({ mode: 'skirmish', seed: 43, size: 'medium', n: 3, biome: 'plains', fog: 'NONE', difficulty: 'normal', goal: { type: 'conquer' } }, HF.loadTribe());
+multiplayer.online = { host: true, seat: 0 };
+multiplayer.f[0].alive = false;
+HF.checkEnd(multiplayer);
+ok(!multiplayer.over, 'la partida online continúa si cae el anfitrión y sobreviven dos jugadores');
+ok(HF.onlineResult(multiplayer, 0).won === false, 'el anfitrión eliminado recibe derrota antes del final global');
+ok(HF.onlineResult(multiplayer, 1) === null, 'un superviviente no recibe resultado prematuro');
+multiplayer.f[2].alive = false;
+HF.checkEnd(multiplayer);
+ok(multiplayer.over && multiplayer.over.winner === 1, 'registra como ganador al último asiento superviviente');
+ok(HF.onlineResult(multiplayer, 1).won === true, 'el asiento 1 ve victoria');
+ok(HF.onlineResult(multiplayer, 0).won === false, 'el asiento 0 ve derrota');
+ok(multiplayer.over.won === false, 'la presentación no modifica el resultado compartido');
 
 console.log(fail ? 'CON FALLOS (' + fail + ')' : 'TODO OK');
 process.exit(fail ? 1 : 0);

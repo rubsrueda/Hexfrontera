@@ -54,7 +54,9 @@
       lastError = String(d.message || d.error).replace(/^.*?:\s*/, '');
       console.warn('[online]', r.status || '', d);
       if (/Could not find the function/i.test(lastError)) {
-        lastError = 'Faltan las funciones en Supabase: ejecuta sql/hf_multiplayer.sql en el proyecto wwafeitljxnlvmjtwsjz';
+        lastError = /(?:quick_match_v2|list_public_rooms_v2|join_public_room_v2)/i.test(lastError)
+          ? 'Falta la actualización de emparejamiento: ejecuta sql/hf_matchmaking_v2.sql en Supabase'
+          : 'Faltan las funciones en Supabase: ejecuta sql/hf_multiplayer.sql en el proyecto wwafeitljxnlvmjtwsjz';
       } else if (/schema cache/i.test(lastError)) {
         lastError = 'PostgREST no ve las funciones: ejecuta el SQL y recarga el esquema (notify pgrst)';
       }
@@ -81,7 +83,7 @@
 
   let timer = 0, beat = 0, lastRoom = null, listeners = [], lastError = '';
 
-  function rememberRoom(room) {
+  function rememberRoom(room, ownerId) {
     if (!room || !room.room_code) return;
     if (!LS) {
       console.warn('[online] localStorage no disponible: no se podrá conservar Mis salas');
@@ -90,7 +92,7 @@
     try {
       const rooms = storedRooms();
       const code = room.room_code;
-      const playerId = pid();
+      const playerId = ownerId || pid();
       const next = rooms.filter(x => !(x.code === code && x.player_id === playerId));
       next.unshift({
         code,
@@ -158,9 +160,9 @@
       return { ok: false, msg: 'No se pudo crear la sala' };
     },
 
-    async join(code) {
+    async join(code, isPublic) {
       const t = myTribe();
-      const r = await rpc('fn_hf_join_room', {
+      const r = await rpc(isPublic ? 'fn_hf_join_public_room_v2' : 'fn_hf_join_room', {
         p_room: String(code || '').toUpperCase().trim(), p_player: pid(),
         p_name: t.name, p_crest: t.crest, p_color: t.color
       });
@@ -181,13 +183,12 @@
       try {
         for (const saved of storedRooms()) {
           if (!HF.cloud || !HF.cloud.select) { result.push(saved); continue; }
-          usePlayerId(saved.player_id);
           const r = await HF.cloud.select('hf_online_matches',
             'room_code=eq.' + encodeURIComponent(saved.code) + '&select=*');
           if (r.ok) {
             const room = row(r.data);
             if (room) {
-              rememberRoom(room);
+              rememberRoom(room, saved.player_id);
               result.push(Object.assign({}, room, { _resumePlayerId: saved.player_id }));
             }
           } else {
@@ -204,8 +205,7 @@
             }
             if (!Array.isArray(rooms)) rooms = row(rooms) ? [row(rooms)] : [];
             rooms.forEach(room => {
-              usePlayerId(currentPlayerId);
-              rememberRoom(room);
+              rememberRoom(room, currentPlayerId);
               result.unshift(Object.assign({}, room, { _resumePlayerId: currentPlayerId }));
             });
           } else {
@@ -214,8 +214,9 @@
         } else {
           onlineError = 'Cliente de Supabase no disponible.';
         }
-      } finally {
-        usePlayerId(currentPlayerId);
+      } catch (e) {
+        console.error('[online] consultar Mis salas', e);
+        return { rooms: result, error: 'No se pudieron consultar todas las salas.' };
       }
       const unique = [];
       result.forEach(room => {
@@ -228,8 +229,11 @@
 
     async resume(saved) {
       if (!saved || !saved.code) return { ok: false, msg: 'Sala guardada no válida' };
+      const previousId = pid();
       usePlayerId(saved.player_id);
-      return api.join(saved.code);
+      const result = await api.join(saved.code);
+      if (!result.ok) usePlayerId(previousId);
+      return result;
     },
 
     suspend() {
@@ -239,7 +243,7 @@
     },
 
     async publicRooms() {
-      const r = await rpc('fn_hf_list_public_rooms', {});
+      const r = await rpc('fn_hf_list_public_rooms_v2', {});
       if (!r.ok) return { ok: false, msg: errMsg(r), rooms: [] };
       let rooms = r.data;
       if (typeof rooms === 'string') {
@@ -261,12 +265,12 @@
       const t = myTribe();
       const setup = opts.setup || {
         mode: 'skirmish', seed: (Math.random() * 1e9) | 0, size: 'medium',
-        n: opts.max || 4, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }
+        n: 2, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }
       };
       setup.is_public = true;
-      const r = await rpc('fn_hf_quick_match', {
+      const r = await rpc('fn_hf_quick_match_v2', {
         p_room: makeCode(), p_player: pid(), p_name: t.name, p_crest: t.crest,
-        p_color: t.color, p_setup: setup, p_max: opts.max || 4
+        p_color: t.color, p_setup: setup, p_max: 2
       });
       if (!r.ok) return { ok: false, msg: errMsg(r) };
       const room = row(r.data);
@@ -453,7 +457,7 @@
       const r = await rpc('fn_hf_ping', {});
       if (!r.ok) return { ok: false, msg: errMsg(r) };
       const required = [
-        ['fn_hf_list_public_rooms', {}],
+        ['fn_hf_list_public_rooms_v2', {}],
         ['fn_hf_list_my_rooms', { p_player: pid() }]
       ];
       for (const [fn, args] of required) {
@@ -466,7 +470,7 @@
     // Sondeo de la partida: el anfitrión aplica acciones ajenas y publica;
     // los invitados recargan el snapshot. Incluye relojes, bots y relevo.
     bind(g, refresh) {
-      let seq = -1, stopped = false, claimTried = false, contactSent = false;
+      let seq = -1, stopped = false, claimTried = false, contactSent = false, ticking = false;
       let ack = g._onlineAck != null ? g._onlineAck : ((lastRoom && lastRoom.actions) ? lastRoom.actions.length : 0);
       const runBot = seat => {
         try { g.cur = Math.max(0, seat); HF.aiPlay(g, Math.max(0, seat)); return true; }
@@ -518,7 +522,9 @@
         if (g._setSeat) g._setSeat(g.mySeat);
       };
       const tick = async () => {
-        if (stopped || (G.document && G.document.hidden)) return;
+        if (stopped || ticking || (G.document && G.document.hidden)) return;
+        ticking = true;
+        try {
         const r = await api.state();
         if (!r.ok || !r.room) return;
         let room = r.room;
@@ -566,9 +572,18 @@
             if (c.ok) room = c.room || room;
           }
           if (changed || ended || acted) { refresh(); g._onlineDirty = true; }
-          if (g._onlineDirty) { g._onlineDirty = false; await api.publish(HF.serialize(g)); }
+          if (g._onlineDirty) {
+            g._onlineDirty = false;
+            const published = await api.publish(HF.serialize(g));
+            if (!published.ok) {
+              g._onlineDirty = true;
+              console.error('[online] no se pudo publicar el estado:', published.msg);
+              if (HF.toast) HF.toast('No se pudo sincronizar la partida; se intentará de nuevo.');
+            }
+          }
+          if (!g._onlineDirty && !stopped) refresh(true);
         } else {
-          if (applyGuest(room)) refresh();
+          if (applyGuest(room)) refresh(true);
           if (room.game_phase === 'SIMULTANEOUS' && !contactSent && HF.hasContact(g)) {
             contactSent = true;
             await api.contact();
@@ -579,6 +594,7 @@
           const act = (room.players_data || []).find(p => p.player_id === room.active_player);
           if (act && !act.is_bot && api.timeLeft(room, act.player_id) <= 0) await api.timeoutPlayer(act.player_id);
         }
+        } finally { ticking = false; }
       };
       const id = setInterval(tick, POLL_MS);
       const hb = setInterval(() => { if (!stopped) api.heartbeat(); }, HEARTBEAT_MS);
@@ -621,7 +637,32 @@
   // ---------- pantalla de sala ----------
   HF.screen('online', el => {
     let watching = false;
+    let openingQuickMatch = false;
+    let quickOpenFailed = false;
+    let quickOpenError = '';
     const cleanups = [];
+    async function openQuickMatch(room) {
+      if (!room || room.status !== 'ACTIVE' || !(room.setup_json && room.setup_json.quick_match)
+          || openingQuickMatch || quickOpenFailed || !el.isConnected) return;
+      openingQuickMatch = true;
+      const notice = el.querySelector('#scMsg');
+      if (notice) notice.textContent = 'Rival encontrado. Abriendo el tablero…';
+      try {
+        const result = await api.enterMatch();
+        if (!result.ok && el.isConnected) {
+          quickOpenFailed = true;
+          quickOpenError = result.msg + ' Pulsa «Entrar al tablero» para reintentar.';
+          const current = el.querySelector('#scMsg');
+          if (current) current.textContent = quickOpenError;
+        }
+      } catch (e) {
+        console.error('[online] abrir partida rápida', e);
+        quickOpenFailed = true;
+        quickOpenError = 'No se pudo abrir la partida. Pulsa «Entrar al tablero» para reintentar.';
+        const current = el.querySelector('#scMsg');
+        if (current) current.textContent = quickOpenError;
+      } finally { openingQuickMatch = false; }
+    }
     const render = room => {
       const s = getSession();
       const ps = api.players(room);
@@ -667,6 +708,7 @@
         <div class="row"><div class="grow"><div class="dim small">Sala</div><b style="font-size:22px;letter-spacing:3px">${HF.esc(roomCodeTxt)}</b></div>
         <button id="scCopy" style="min-height:36px">Copiar</button></div>
         <div class="dim small">${status}${room && room.status === 'ACTIVE' ? ' · Turno ' + room.current_turn : ''}${suTxt}${biTxt}${fogTxt}${su && su.seed ? ' · semilla ' + su.seed : ''}</div>
+        ${room && room.status === 'WAITING' && su && su.quick_match ? '<p class="small" role="status">No había partidas abiertas; se creó una sala pública y estamos esperando rival. Mantén esta pantalla abierta.</p>' : ''}
       </div>
       <div class="card"><b>Jugadores (${ps.length}/${room ? room.max_players : 4})</b>${rows}${bank}</div>
       ${ps.length < 2 ? `<p class="dim small">Comparte el código con otro jugador. Cada pestaña o ventana cuenta como un jugador distinto.</p>` : ''}
@@ -679,7 +721,7 @@
       </div>
       ${room && room.status === 'ACTIVE' ? `<p class="dim small" style="margin-top:8px">Niebla por jugador. La partida empieza en turnos simultáneos y pasa a turnos individuales con reloj cuando dos facciones se ven.</p>` : ''}
       <div class="card" id="scMyRoomsCard"><b>Mis salas</b><div id="scMyRooms" class="dim small">Consultando salas guardadas y Supabase…</div></div>`;
-      el.innerHTML = `<div class="screen">${HF.header('🌐 Multijugador')}<div class="scroll">${!s ? joinCard : roomCards}<p class="dim small" id="scMsg" style="min-height:16px"></p></div></div>`;
+      el.innerHTML = `<div class="screen">${HF.header('🌐 Multijugador')}<div class="scroll">${!s ? joinCard : roomCards}<p class="dim small" id="scMsg" style="min-height:16px">${HF.esc(quickOpenError)}</p></div></div>`;
       HF.wireBack(el);
       const msg = t => { const m = el.querySelector('#scMsg'); if (m) m.textContent = t || ''; };
       const q = s2 => el.querySelector(s2);
@@ -695,8 +737,8 @@
           </div>`).join('');
           publicBox.querySelectorAll('.pubJoin').forEach(btn => btn.onclick = async () => {
             btn.disabled = true;
-            const r = await api.join(btn.dataset.code);
-            if (!r.ok) return msg(r.msg);
+            const r = await api.join(btn.dataset.code, true);
+            if (!r.ok) { btn.disabled = false; return msg(r.msg); }
             HF.sfx('good'); startWatch(); render(r.room);
           });
         });
@@ -758,10 +800,10 @@
       if (q('#scQuick')) q('#scQuick').onclick = async () => {
         const btn = q('#scQuick');
         btn.disabled = true; btn.textContent = 'Buscando…';
-        const r = await api.quickMatch({ max: 4 });
+        const r = await api.quickMatch({ max: 2 });
         btn.disabled = false; btn.textContent = '⚡ Búsqueda rápida';
         if (!r.ok) return msg(r.msg);
-        HF.sfx('good'); startWatch(); render(r.room);
+        HF.sfx('good'); startWatch(); render(r.room); openQuickMatch(r.room);
       };
       if (q('#scBot')) q('#scBot').onclick = async () => {
         const btn = q('#scBot');
@@ -835,6 +877,8 @@
       };
       if (q('#scLeave')) q('#scLeave').onclick = () => { stopWatch(); api.suspend(); render(null); };
       if (q('#scEnter')) q('#scEnter').onclick = async () => {
+        quickOpenFailed = false;
+        quickOpenError = '';
         msg('Abriendo el tablero…');
         const r = await api.enterMatch();
         if (!r.ok) return msg(r.msg);
@@ -845,7 +889,11 @@
       if (watching) return;
       watching = true;
       cleanups.push(api.watch());
-      cleanups.push(api.onChange(room => { if (el.isConnected) render(room); }));
+      cleanups.push(api.onChange(room => {
+        if (!el.isConnected) return;
+        render(room);
+        openQuickMatch(room);
+      }));
     }
 
     function stopWatch() {
@@ -857,7 +905,7 @@
     render(api.room());
     if (getSession()) {
       startWatch();
-      api.state().then(r => { if (r.ok && r.room && el.isConnected) render(r.room); });
+      api.state().then(r => { if (r.ok && r.room && el.isConnected) { render(r.room); openQuickMatch(r.room); } });
     }
   });
 })(typeof window !== 'undefined' ? window : globalThis);

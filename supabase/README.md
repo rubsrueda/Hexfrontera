@@ -25,6 +25,10 @@ El cliente ya usa el proyecto Supabase configurado en `js/cloud.js`; no se requi
 
 El script es aditivo y no elimina partidas existentes. Después de ejecutarlo, abre Federati y usa **Multijugador → Probar conexión**. Si Supabase indica que no encuentra una función recién creada, espera la recarga del esquema o ejecuta `NOTIFY pgrst, 'reload schema';` en SQL Editor y vuelve a probar. Si falla la comunicación, revisa el mensaje de diagnóstico en pantalla y la consola del navegador; “No hay salas” solo se muestra después de consultar la base con éxito.
 
+Para la búsqueda rápida y la lista pública actualizadas, ejecuta después `../sql/hf_matchmaking_v2.sql` en el mismo proyecto. Esta migración no borra salas ni modifica partidas activas o privadas. La lista muestra salas públicas en espera cuyo anfitrión haya enviado una señal de presencia en los últimos 45 segundos; la búsqueda rápida marca como terminadas las salas públicas en espera abandonadas durante más de diez minutos. La señal se pausa cuando la página está oculta, de modo que una sala puede dejar de aparecer mientras su anfitrión tiene la pestaña en segundo plano.
+
+La búsqueda rápida entra automáticamente cuando encuentra un rival; si no lo encuentra, crea una sala pública en espera. El anfitrión debe mantener el juego abierto para iniciar y dirigir la partida: esta migración no convierte el juego en un servidor autoritativo ni garantiza que los turnos progresen cuando todos cierran el navegador.
+
 Los valores de proyecto, URLs completas, Client IDs, claves, secretos y tokens se omiten intencionalmente de esta guía. Usa los valores guardados en la configuración autorizada del proyecto; no los copies a commits ni a logs.
 
 ## Estado de verificación

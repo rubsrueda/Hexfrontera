@@ -1,3 +1,8 @@
 
 Solo enviar entre capitales no todos los puertos. 
+
 Estás haciendo un problema de carga y descarga de caravanas, aunque está bien crear embudos, no impedir y que no haya movimiento. Quedando acumulándose y sin moverse caravanas en un bug
+
+- en casi todas las partidas sobre el turno 30 de repente los recursos se quedan en 0s
+
+- **Mapas de prueba en comunidad:** limpiar o filtrar «Test de fin», duplicados como «Divididos por la Montaña» y contenido de prueba para que no aparezca como contenido jugable normal.

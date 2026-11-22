@@ -122,6 +122,144 @@ g.cells[3].u = mk('INF', 0);
   for (let k = 0; k < 4; k++) probe.push(HF.banter.pickFresh('probe', ['a', 'b', 'c', 'd']));
   ok(new Set(probe).size === 4, 'pickFresh no repite hasta agotar el repertorio');
 
+  // 12. Descubrimientos: los avisos salen de datos existentes y no se repiten.
+  const dg = {
+    turn: 3, mySeat: 0, over: false, R: 2, seed: 11, biome: 'plains', meta: {},
+    f: [{ id: 0, name: 'Federati', economy: { activeLoans: [] } }, { id: 1, name: 'Rivales' }],
+    cells: [], treaties: [], diplomacyLog: []
+  };
+  for (let i = 0; i < 8; i++) dg.cells.push({ i, q: i, r: 0, u: null, b: 0, o: i === 0 ? 0 : -1 });
+  dg.cells[0].u = mk('INF', 0);
+  dg.cells[3].u = mk('INF', 1);
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true, 'avisa de las estadísticas de recursos tras varios turnos');
+  ok(/ingresos, gastos y balance/.test(bubbles[0].txt), 'el aviso dirige al desglose real de recursos');
+  ok(HF.banter.triggerDiscoveries(dg) === false, 'no repite un descubrimiento ya mostrado');
+
+  // Las marcas de pantallas se guardan por partida; no se afirma que el
+  // jugador omitió una pantalla después de haberla abierto.
+  HF.banter.noteDiscovery(dg, 'resourcesViewed');
+  dg.turn = 4;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true, 'avisa de diplomacia si aún no se abrió');
+  HF.banter.noteDiscovery(dg, 'diplomacyOpened');
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true && /vista del mapa/.test(bubbles[0].txt),
+    'sugiere cambiar las vistas del mapa');
+  HF.banter.noteDiscovery(dg, 'mapViewsChanged');
+  dg._banterMapHistorySize = 2;
+  dg.cells[0].b = HF.B.PUEBLO;
+  dg.cells[1].o = 0; dg.cells[1].b = HF.B.CAMPAMENTO;
+  dg.cells[0].city = 'Puerto Norte'; dg.cells[1].city = 'Isla Sur';
+  HF.cargoDests = (game, faction, from) => from === 0 ? [game.cells[1]] : [];
+  dg.turn = 4;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true && /ruta marítima hasta Isla Sur/.test(bubbles[0].txt),
+    'sugiere enviar carga solo si existe un destino marítimo aislado');
+  dg.replayLog = [[9, 0, 1, 'food', 10]];
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) !== true || !/ruta marítima/.test(bubbles[0] && bubbles[0].txt || ''),
+    'no sugiere un envío portuario si ya consta uno en la partida');
+  HF.cargoDests = null;
+  dg.replayLog = [];
+
+  dg.turn = 5;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true, 'avisa de préstamos cuando no constan solicitudes');
+  ok(/No consta una solicitud/.test(bubbles[0].txt), 'el aviso de préstamo no inventa una petición previa');
+
+  dg.turn = 6;
+  dg.diplomacyLog = [{ type: 'loan_request', factions: [0] }];
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true, 'avisa de rutas cuando no hay envíos activos');
+  ok(/No veo rutas comerciales activas/.test(bubbles[0].txt), 'el aviso describe solo las rutas que faltan');
+
+  dg.treaties = [{ id: 7, type: 'non_aggression_pact', status: 'active', factions: [0, 1], expiryTurn: 7 }];
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true, 'detecta un tratado real próximo a vencer');
+  ok(/vence en 2 turnos/.test(bubbles[0].txt), 'el aviso usa el vencimiento del tratado');
+
+  // La concentración solo cuenta unidades rivales que la niebla deja ver.
+  dg.treaties = [];
+  dg.turn = 8;
+  dg.cells[4].u = mk('INF', 1); dg.cells[5].u = mk('CAB', 1);
+  dg.cells[3].q = 3; dg.cells[4].q = 4; dg.cells[5].q = 5;
+  HF.visible = (game, i) => i !== 5;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) !== true || !/concentradas/.test(bubbles[0] && bubbles[0].txt || ''),
+    'no anuncia concentración con menos de tres enemigos visibles');
+  HF.visible = () => true;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true && /concentradas cerca/.test(bubbles[0].txt),
+    'anuncia una concentración enemiga cuando hay tres unidades visibles');
+
+  // Sin concentración, el termómetro compara tropas observadas y territorio.
+  dg.cells[4].u = null; dg.cells[5].u = null;
+  dg.cells[2].o = 1;
+  dg.cells[3].u = mk('INF', 1);
+  dg.turn = 9;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true && /unidades/.test(bubbles[0].txt),
+    'compara fuerzas usando enemigos visibles');
+
+  const storeData = [];
+  HF.store = {
+    get: (key, fallback) => key === 'banter_seen_maps' ? storeData.slice() : fallback,
+    set: (key, value) => { if (key === 'banter_seen_maps') storeData.splice(0, storeData.length, ...value); }
+  };
+  const mg = { seed: 44, R: 3, biome: 'plains', meta: {} };
+  HF.banter.recordMap(mg);
+  ok(mg._banterMapHistorySize === 1, 'registra el mapa actual en el historial local');
+  HF.banter.recordMap({ seed: 45, R: 3, biome: 'plains', meta: {} });
+  ok(storeData.length === 2, 'distingue mapas a partir de sus semillas reales');
+  storeData.length = 0;
+  const firstMap = { seed: 501, R: 2, biome: 'plains', meta: {} };
+  HF.banter.recordMap(firstMap);
+  dg.seed = firstMap.seed; dg.R = firstMap.R; dg.biome = firstMap.biome;
+  HF.banter.recordMap(dg);
+  dg.turn = 4;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true && /único mapa anotado en el historial local/.test(bubbles[0].txt),
+    'sugiere otro mapa solo cuando el historial local confirma uno');
+
+  const waitingRoom = {
+    status: 'ACTIVE', game_phase: 'SIMULTANEOUS', current_turn: 4,
+    players_data: [
+      { player_id: 'p0', is_ready: false },
+      { player_id: 'p1', is_ready: true },
+      { player_id: 'p2', is_ready: true }
+    ]
+  };
+  HF.online = { room: () => waitingRoom, playerId: () => 'p0' };
+  dg.online = true; dg.treaties = []; dg.turn = 10;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true && /esperan a que termines/.test(bubbles[0].txt),
+    'avisa cuando los demás están listos y el jugador aún no');
+  waitingRoom.players_data[0].is_ready = true;
+  waitingRoom.players_data[1].is_ready = false;
+  waitingRoom.players_data[2].is_ready = true;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true && /falta que un jugador/.test(bubbles[0].txt),
+    'indica cuántos jugadores faltan después de terminar');
+
+  waitingRoom.game_phase = 'TURN_BASED';
+  waitingRoom.current_turn = 5;
+  waitingRoom.players_data = [
+    { player_id: 'p0', seat: 1 },
+    { player_id: 'p1', seat: 2 },
+    { player_id: 'p2', seat: 3 }
+  ];
+  waitingRoom.active_player = 'p1';
+  dg.cells[3].u = null;
+  dg._banterDiscoveryFlags.turnEnded = false;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === false, 'no atribuye espera al jugador antes de entregar su turno');
+  dg._banterDiscoveryFlags.turnEnded = true;
+  HF.banter.stop(); HF.banter._g = dg; bubbles.length = 0;
+  ok(HF.banter.triggerDiscoveries(dg) === true && /2 jugadores deben jugar/.test(bubbles[0].txt),
+    'cuenta los turnos pendientes solo después de entregar el turno');
+  HF.online = null;
+
   console.log(fail ? 'CON FALLOS (' + fail + ')' : 'TODO OK');
   process.exit(fail ? 1 : 0);
 })();
