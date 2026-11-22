@@ -248,7 +248,7 @@
       if (g.online) g.cur = P;
       sync(); hud(); overlay();
       if (HF.replays) HF.replays.touch(g);
-      if (HF.bgm) HF.bgm.update(g);
+      if (HF.bgm && !onlineResultShown) HF.bgm.update(g);
       // Pánico logístico al empezar un turno en déficit (una vez por turno).
       if (HF.banter && g.f[P] && g.f[P].deficit && g._banterPanicTurn !== g.turn) {
         g._banterPanicTurn = g.turn;
@@ -259,15 +259,7 @@
         const result = HF.onlineResult(g, P);
         if (result) {
           onlineResultShown = true;
-          if (HF.bgm) HF.bgm.stop();
-          HF.sfx(result.won ? 'win' : 'lose');
-          const continuing = !g.over && g.online.host;
-          HF.modal(`<h2 style="text-align:center">${result.won ? '🏆 ¡Victoria!' : '💀 Derrota'}</h2>
-            <p style="text-align:center">${HF.esc(result.reason)} · Turno ${g.turn}</p>
-            ${continuing ? '<p>La partida continúa. Si sales, otro jugador deberá asumir la dirección de la sala.</p>' : ''}
-            <button id="onlineEndMenu" class="pri" style="width:100%">Volver al menú principal</button>`, mm => {
-            mm.querySelector('#onlineEndMenu').onclick = () => HF.go('hub');
-          });
+          showEnd(result);
         }
       }
     }
@@ -676,7 +668,22 @@
       });
     }
 
+    async function sendOnlineAction(action) {
+      st.busy = true;
+      try {
+        const result = await HF.online.submit(action);
+        HF.toast(result.ok ? (HF.lang() === 'en' ? 'Action sent' : 'Acción enviada')
+          : (result.msg || 'No se pudo enviar la acción'));
+      } catch (e) {
+        console.error('[online] enviar acción', e);
+        HF.toast('No se pudo enviar la acción');
+      } finally {
+        st.busy = false;
+      }
+    }
+
     function act(from, to, kind) {
+      if (st.busy) return;
       // En partida en red el invitado envía la acción al anfitrión; el estado
       // local se actualiza cuando llega el snapshot.
       if (g.online) {
@@ -685,8 +692,7 @@
           HF.toast(HF.lang() === 'en' ? 'Not your turn' : 'No es tu turno'); return;
         }
         if (!g.online.host) {
-          HF.online.submit({ k: 'act', from, to, kind: kind || undefined });
-          HF.toast(HF.lang() === 'en' ? 'Action sent' : 'Acción enviada');
+          sendOnlineAction({ k: 'act', from, to, kind: kind || undefined });
           clearSel(); refresh(); return;
         }
         g.cur = P;
@@ -755,8 +761,8 @@
               HF.toast(HF.lang() === 'en' ? 'Not your turn' : 'No es tu turno'); return;
             }
             if (!g.online.host) {
-              HF.online.submit(p.kind === 'unit' ? { k: 'recruit', type: p.item, i, tier } : { k: 'build', b: p.item, i });
-              st.pending = null; closeDrawer(); HF.toast(HF.lang() === 'en' ? 'Action sent' : 'Acción enviada');
+              sendOnlineAction(p.kind === 'unit' ? { k: 'recruit', type: p.item, i, tier } : { k: 'build', b: p.item, i });
+              st.pending = null; closeDrawer();
               refresh(); return;
             }
             g.cur = P;
@@ -1163,12 +1169,21 @@
       m.querySelector('#a').onclick = () => { if (confirm(HF.lang() === 'en' ? 'Surrender the game? Progress will be lost.' : '¿Abandonar la partida? Se perderá el progreso.')) { HF.store.del('savegame_active'); HF.go('hub'); } };
     });
 
-    function showEnd() {
-      HF.store.del('savegame_active');
-      HF.store.del('session_in_game');
-      if (HF.replays) HF.replays.finish(g);
+    function showEnd(onlineResult) {
+      const original = cur.g;
+      const g = onlineResult ? Object.assign({}, original, {
+        over: Object.assign({}, original.over || {}, onlineResult, {
+          elapsedMs: original.over && original.over.elapsedMs != null
+            ? original.over.elapsedMs : Math.max(0, Date.now() - original.startedAt)
+        })
+      }) : original;
+      if (!g.online) {
+        HF.store.del('savegame_active');
+        HF.store.del('session_in_game');
+        if (HF.replays) HF.replays.finish(g);
+      }
       if (HF.bgm) HF.bgm.stop();
-      const res = HF.recordResult(g) || {};
+      const res = g.online ? {} : (HF.recordResult(g) || {});
       const won = g.over.won;
       HF.sfx(won ? 'win' : 'lose');
       const s = g.stat, m = g.meta || {};
@@ -1178,7 +1193,7 @@
       const mapKey = HF.cloud && HF.cloud.getMapKey ? HF.cloud.getMapKey(g) : 'local';
       // Envío en segundo plano: el jugador ve el resultado sin esperar a la red.
       let mapScoreSent = null;
-      if (HF.cloud && HF.cloud.submitMapScore && !g._mapScoreSent) {
+      if (!g.online && HF.cloud && HF.cloud.submitMapScore && !g._mapScoreSent) {
         g._mapScoreSent = true;
         const scorePayload = {
           map_key: mapKey,
@@ -1238,6 +1253,8 @@
       const elapsed = g.over.elapsedMs != null ? g.over.elapsedMs : Math.max(0, (g.endedAt || Date.now()) - g.startedAt);
       const duration = HF.formatGameDuration(elapsed);
       HF.modal(`<h2 style="text-align:center">${won ? '🏆 ¡Victoria!' : '💀 Derrota'}</h2><div style="text-align:center" class="dim">${HF.esc(g.over.reason)} · Turno ${g.turn} · Duración total: <b>${duration}</b></div>${extra}
+        ${g.online ? '<p class="dim small">Las estadísticas militares del resumen son compartidas por la partida y no se registran como puntuación individual.</p>' : ''}
+        ${g.online && !original.over && g.online.host ? '<p>La partida continúa. Si sales, otro jugador deberá asumir la dirección de la sala.</p>' : ''}
         <div class="kpis">
           <div class="kpi"><span>⚔️</span><b>${kd}</b><small>Eficiencia militar</small><em>${s.kills} bajas / ${s.lost} pérdidas</em></div>
           <div class="kpi"><span>🔗</span><b>${s.cuts}</b><small>Asfixia logística</small><em>hexágonos aislados</em></div>
@@ -1246,7 +1263,7 @@
         <canvas class="chart" id="ch"></canvas>
         <div class="chart-legend">${g.f.map(f => `<span><i style="background:${f.color}"></i>${HF.esc(f.name)}</span>`).join('')}</div>
         <div class="card" style="margin-top:8px">
-          <div class="row"><b>🏆 Récords del Mapa</b><span class="dim small">Tu puntuación: <b style="color:var(--acc)">${score.toLocaleString()} pts</b><span id="myRank"></span></span></div>
+          <div class="row"><b>🏆 Récords del Mapa</b>${g.online ? '' : `<span class="dim small">Tu puntuación: <b style="color:var(--acc)">${score.toLocaleString()} pts</b><span id="myRank"></span></span>`}</div>
           <div id="mapLB" class="dim small" style="margin-top:6px">Cargando clasificación mundial…</div>
         </div>
         <div class="dim small" style="text-align:center">Conquistadas ${s.captured} · Edificios ${s.built} · Deserciones ${s.deserts}</div><br>
@@ -1254,7 +1271,7 @@
         <button id="btnShareReplay" style="width:100%;margin-bottom:6px">🎬 Compartir Repetición</button>
         <div class="dim small" style="text-align:center;margin:2px 0 6px">${HF.t('FB_PROMPT')}</div>
         <button id="btnFeedback" style="width:100%;margin-bottom:6px">💬 ${HF.t('FB_CTA')}</button>
-        <div class="row"><button id="menu2" class="grow">Menú</button>${g.mode === 'campaign' && won && m.idx < 29 ? '<button id="nx" class="pri grow">Siguiente ▶</button>' : '<button id="again" class="pri grow">Repetir</button>'}</div>`, mm => {
+        <div class="row"><button id="menu2" class="grow">Menú</button>${g.online ? '' : g.mode === 'campaign' && won && m.idx < 29 ? '<button id="nx" class="pri grow">Siguiente ▶</button>' : '<button id="again" class="pri grow">Repetir</button>'}</div>`, mm => {
         chart(mm.querySelector('#ch'));
         // Top del mapa: se carga después del envío para que incluya la marca
         // recién registrada; el modal ya es usable mientras tanto.
@@ -1293,7 +1310,7 @@
         };
         const afterSend = () => {
           // Puesto del jugador (también se guarda en el historial local).
-          if (HF.cloud && HF.cloud.getMapRank) {
+          if (!g.online && HF.cloud && HF.cloud.getMapRank) {
             HF.cloud.getMapRank(mapKey, HF.cloud.playerId()).then(rank => {
               if (!rank) return;
               const rk = mm.querySelector('#myRank');

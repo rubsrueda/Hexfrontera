@@ -9,7 +9,7 @@
   const SS = (() => { try { return G.sessionStorage || null; } catch (e) { return null; } })();
   const LS = (() => { try { return G.localStorage || null; } catch (e) { return null; } })();
   const MY_ROOMS_KEY = 'hf_online_my_rooms';
-  const POLL_MS = 1600;
+  const POLL_MS = 700;
   const HEARTBEAT_MS = 9000;
   const CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   // Cada asiento tiene un color distinto: el color de la tribu se repite.
@@ -54,9 +54,11 @@
       lastError = String(d.message || d.error).replace(/^.*?:\s*/, '');
       console.warn('[online]', r.status || '', d);
       if (/Could not find the function/i.test(lastError)) {
-        lastError = /(?:quick_match_v2|list_public_rooms_v2|join_public_room_v2)/i.test(lastError)
-          ? 'Falta la actualización de emparejamiento: ejecuta sql/hf_matchmaking_v2.sql en Supabase'
-          : 'Faltan las funciones en Supabase: ejecuta sql/hf_multiplayer.sql en el proyecto wwafeitljxnlvmjtwsjz';
+        lastError = /(?:skip_expired_turn|claim_host_v2)/i.test(lastError)
+          ? 'Falta la actualización de turnos: ejecuta sql/hf_turns_v3.sql en Supabase'
+          : /(?:quick_match_v2|list_public_rooms_v2|join_public_room_v2)/i.test(lastError)
+            ? 'Falta la actualización de emparejamiento: ejecuta sql/hf_matchmaking_v2.sql en Supabase'
+            : 'Faltan las funciones en Supabase: ejecuta sql/hf_multiplayer.sql en el proyecto configurado';
       } else if (/schema cache/i.test(lastError)) {
         lastError = 'PostgREST no ve las funciones: ejecuta el SQL y recarga el esquema (notify pgrst)';
       }
@@ -438,13 +440,13 @@
     async timeoutPlayer(playerId) {
       const s = getSession();
       if (!s) return { ok: false };
-      const r = await rpc('fn_hf_timeout', { p_room: s.room_code, p_player: playerId });
-      return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false };
+      const r = await rpc('fn_hf_skip_expired_turn', { p_room: s.room_code, p_player: playerId });
+      return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
     async claimHost() {
       const s = getSession();
       if (!s) return { ok: false };
-      const r = await rpc('fn_hf_claim_host', { p_room: s.room_code, p_player: pid() });
+      const r = await rpc('fn_hf_claim_host_v2', { p_room: s.room_code, p_player: pid() });
       return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
     async heartbeat() {
@@ -470,7 +472,16 @@
     // Sondeo de la partida: el anfitrión aplica acciones ajenas y publica;
     // los invitados recargan el snapshot. Incluye relojes, bots y relevo.
     bind(g, refresh) {
-      let seq = -1, stopped = false, claimTried = false, contactSent = false, ticking = false;
+      let seq = -1, stopped = false, nextClaimAt = 0, contactSent = false, ticking = false;
+      let lastSyncError = '';
+      const reportSyncError = result => {
+        const msg = result.msg || 'No se pudo actualizar la partida';
+        if (msg !== lastSyncError) {
+          lastSyncError = msg;
+          console.warn('[online]', msg);
+          if (HF.toast) HF.toast(msg);
+        }
+      };
       let ack = g._onlineAck != null ? g._onlineAck : ((lastRoom && lastRoom.actions) ? lastRoom.actions.length : 0);
       const runBot = seat => {
         try { g.cur = Math.max(0, seat); HF.aiPlay(g, Math.max(0, seat)); return true; }
@@ -529,19 +540,19 @@
         if (!r.ok || !r.room) return;
         let room = r.room;
 
-        // Relevo: si el anfitrión lleva >20 s sin latir, otro jugador toma el
-        // mando y el anterior pasa a bot.
+        // El relevo cambia el anfitrión sin sustituir a un humano por un bot.
         if (room.host_id !== pid()) {
           if (g.online.host) dropHost(room);
           const hp = (room.players_data || []).find(p => p.player_id === room.host_id);
           const stale = !hp || !hp.last_seen || (Date.now() - Date.parse(hp.last_seen) > 20000);
-          if (stale && !claimTried) {
-            claimTried = true;
+          if (stale && Date.now() >= nextClaimAt) {
+            nextClaimAt = Date.now() + 10000;
             const c = await api.claimHost();
-            if (c.ok) { room = c.room || room; takeHost(room); }
+            if (c.ok) { room = c.room || room; takeHost(room); lastSyncError = ''; }
+            else reportSyncError(c);
           }
-        } else if (!g.online.host) { takeHost(room); claimTried = false; }
-        else claimTried = false;
+        } else if (!g.online.host) { takeHost(room); nextClaimAt = 0; }
+        else nextClaimAt = 0;
 
         if (g.online.host) {
           const changed = applyHost(room);
@@ -550,9 +561,7 @@
             if (room.current_turn > g.turn && !g.over) { try { HF.mpEndRound(g); ended = true; } catch (e) { } }
             const act = (room.players_data || []).find(p => p.player_id === room.active_player);
             if (act) {
-              if (api.timeLeft(room, act.player_id) <= 0 && !act.is_bot) {
-                await api.timeoutPlayer(act.player_id);
-              } else if (act.is_bot) {
+              if (act.is_bot && !g.over) {
                 acted = runBot(act.seat - 1);
                 refresh(); g._onlineDirty = true;
                 const e = await api.endTurn();
@@ -581,7 +590,7 @@
               if (HF.toast) HF.toast('No se pudo sincronizar la partida; se intentará de nuevo.');
             }
           }
-          if (!g._onlineDirty && !stopped) refresh(true);
+          if (!g._onlineDirty && !stopped && (g.over || (g.f && g.f[g.mySeat] && g.f[g.mySeat].alive === false))) refresh(true);
         } else {
           if (applyGuest(room)) refresh(true);
           if (room.game_phase === 'SIMULTANEOUS' && !contactSent && HF.hasContact(g)) {
@@ -589,10 +598,14 @@
             await api.contact();
           }
         }
-        // Reloj: al agotarse el banco se marca bot (cualquier cliente lo reporta).
-        if (room.game_phase === 'TURN_BASED') {
+        // Un turno vencido se cede sin cambiar el control humano.
+        if (!g.over && room.game_phase === 'TURN_BASED') {
           const act = (room.players_data || []).find(p => p.player_id === room.active_player);
-          if (act && !act.is_bot && api.timeLeft(room, act.player_id) <= 0) await api.timeoutPlayer(act.player_id);
+          if (act && !act.is_bot && api.timeLeft(room, act.player_id) <= 0) {
+            const result = await api.timeoutPlayer(act.player_id);
+            if (!result.ok) reportSyncError(result);
+            else lastSyncError = '';
+          }
         }
         } finally { ticking = false; }
       };

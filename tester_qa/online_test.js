@@ -83,6 +83,10 @@ HF.cloud.select = async () => ({ ok: true, data: [fakeRoom] });
   ok(called === 'fn_hf_join_public_room_v2', 'la entrada pública valida la presencia del anfitrión');
   await HF.online.join('ABCDE');
   ok(called === 'fn_hf_join_room', 'la entrada privada conserva la RPC por código');
+  await HF.online.timeoutPlayer(pid);
+  ok(called === 'fn_hf_skip_expired_turn', 'un turno vencido no usa la RPC que sustituía al jugador por un bot');
+  await HF.online.claimHost();
+  ok(called === 'fn_hf_claim_host_v2', 'el relevo usa la RPC que conserva a los jugadores humanos');
 
   const savedState = HF.online.state, savedPublish = HF.online.publish;
   const syncRoom = {
@@ -95,7 +99,7 @@ HF.cloud.select = async () => ({ ok: true, data: [fakeRoom] });
   HF.serialize = () => ({});
   HF.hasContact = () => false;
   HF.toast = () => { warnings++; };
-  const syncGame = { online: { host: true, seat: 0 }, mySeat: 0, turn: 1, _onlineDirty: true };
+  const syncGame = { online: { host: true, seat: 0 }, mySeat: 0, turn: 1, over: { winner: 0 }, _onlineDirty: true };
   const stop = HF.online.bind(syncGame, confirmed => { if (confirmed) confirmations++; });
   await new Promise(resolve => setTimeout(resolve, 100));
   ok(syncGame._onlineDirty && confirmations === 0 && warnings === 1, 'fallo de publicación conserva el estado y no confirma el resultado');

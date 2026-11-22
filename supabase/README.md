@@ -29,6 +29,8 @@ Para la búsqueda rápida y la lista pública actualizadas, ejecuta después `..
 
 La búsqueda rápida entra automáticamente cuando encuentra un rival; si no lo encuentra, crea una sala pública en espera. El anfitrión debe mantener el juego abierto para iniciar y dirigir la partida: esta migración no convierte el juego en un servidor autoritativo ni garantiza que los turnos progresen cuando todos cierran el navegador.
 
+Ejecuta también `../sql/hf_turns_v3.sql` para el cliente actualizado. En turnos individuales, al vencer el reloj del jugador activo, el siguiente sondeo cede su turno sin convertirlo en bot. El relevo de anfitrión tampoco transforma automáticamente a un humano en IA. Si todos cierran el juego no hay sondeo y el turno no avanza hasta que alguien vuelva. La migración no modifica salas existentes al instalarse y no restaura automáticamente jugadores que ya se hubieran convertido en bots con versiones anteriores.
+
 Los valores de proyecto, URLs completas, Client IDs, claves, secretos y tokens se omiten intencionalmente de esta guía. Usa los valores guardados en la configuración autorizada del proyecto; no los copies a commits ni a logs.
 
 ## Estado de verificación
