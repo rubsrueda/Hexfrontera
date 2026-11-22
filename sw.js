@@ -1,6 +1,6 @@
 // La version del cache debe subir en cada release: si no, el navegador sigue
 // sirviendo el JS viejo y los cambios de arte/tamaÃ±os no llegan a la partida.
-const C = 'federati-v224';
+const C = 'federati-v225';
 const FILES = [
   './', 'index.html', 'css/style.css', 'manifest.json', 'icon.svg',
   'fonts/plus-jakarta-sans-latin.woff2', 'fonts/plus-jakarta-sans-latin-ext.woff2', 'fonts/plus-jakarta-sans-cyrillic.woff2',
