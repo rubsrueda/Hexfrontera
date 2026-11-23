@@ -10,6 +10,19 @@
   const L = (es, t) => (en() ? t : es);
   const esc = s => (typeof HF.esc === 'function' ? HF.esc(s) : String(s));
   const toast = (msg, ms) => { if (typeof HF.toast === 'function') HF.toast(msg, ms); };
+  function queueOnline(g, action) {
+    const room = g.online && HF.online && HF.online.room();
+    if (!room || Number(room.setup_json && room.setup_json.turns_version) !== 5) return false;
+    HF.online.submit(Object.assign({ k: 'diplomacy' }, action)).then(result => {
+      toast(result.ok ? L('Acción enviada; esperando validación', 'Action sent; awaiting validation')
+        : (result.msg || L('No se pudo enviar la acción', 'Could not send the action')));
+    }).catch(error => {
+      console.error('[online] enviar acción diplomática', error);
+      toast(L('No se pudo enviar la acción', 'Could not send the action'));
+    });
+    HF.closeModal();
+    return true;
+  }
 
   const TYPE_ICON = {
     non_aggression_pact: '🕊️',
@@ -418,6 +431,7 @@
                 { resource: takeRes, fromFaction: target, toFaction: factionId, amountPerTurn: +m.querySelector('#dipTakeAmt').value }
               ];
             }
+            if (queueOnline(g, { op: 'propose', target, type, terms })) return;
             const res = HF.Diplomacy.proposeTreaty(g, factionId, target, type, terms);
             if (!res.success) { toast(res.message || L('Propuesta rechazada', 'Proposal refused'), 3000); return; }
             if (res.accepted) toast('🤝 ' + L('Tratado aceptado', 'Treaty accepted'), 2800);
@@ -473,11 +487,14 @@
               const maxRate = +m.querySelector('#loanMaxRate').value / 100;
               const purpose = m.querySelector('#loanPurpose').value;
               const lender = m.querySelector('#loanLender').value;
+              if (queueOnline(g, { op: 'requestLoan', amount, rate: maxRate, purpose,
+                lender: lender === '' ? null : +lender })) return;
               res = HF.Diplomacy.requestLoan(g, factionId, amount, maxRate, purpose, lender === '' ? null : +lender);
             } else {
               const amount = +m.querySelector('#loanAmount').value;
               const rate = +m.querySelector('#loanRate').value / 100;
               const minScore = +m.querySelector('#loanMinScore').value;
+              if (queueOnline(g, { op: 'offerLoan', amount, rate, minScore })) return;
               res = HF.Diplomacy.offerLoan(g, factionId, amount, rate, minScore);
             }
             if (res && res.success) {
@@ -541,6 +558,7 @@
 
     m.querySelectorAll('[data-acc]').forEach(btn => {
       btn.onclick = () => {
+        if (queueOnline(g, { op: 'respond', treaty: +btn.dataset.acc, response: 'accept' })) return;
         const res = HF.Diplomacy.respondToTreaty(g, +btn.dataset.acc, factionId, 'accept');
         toast(res && res.success ? '🤝 ' + L('Tratado aceptado', 'Treaty accepted')
           : L('No se pudo aceptar el tratado', 'Could not accept the treaty'), 2800);
@@ -550,6 +568,7 @@
 
     m.querySelectorAll('[data-rej]').forEach(btn => {
       btn.onclick = () => {
+        if (queueOnline(g, { op: 'respond', treaty: +btn.dataset.rej, response: 'reject' })) return;
         HF.Diplomacy.respondToTreaty(g, +btn.dataset.rej, factionId, 'reject');
         toast(L('Propuesta rechazada', 'Proposal rejected'), 2200);
         reopen();
@@ -560,6 +579,7 @@
       btn.onclick = () => {
         const ok = typeof confirm !== 'function' || confirm(L('¿Romper este tratado? Perderás confianza.', 'Break this treaty? You will lose trust.'));
         if (!ok) return;
+        if (queueOnline(g, { op: 'break', treaty: +btn.dataset.break })) return;
         const res = HF.Diplomacy.breakTreaty(g, +btn.dataset.break, factionId);
         toast(res && res.success ? '⚡ ' + L('Tratado roto', 'Treaty broken') : ((res && res.message) || L('No se pudo romper', 'Could not break')), 3000);
         reopen();

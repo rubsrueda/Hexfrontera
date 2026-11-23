@@ -2846,6 +2846,7 @@
     save_rs(g);
     if (HF.Diplomacy) { try { HF.Diplomacy.ensure(g); } catch (e) { if (HF.dipError) HF.dipError('serialize', e); } }
     for (const k of Object.keys(g)) if (k[0] !== '_' && k !== 'undo' && k !== 'fogMap' && k !== 'isReplay' && k !== 'noReplay') o[k] = g[k];
+    if (HF.Diplomacy && HF.Diplomacy.plainFaction) o.f = g.f.map(HF.Diplomacy.plainFaction);
     // La identidad del historial debe sobrevivir al guardar/reanudar.
     if (g.replayId) o.replayId = g.replayId;
     if (g.replayCreatedAt) o.replayCreatedAt = g.replayCreatedAt;

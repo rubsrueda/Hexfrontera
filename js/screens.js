@@ -674,6 +674,7 @@
           if (!r.ok) { btn.disabled = false; btn.textContent = '🌐 Crear sala en línea'; HF.sfx('error'); return HF.toast(r.msg); }
           HF.sfx('good');
           HF.go('online');
+          if (r.existing) HF.toast('Ya tenías una sala esperando rival; abrimos esa sala.');
         } catch (e) {
           console.error('[online] crear sala', e);
           btn.disabled = false; btn.textContent = '🌐 Crear sala en línea';

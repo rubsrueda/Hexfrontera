@@ -54,7 +54,9 @@
       lastError = String(d.message || d.error).replace(/^.*?:\s*/, '');
       console.warn('[online]', r.status || '', d);
       if (/Could not find the function/i.test(lastError)) {
-        lastError = /(?:turns_version|host_action_time|skip_expired_turn|claim_host_v2)/i.test(lastError)
+        lastError = /close_waiting_room/i.test(lastError)
+          ? 'El servidor todavía no permite cerrar salas en espera; falta actualizar sus funciones.'
+          : /(?:turns_version|host_action_time|skip_expired_turn|claim_host_v2)/i.test(lastError)
           ? 'Falta la actualización de turnos: ejecuta sql/hf_turns_v4.sql en Supabase'
           : /(?:quick_match_v2|list_public_rooms_v2|join_public_room_v2)/i.test(lastError)
             ? 'Falta la actualización de emparejamiento: ejecuta sql/hf_matchmaking_v2.sql en Supabase'
@@ -84,6 +86,14 @@
   }
 
   let timer = 0, beat = 0, lastRoom = null, listeners = [], lastError = '';
+  const pendingV5Actions = new Set();
+  const isV5 = room => Number(room && room.setup_json && room.setup_json.turns_version) === 5;
+  async function requireV5Server() {
+    const version = await rpc('fn_hf_turns_version', {});
+    if (!version.ok) return { ok: false, msg: errMsg(version) };
+    if (Number(version.data) !== 5) return { ok: false, msg: 'El servidor aún no tiene activada la actualización multijugador v5.' };
+    return { ok: true };
+  }
 
   function rememberRoom(room, ownerId) {
     if (!room || !room.room_code) return;
@@ -123,6 +133,12 @@
     } catch (e) { return []; }
   }
 
+  function isMyOpenRoom(room, playerId) {
+    return !!room && (room.status === 'WAITING' || room.status === 'ACTIVE') &&
+      Array.isArray(room.players_data) &&
+      room.players_data.some(p => p.player_id === playerId && !p.is_bot);
+  }
+
   const api = {
     session: getSession,
     code: () => (getSession() || {}).room_code || '',
@@ -139,11 +155,13 @@
 
     async create(opts) {
       opts = opts || {};
+      const compatible = await requireV5Server();
+      if (!compatible.ok) return compatible;
       const t = myTribe();
-      const setup = opts.setup || {
+      const setup = Object.assign({}, opts.setup || {
         mode: 'skirmish', seed: (Math.random() * 1e9) | 0, size: 'medium',
         n: opts.max || 4, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }
-      };
+      }, { turns_version: 5 });
       for (let attempt = 0; attempt < 4; attempt++) {
         const code = makeCode();
         const r = await rpc('fn_hf_create_room', {
@@ -155,7 +173,7 @@
           setSession({ room_code: room.room_code, player_id: pid() });
           lastRoom = room;
           rememberRoom(room);
-          return { ok: true, room };
+          return { ok: true, room, existing: room.room_code !== code };
         }
         if (!/ya existe/i.test(errMsg(r))) return { ok: false, msg: errMsg(r) };
       }
@@ -163,6 +181,8 @@
     },
 
     async join(code, isPublic) {
+      const compatible = await requireV5Server();
+      if (!compatible.ok) return compatible;
       const t = myTribe();
       const r = await rpc(isPublic ? 'fn_hf_join_public_room_v2' : 'fn_hf_join_room', {
         p_room: String(code || '').toUpperCase().trim(), p_player: pid(),
@@ -176,20 +196,23 @@
       return { ok: true, room };
     },
 
-    myRooms: storedRooms,
+    myRooms() {
+      return storedRooms().filter(item => item.player_id === pid() &&
+        (item.status === 'ACTIVE' || item.status === 'WAITING')).slice(0, 3);
+    },
 
     async refreshMyRooms() {
       const result = [];
       const currentPlayerId = pid();
       let onlineError = '';
       try {
-        for (const saved of storedRooms()) {
+        for (const saved of api.myRooms()) {
           if (!HF.cloud || !HF.cloud.select) { result.push(saved); continue; }
           const r = await HF.cloud.select('hf_online_matches',
             'room_code=eq.' + encodeURIComponent(saved.code) + '&select=*');
           if (r.ok) {
             const room = row(r.data);
-            if (room) {
+            if (isMyOpenRoom(room, currentPlayerId)) {
               rememberRoom(room, saved.player_id);
               result.push(Object.assign({}, room, { _resumePlayerId: saved.player_id }));
             }
@@ -207,6 +230,7 @@
             }
             if (!Array.isArray(rooms)) rooms = row(rooms) ? [row(rooms)] : [];
             rooms.forEach(room => {
+              if (!isMyOpenRoom(room, currentPlayerId)) return;
               rememberRoom(room, currentPlayerId);
               result.unshift(Object.assign({}, room, { _resumePlayerId: currentPlayerId }));
             });
@@ -226,7 +250,7 @@
         const owner = room._resumePlayerId || room.player_id;
         if (!unique.some(x => (x.room_code || x.code) === code && (x._resumePlayerId || x.player_id) === owner)) unique.push(room);
       });
-      return { rooms: unique, error: onlineError };
+      return { rooms: unique.slice(0, 3), error: onlineError };
     },
 
     async resume(saved) {
@@ -252,7 +276,8 @@
         try { rooms = JSON.parse(rooms); } catch (e) { rooms = []; }
       }
       if (!Array.isArray(rooms)) rooms = row(rooms) ? [row(rooms)] : [];
-      return { ok: true, rooms };
+      return { ok: true, rooms: rooms.filter(room => room.status === 'WAITING' &&
+        !api.players(room).some(p => p.player_id === pid())) };
     },
 
     async fillBots() {
@@ -264,14 +289,17 @@
 
     async quickMatch(opts) {
       opts = opts || {};
+      const compatible = await requireV5Server();
+      if (!compatible.ok) return compatible;
       const t = myTribe();
-      const setup = opts.setup || {
+      const setup = Object.assign({}, opts.setup || {
         mode: 'skirmish', seed: (Math.random() * 1e9) | 0, size: 'medium',
         n: 2, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }
-      };
+      }, { turns_version: 5 });
       setup.is_public = true;
+      const code = makeCode();
       const r = await rpc('fn_hf_quick_match_v2', {
-        p_room: makeCode(), p_player: pid(), p_name: t.name, p_crest: t.crest,
+        p_room: code, p_player: pid(), p_name: t.name, p_crest: t.crest,
         p_color: t.color, p_setup: setup, p_max: 2
       });
       if (!r.ok) return { ok: false, msg: errMsg(r) };
@@ -279,7 +307,16 @@
       setSession({ room_code: room.room_code, player_id: pid() });
       lastRoom = room;
       rememberRoom(room);
-      return { ok: true, room };
+      return { ok: true, room, existing: room.status === 'WAITING' && room.room_code !== code };
+    },
+
+    async closeWaitingRoom() {
+      const s = getSession();
+      if (!s) return { ok: false, msg: 'Sin sala' };
+      const r = await rpc('fn_hf_close_waiting_room', { p_room: s.room_code, p_player: pid() });
+      if (!r.ok) return { ok: false, msg: errMsg(r) };
+      api.suspend();
+      return { ok: true };
     },
 
     async state() {
@@ -305,13 +342,25 @@
     async ready() {
       const s = getSession();
       if (!s) return { ok: false, msg: 'Sin sala' };
-      const r = await rpc('fn_hf_set_player_ready', { p_room: s.room_code, p_player: pid() });
+      const r = await rpc(isV5(lastRoom) ? 'fn_hf_v5_ready' : 'fn_hf_set_player_ready', {
+        p_room: s.room_code, p_player: pid()
+      });
       return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
 
     async submit(action) {
       const s = getSession();
       if (!s) return { ok: false, msg: 'Sin sala' };
+      if (isV5(lastRoom)) {
+        const r = await rpc('fn_hf_v5_enqueue_action', {
+          p_room: s.room_code, p_player: pid(), p_action: action || {}
+        });
+        if (!r.ok) return { ok: false, msg: errMsg(r) };
+        const entry = row(r.data);
+        if (!entry || !entry.id) return { ok: false, msg: 'El servidor no identificó la acción enviada' };
+        pendingV5Actions.add(entry.id);
+        return { ok: true, pending: true };
+      }
       const r = await rpc('fn_hf_submit_action', { p_room: s.room_code, p_player: pid(), p_action: action || {} });
       return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
@@ -319,7 +368,9 @@
     async contact() {
       const s = getSession();
       if (!s) return { ok: false };
-      const r = await rpc('fn_hf_set_phase', { p_room: s.room_code, p_player: pid(), p_phase: 'TURN_BASED' });
+      const r = isV5(lastRoom)
+        ? await rpc('fn_hf_v5_contact', { p_room: s.room_code, p_player: pid() })
+        : await rpc('fn_hf_set_phase', { p_room: s.room_code, p_player: pid(), p_phase: 'TURN_BASED' });
       return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
 
@@ -357,7 +408,7 @@
       timer = setInterval(tick, POLL_MS);
       beat = setInterval(() => {
         const s = getSession();
-        if (s && !(G.document && G.document.hidden)) rpc('fn_hf_heartbeat', { p_room: s.room_code, p_player: pid() });
+        if (s && !(G.document && G.document.hidden)) api.heartbeat();
       }, HEARTBEAT_MS);
       return () => api.stop();
     },
@@ -372,23 +423,32 @@
     async publish(state) {
       const s = getSession();
       if (!s) return { ok: false, msg: 'Sin sala' };
-      const r = await rpc('fn_hf_publish_state', { p_room: s.room_code, p_player: pid(), p_state: state });
-      return r.ok ? { ok: true, seq: (r.data && r.data.state_seq) || 0 } : { ok: false, msg: errMsg(r) };
+      const v5 = isV5(lastRoom);
+      const r = await rpc(v5 ? 'fn_hf_v5_publish_initial_state' : 'fn_hf_publish_state',
+        { p_room: s.room_code, p_player: pid(), p_state: state });
+      if (!r.ok) return { ok: false, msg: errMsg(r) };
+      if (v5) {
+        const room = row(r.data);
+        if (!room || !room.state_json) return { ok: false, msg: 'El servidor no devolvió el tablero inicial' };
+        lastRoom = room;
+        return { ok: true, seq: room.state_seq, state: room.state_json };
+      }
+      return { ok: true, seq: (r.data && r.data.state_seq) || 0 };
     },
 
     // Abre el tablero: el anfitrión crea la partida desde el setup y publica el
     // estado; los invitados deserializan el último snapshot.
     async enterMatch() {
-      const version = await rpc('fn_hf_turns_version', {});
-      if (!version.ok) return { ok: false, msg: errMsg(version) };
-      if (Number(version.data) !== 4) return { ok: false, msg: 'La versión de turnos del servidor no es compatible; ejecuta sql/hf_turns_v4.sql.' };
+      const compatible = await requireV5Server();
+      if (!compatible.ok) return compatible;
       let r = await api.state();
       if (!r.ok || !r.room) return { ok: false, msg: 'Sin sala' };
       let room = r.room;
       if (room.status !== 'ACTIVE') return { ok: false, msg: 'La partida no ha empezado' };
+      if (!isV5(room)) return { ok: false, msg: 'La sala pertenece a una versión anterior del multijugador.' };
       const seat = api.mySeat(room);
       if (seat < 0) return { ok: false, msg: 'No estás en la sala' };
-      const host = api.isHost(room);
+      let host = api.isHost(room);
       // El invitado espera hasta 10 s a que el anfitrión publique el estado.
       if (!host && !room.state_json) {
         for (let i = 0; i < 8 && !room.state_json; i++) {
@@ -396,7 +456,11 @@
           r = await api.state();
           if (r.ok && r.room) room = r.room;
         }
-        if (!room.state_json) return { ok: false, msg: 'El anfitrión aún no ha abierto el tablero' };
+        if (!room.state_json && isV5(room)) {
+          const claim = await api.claimHost();
+          if (claim.ok) { room = claim.room; host = api.isHost(room); }
+        }
+        if (!room.state_json && !host) return { ok: false, msg: 'El anfitrión aún no ha abierto el tablero' };
       }
       let g;
       if (host) {
@@ -429,6 +493,11 @@
       if (host && !room.state_json) {
         const pub = await api.publish(HF.serialize(g));
         if (!pub.ok) { console.error('[online] publicar estado inicial', pub); return { ok: false, msg: 'No se pudo publicar el estado: ' + (pub.msg || '') }; }
+        if (pub.state) {
+          const keep = { online: g.online, mySeat: g.mySeat };
+          Object.assign(g, HF.deserialize(pub.state), keep);
+          HF.updateFog(g);
+        }
       }
       HF.startGame(g);
       return { ok: true };
@@ -437,7 +506,9 @@
     async endTurn() {
       const s = getSession();
       if (!s) return { ok: false };
-      const r = await rpc('fn_hf_end_turn', { p_room: s.room_code, p_player: pid() });
+      const r = await rpc(isV5(lastRoom) ? 'fn_hf_v5_ready' : 'fn_hf_end_turn', {
+        p_room: s.room_code, p_player: pid()
+      });
       return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
     async hostActionTime(startedAt) {
@@ -451,19 +522,148 @@
     async timeoutPlayer(playerId) {
       const s = getSession();
       if (!s) return { ok: false };
-      const r = await rpc('fn_hf_skip_expired_turn', { p_room: s.room_code, p_player: playerId });
+      const r = isV5(lastRoom)
+        ? await rpc('fn_hf_v5_tick', { p_room: s.room_code, p_player: pid() })
+        : await rpc('fn_hf_skip_expired_turn', { p_room: s.room_code, p_player: playerId });
       return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
     async claimHost() {
       const s = getSession();
       if (!s) return { ok: false };
-      const r = await rpc('fn_hf_claim_host_v2', { p_room: s.room_code, p_player: pid() });
+      const r = await rpc(isV5(lastRoom) ? 'fn_hf_v5_claim_host' : 'fn_hf_claim_host_v2',
+        { p_room: s.room_code, p_player: pid() });
       return r.ok ? { ok: true, room: (lastRoom = row(r.data)) } : { ok: false, msg: errMsg(r) };
     },
     async heartbeat() {
       const s = getSession();
       if (!s) return { ok: false };
-      return rpc('fn_hf_heartbeat', { p_room: s.room_code, p_player: pid() });
+      return rpc(isV5(lastRoom) ? 'fn_hf_v5_heartbeat' : 'fn_hf_heartbeat',
+        { p_room: s.room_code, p_player: pid() });
+    },
+    applyRemoteAction(g, entry) {
+      if (!entry || !Number.isInteger(entry.seat) || entry.seat < 1 ||
+          !g.f || !g.f[entry.seat - 1] || !entry.action) {
+        return { ok: false, msg: 'Acción remota inválida' };
+      }
+      const previous = g.cur;
+      try {
+        g.cur = entry.seat - 1;
+        const action = entry.action;
+        if (action.k === 'act') return HF.act(g, action.from, action.to, action.kind);
+        if (action.k === 'build') return HF.build(g, action.b, action.i);
+        if (action.k === 'recruit') return HF.recruit(g, action.type, action.i, undefined, action.tier);
+        if (action.k === 'cargo') {
+          const from = g.cells && g.cells[action.from];
+          if (!from || from.o !== g.cur) return { ok: false, msg: 'El puerto de origen no es tuyo' };
+          return HF.sendCargo(g, action.from, action.to, action.resource, action.quantity);
+        }
+        if (action.k === 'diplomacy' && HF.Diplomacy) {
+          const d = HF.Diplomacy, seat = entry.seat - 1;
+          let result;
+          if (action.op === 'propose') result = d.proposeTreaty(g, seat, action.target, action.type, action.terms);
+          else if (action.op === 'respond') result = d.respondToTreaty(g, action.treaty, seat, action.response);
+          else if (action.op === 'break') result = d.breakTreaty(g, action.treaty, seat);
+          else if (action.op === 'requestLoan') result = d.requestLoan(g, seat, action.amount, action.rate, action.purpose, action.lender);
+          else if (action.op === 'offerLoan') result = d.offerLoan(g, seat, action.amount, action.rate, action.minScore);
+          else return { ok: false, msg: 'Acción diplomática no reconocida' };
+          return { ok: !!(result && result.success), msg: result && result.message };
+        }
+        return { ok: false, msg: 'Acción remota no reconocida' };
+      } finally {
+        g.cur = previous;
+      }
+    },
+    async processNextV5Action(room) {
+      if (!room || room.host_id !== pid() || !room.setup_json ||
+          Number(room.setup_json.turns_version) !== 5) {
+        return { ok: false, msg: 'La sala no usa el nuevo sistema de turnos' };
+      }
+      const action = (room.actions || []).find(entry => entry && entry.status === 'pending');
+      if (!action) return { ok: true, processed: false };
+      if (!room.room_code || !action.id || !room.state_json || !Number.isInteger(room.state_seq)) {
+        return { ok: false, msg: 'Falta el estado de la partida para validar la acción' };
+      }
+      let candidate, result;
+      try {
+        candidate = HF.deserialize(JSON.parse(JSON.stringify(room.state_json)));
+        result = api.applyRemoteAction(candidate, action);
+      } catch (e) {
+        console.error('[online] validar acción pendiente', e);
+        return { ok: false, msg: 'No se pudo validar la acción pendiente' };
+      }
+      if (!result || typeof result.ok !== 'boolean') {
+        return { ok: false, msg: 'El motor no devolvió un resultado de acción válido' };
+      }
+      let state = null;
+      if (result.ok) {
+        try { state = HF.serialize(candidate); }
+        catch (e) {
+          console.error('[online] preparar estado de acción', e);
+          return { ok: false, msg: 'No se pudo preparar el estado de la acción' };
+        }
+      }
+      const response = await rpc('fn_hf_v5_commit_action', {
+        p_room: room.room_code, p_host: pid(), p_action_id: action.id,
+        p_state_seq: room.state_seq, p_accepted: result.ok,
+        p_state: state, p_message: result.ok ? null : (result.msg || 'Acción rechazada')
+      });
+      if (!response.ok) return { ok: false, msg: errMsg(response) };
+      const updatedRoom = row(response.data);
+      if (!updatedRoom) return { ok: false, msg: 'El servidor no devolvió el estado de la sala' };
+      const committed = (updatedRoom.actions || []).find(entry => entry && entry.id === action.id);
+      if (!committed || !['accepted', 'rejected'].includes(committed.status)) {
+        return { ok: false, msg: 'El servidor no confirmó el resultado de la acción' };
+      }
+      lastRoom = updatedRoom;
+      return { ok: true, processed: true, accepted: committed.status === 'accepted', room: updatedRoom };
+    },
+    async processV5Engine(room, kind) {
+      if (!room || !room.state_json || !Number.isInteger(room.state_seq) || room.host_id !== pid()) {
+        return { ok: false, msg: 'No se puede sincronizar el tablero' };
+      }
+      let candidate;
+      try {
+        candidate = HF.deserialize(JSON.parse(JSON.stringify(room.state_json)));
+        const round = candidate.turn;
+        const wasBot = p => api.isBot(p) &&
+          (p.bot_from_round == null || Number(p.bot_from_round) <= round);
+        for (const p of api.players(room)) {
+          if (candidate.f[p.seat - 1]) candidate.f[p.seat - 1].human = !wasBot(p);
+        }
+        if (kind === 'round') {
+          if (room.game_phase === 'SIMULTANEOUS') {
+            for (const p of api.players(room)) if (wasBot(p)) {
+              candidate.cur = p.seat - 1;
+              HF.aiPlay(candidate, p.seat - 1);
+            }
+            candidate.cur = 0;
+          }
+          HF.mpEndRound(candidate);
+        } else if (kind === 'bot' || kind === 'backlog') {
+          const backlog = room.setup_json && room.setup_json.bot_backlog;
+          const botId = kind === 'backlog' && Array.isArray(backlog) && backlog[0]
+            ? backlog[0].player_id : room.active_player;
+          const bot = api.players(room).find(p => p.player_id === botId);
+          if (!api.isBot(bot)) return { ok: false, msg: 'No hay un bot activo' };
+          candidate.cur = bot.seat - 1;
+          HF.aiPlay(candidate, bot.seat - 1);
+          candidate.cur = 0;
+        } else return { ok: false, msg: 'Actualización del tablero no admitida' };
+        const response = await rpc('fn_hf_v5_commit_engine', {
+          p_room: room.room_code, p_host: pid(), p_state_seq: room.state_seq,
+          p_kind: kind, p_round: round,
+          p_active: kind === 'backlog' ? room.setup_json.bot_backlog[0].player_id : room.active_player,
+          p_state: HF.serialize(candidate)
+        });
+        if (!response.ok) return { ok: false, msg: errMsg(response) };
+        const updated = row(response.data);
+        if (!updated) return { ok: false, msg: 'El servidor no devolvió el estado del tablero' };
+        lastRoom = updated;
+        return { ok: true, room: updated };
+      } catch (e) {
+        console.error('[online] sincronizar turno del motor', e);
+        return { ok: false, msg: 'No se pudo procesar el turno del motor' };
+      }
     },
     // Comprueba que el SQL del multijugador está instalado en Supabase.
     async ping() {
@@ -471,13 +671,14 @@
       if (!r.ok) return { ok: false, msg: errMsg(r) };
       const required = [
         ['fn_hf_list_public_rooms_v2', {}],
-        ['fn_hf_list_my_rooms', { p_player: pid() }],
-        ['fn_hf_turns_version', {}]
+        ['fn_hf_list_my_rooms', { p_player: pid() }]
       ];
       for (const [fn, args] of required) {
         const check = await rpc(fn, args);
         if (!check.ok) return { ok: false, msg: errMsg(check) };
       }
+      const compatible = await requireV5Server();
+      if (!compatible.ok) return compatible;
       return { ok: true, data: r.data };
     },
 
@@ -485,6 +686,7 @@
     // los invitados recargan el snapshot. Incluye relojes, bots y relevo.
     bind(g, refresh) {
       let seq = -1, stopped = false, nextClaimAt = 0, contactPending = false, ticking = false;
+      let v5Match = isV5(lastRoom);
       let lastSyncError = '';
       const reportSyncError = result => {
         const msg = result.msg || 'No se pudo actualizar la partida';
@@ -507,27 +709,23 @@
           const a = acts[ack];
           if (!a || a.player_id === pid()) continue;
           try {
-            g.cur = Math.max(0, (a.seat || 1) - 1);
-            const ac = a.action || {};
-            if (ac.k === 'act') HF.act(g, ac.from, ac.to, ac.kind);
-            else if (ac.k === 'build') HF.build(g, ac.b, ac.i);
-            else if (ac.k === 'recruit') HF.recruit(g, ac.type, ac.i, undefined, ac.tier);
-            changed = true;
+            const result = api.applyRemoteAction(g, a);
+            if (result && result.ok) changed = true;
+            else console.warn('[online] acción remota rechazada', result && result.msg);
           } catch (e) { console.warn('[online] acción remota', e); }
-          g.cur = g.mySeat || 0;
         }
         g._onlineAck = ack;
         return changed;
       };
       const applyGuest = room => {
         if (!room.state_json || room.state_seq === seq) return false;
-        seq = room.state_seq;
         try {
           const ng = HF.deserialize(room.state_json);
           const keep = { online: g.online, mySeat: g.mySeat };
           Object.assign(g, ng, keep);
           g.fogMap = null;
           HF.updateFog(g);
+          seq = room.state_seq;
           return true;
         } catch (e) { console.warn('[online] snapshot', e); return false; }
       };
@@ -536,7 +734,7 @@
         g.online.seat = api.mySeat(room);
         g.mySeat = g.online.seat;
         if (g._setSeat) g._setSeat(g.mySeat);
-        g._onlineDirty = true;
+        if (!isV5(room)) g._onlineDirty = true;
       };
       const dropHost = room => {
         g.online.host = false;
@@ -549,8 +747,44 @@
         ticking = true;
         try {
         const r = await api.state();
-        if (!r.ok || !r.room) return;
+        if (!r.ok) return;
+        if (!r.room) {
+          if (v5Match) {
+            stopped = true;
+            clearInterval(id); clearInterval(hb);
+            api.suspend();
+            if (HF.toast) HF.toast('La partida ya no está disponible.');
+            HF.go('online');
+          }
+          return;
+        }
         let room = r.room;
+        v5Match = isV5(room);
+        if (isV5(room)) {
+          if (room.status === 'FINISHED' && api.me(room) && room.state_json && room.state_json.over) {
+            if (applyGuest(room)) refresh(true);
+            stopped = true;
+            clearInterval(id); clearInterval(hb);
+            return;
+          }
+          if (room.status !== 'ACTIVE' || !isMyOpenRoom(room, pid())) {
+            stopped = true;
+            clearInterval(id); clearInterval(hb);
+            api.suspend();
+            if (HF.toast) HF.toast(room.status === 'ACTIVE'
+              ? 'Has sido reemplazado por inactividad y ya no participas en esta partida.'
+              : 'Esta partida ha terminado.');
+            HF.go('online');
+            return;
+          }
+          for (const action of room.actions || []) {
+            if (!pendingV5Actions.has(action.id) || action.status === 'pending') continue;
+            pendingV5Actions.delete(action.id);
+            if (HF.toast) HF.toast(action.status === 'accepted'
+              ? 'Acción aceptada' : (action.message || 'Acción rechazada'));
+          }
+          if (applyGuest(room)) refresh(true);
+        }
         if (g.f) {
           for (const p of api.players(room)) {
             const f = g.f[p.seat - 1];
@@ -573,7 +807,34 @@
         else nextClaimAt = 0;
 
         if (g.online.host) {
-          const changed = applyHost(room);
+          if (isV5(room)) {
+            const backlog = room.setup_json && room.setup_json.bot_backlog;
+            const nextBot = Array.isArray(backlog) && backlog[0];
+            if (room.state_json && nextBot && nextBot.turn === g.turn) {
+              const played = await api.processV5Engine(room, 'backlog');
+              if (!played.ok) reportSyncError(played);
+              else { room = played.room; if (applyGuest(room)) refresh(true); lastSyncError = ''; }
+            } else if (room.state_json && room.current_turn > g.turn) {
+              const synced = await api.processV5Engine(room, 'round');
+              if (!synced.ok) reportSyncError(synced);
+              else { room = synced.room; if (applyGuest(room)) refresh(true); lastSyncError = ''; }
+            } else if (room.state_json && room.game_phase === 'TURN_BASED' &&
+                api.isBot(api.players(room).find(p => p.player_id === room.active_player))) {
+              const played = await api.processV5Engine(room, 'bot');
+              if (!played.ok) reportSyncError(played);
+              else { room = played.room; if (applyGuest(room)) refresh(true); lastSyncError = ''; }
+            } else if (room.state_json && room.current_turn === g.turn) {
+              const processed = await api.processNextV5Action(room);
+              if (!processed.ok) reportSyncError(processed);
+              else if (processed.processed) {
+                room = processed.room;
+                if (applyGuest(room)) refresh(true);
+                lastSyncError = '';
+              }
+            }
+          } else {
+          let changed = false;
+          changed = applyHost(room);
           let ended = false, acted = false;
           if (room.game_phase === 'TURN_BASED') {
             if (room.current_turn > g.turn && !g.over) { try { HF.mpEndRound(g); ended = true; } catch (e) { } }
@@ -604,10 +865,12 @@
             }
           }
           if (!g._onlineDirty && !stopped && (g.over || (g.f && g.f[g.mySeat] && g.f[g.mySeat].alive === false))) refresh(true);
+          }
         } else {
           if (applyGuest(room)) refresh(true);
         }
-        if (!g.over && room.game_phase === 'SIMULTANEOUS' && !contactPending && HF.hasContact(g)) {
+        if (!g.over && room.game_phase === 'SIMULTANEOUS' && (!isV5(room) || g.online.host) &&
+            !contactPending && HF.hasContact(g)) {
           contactPending = true;
           const c = await api.contact();
           contactPending = false;
@@ -615,9 +878,18 @@
           else reportSyncError(c);
         }
         // Un turno vencido se cede sin cambiar el control humano.
-        if (!g.over && room.game_phase === 'TURN_BASED') {
+        if (!g.over && isV5(room) && room.game_phase === 'SIMULTANEOUS') {
+          const expired = api.players(room).some(p => !api.isBot(p) && !p.is_ready &&
+            api.timeLeft(room, p.player_id) === 0);
+          if (expired) {
+            const result = await api.timeoutPlayer(pid());
+            if (!result.ok) reportSyncError(result);
+            else lastSyncError = '';
+          }
+        } else if (!g.over && room.game_phase === 'TURN_BASED') {
           const act = (room.players_data || []).find(p => p.player_id === room.active_player);
-          if (act && !api.isBot(act) && api.timeLeft(room, act.player_id) <= 0) {
+          const remaining = act ? api.timeLeft(room, act.player_id) : null;
+          if (act && !api.isBot(act) && remaining !== null && remaining <= 0) {
             const result = await api.timeoutPlayer(act.player_id);
             if (!result.ok) reportSyncError(result);
             else lastSyncError = '';
@@ -641,9 +913,20 @@
       return ps.length > 0 && ps.every(p => p.is_ready);
     },
     timeLeft(room, playerId) {
-      if (!room || room.game_phase !== 'TURN_BASED') return null;
+      if (!room) return null;
+      const v5 = Number(room.setup_json && room.setup_json.turns_version) === 5;
+      if (!v5 && room.game_phase !== 'TURN_BASED') return null;
       const p = api.players(room).find(x => x.player_id === playerId);
       if (!p) return null;
+      if (v5) {
+        if (room.status !== 'ACTIVE' || p.is_ready || api.isBot(p) ||
+            (room.game_phase === 'TURN_BASED' && room.active_player !== playerId) ||
+            !['SIMULTANEOUS', 'TURN_BASED'].includes(room.game_phase)) return null;
+        const bank = Number(p.time_bank_seconds);
+        const started = Date.parse(p.turn_started_at || '');
+        if (!Number.isFinite(bank) || bank < 0 || !Number.isFinite(started)) return null;
+        return Math.max(0, Math.ceil(bank - Math.max(0, (Date.now() - started) / 1000)));
+      }
       const bank = Number(p.time_bank_seconds || 0);
       const started = Date.parse(room.turn_started_at || '') || Date.now();
       const used = Math.max(0, (Date.now() - started) / 1000);
@@ -738,7 +1021,7 @@
         <div class="row"><div class="grow"><div class="dim small">Sala</div><b style="font-size:22px;letter-spacing:3px">${HF.esc(roomCodeTxt)}</b></div>
         <button id="scCopy" style="min-height:36px">Copiar</button></div>
         <div class="dim small">${status}${room && room.status === 'ACTIVE' ? ' · Turno ' + room.current_turn : ''}${suTxt}${biTxt}${fogTxt}${su && su.seed ? ' · semilla ' + su.seed : ''}</div>
-        ${room && room.status === 'WAITING' && su && su.quick_match ? '<p class="small" role="status">No había partidas abiertas; se creó una sala pública y estamos esperando rival. Mantén esta pantalla abierta.</p>' : ''}
+        ${room && room.status === 'WAITING' && su && su.quick_match ? '<p class="small" role="status">Estamos esperando rival en esta sala pública. Mantén esta pantalla abierta.</p>' : ''}
       </div>
       <div class="card"><b>Jugadores (${ps.length}/${room ? room.max_players : 4})</b>${rows}${bank}</div>
       ${ps.length < 2 ? `<p class="dim small">Comparte el código con otro jugador. Cada pestaña o ventana cuenta como un jugador distinto.</p>` : ''}
@@ -746,6 +1029,7 @@
         ${room && room.status === 'ACTIVE' ? `<button class="pri grow" id="scEnter">⚔️ Entrar al tablero</button>` : ''}
         ${room && room.status === 'WAITING' && api.isHost(room) ? `<button class="pri grow" id="scStart" ${ps.length < 2 ? 'disabled' : ''}>Iniciar partida</button>` : ''}
         ${room && room.status === 'WAITING' && api.isHost(room) ? `<button id="scFillBots">🤖 Rellenar con bots</button>` : ''}
+        ${room && room.status === 'WAITING' && api.isHost(room) && ps.length === 1 ? `<button id="scCloseRoom">Cerrar sala</button>` : ''}
         ${room && room.status === 'ACTIVE' && room.game_phase === 'SIMULTANEOUS' && me && !me.is_ready ? `<button class="pri grow" id="scReady">Estoy listo</button>` : ''}
         <button id="scLeave">Volver a Mis salas</button>
       </div>
@@ -834,6 +1118,8 @@
         btn.disabled = false; btn.textContent = '⚡ Búsqueda rápida';
         if (!r.ok) return msg(r.msg);
         HF.sfx('good'); startWatch(); render(r.room); openQuickMatch(r.room);
+        if (r.existing) msg('Ya tenías una sala esperando rival; abrimos esa sala.');
+        else if (r.room.status === 'WAITING') msg('No había partidas abiertas; se creó una sala pública y estamos esperando rival.');
       };
       if (q('#scBot')) q('#scBot').onclick = async () => {
         const btn = q('#scBot');
@@ -844,6 +1130,11 @@
             n: 2, biome: 'plains', fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }, is_public: false }
         });
         if (!r.ok) { btn.disabled = false; btn.textContent = '🤖 Jugar con bots'; return msg(r.msg); }
+        if (r.existing) {
+          btn.disabled = false; btn.textContent = '🤖 Jugar con bots';
+          startWatch(); render(r.room);
+          return msg('Ya tenías una sala esperando rival. Puedes abrirla o cerrarla antes de crear otra.');
+        }
         const bots = await api.fillBots();
         btn.disabled = false; btn.textContent = '🤖 Jugar con bots';
         if (!bots.ok) return msg(bots.msg);
@@ -906,6 +1197,12 @@
         else msg('❌ ' + r.msg);
       };
       if (q('#scLeave')) q('#scLeave').onclick = () => { stopWatch(); api.suspend(); render(null); };
+      if (q('#scCloseRoom')) q('#scCloseRoom').onclick = async () => {
+        if (!confirm('¿Cerrar esta sala en espera?')) return;
+        const r = await api.closeWaitingRoom();
+        if (!r.ok) return msg(r.msg);
+        stopWatch(); render(null); msg('Sala cerrada.');
+      };
       if (q('#scEnter')) q('#scEnter').onclick = async () => {
         quickOpenFailed = false;
         quickOpenError = '';

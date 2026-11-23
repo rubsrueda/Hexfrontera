@@ -614,7 +614,7 @@
       SETTINGS_EF_DIAG_LABEL: '🔎 Diagnóstico de encuesta',
       SETTINGS_EF_DIAG_DESC: 'Comprueba si hay campaña activa, preguntas y bloqueos locales sin abrir DevTools.',
       SETTINGS_EF_DIAG_BUTTON: 'Abrir diagnóstico',
-      SETTINGS_VERSION: 'Federati v1.2 · build 219 · IA 2026-11-13-17 · 🌐 Multijugador en línea',
+      SETTINGS_VERSION: 'Federati v1.2 · build 220 · IA 2026-11-13-17 · 🌐 Multijugador en línea',
 
       // Online screen
       ONLINE_JOIN_TITLE: 'Unirse a una sala',

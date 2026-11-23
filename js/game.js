@@ -213,7 +213,11 @@
       };
       bump('upkGold', 'gold', upGold); bump('upkFood', 'food', upFood);
       st.upk = { gold: upGold, food: upFood };
-      q('#bUndo').disabled = !HF.canUndo(g);
+      const onlineV5 = !!(g.online && HF.online && HF.online.room() &&
+        Number((HF.online.room().setup_json || {}).turns_version) === 5);
+      q('#bUndo').disabled = onlineV5 || !HF.canUndo(g);
+      if (onlineV5) q('#bUndo').title = HF.lang() === 'en'
+        ? 'Undo is unavailable in online matches' : 'Deshacer no está disponible en partidas online';
       q('#bEnd').disabled = st.busy || !!g.over;
     }
     function overlay() {
@@ -465,6 +469,14 @@
         m.querySelector('#ckX').onclick = HF.closeModal;
         m.querySelector('#ckGo').onclick = () => {
           const dst = +m.querySelector('#ckDst').value;
+          const room = g.online && HF.online.room && HF.online.room();
+          if (Number(room && room.setup_json && room.setup_json.turns_version) === 5) {
+            const action = { k: 'cargo', from: fromIdx, to: dst,
+              resource: m.querySelector('#ckRes').value, quantity: +m.querySelector('#ckQty').value };
+            HF.closeModal();
+            sendOnlineAction(action);
+            return;
+          }
           const r = HF.sendCargo(g, fromIdx, dst, m.querySelector('#ckRes').value, +m.querySelector('#ckQty').value);
           HF.closeModal();
           if (!r.ok) { HF.sfx('error'); return HF.toast(r.msg); }
@@ -672,7 +684,7 @@
       st.busy = true;
       try {
         const result = await HF.online.submit(action);
-        HF.toast(result.ok ? (HF.lang() === 'en' ? 'Action sent' : 'Acción enviada')
+        HF.toast(result.ok ? (result.pending ? 'Acción enviada; esperando validación' : (HF.lang() === 'en' ? 'Action sent' : 'Acción enviada'))
           : (result.msg || 'No se pudo enviar la acción'));
       } catch (e) {
         console.error('[online] enviar acción', e);
@@ -705,7 +717,7 @@
         if (room && room.game_phase === 'TURN_BASED' && room.active_player !== HF.online.playerId()) {
           HF.toast(HF.lang() === 'en' ? 'Not your turn' : 'No es tu turno'); return;
         }
-        if (!g.online.host) {
+        if (!g.online.host || Number(room && room.setup_json && room.setup_json.turns_version) === 5) {
           sendOnlineAction({ k: 'act', from, to, kind: kind || undefined });
           clearSel(); refresh(); return;
         }
@@ -777,7 +789,7 @@
             if (room && room.game_phase === 'TURN_BASED' && room.active_player !== HF.online.playerId()) {
               HF.toast(HF.lang() === 'en' ? 'Not your turn' : 'No es tu turno'); return;
             }
-            if (!g.online.host) {
+            if (!g.online.host || Number(room && room.setup_json && room.setup_json.turns_version) === 5) {
               sendOnlineAction(p.kind === 'unit' ? { k: 'recruit', type: p.item, i, tier } : { k: 'build', b: p.item, i });
               st.pending = null; closeDrawer();
               refresh(); return;
@@ -999,7 +1011,11 @@
       } else if (st.sel < 0) info(goalText(g));
       board.draw();
     };
-    q('#bUndo').onclick = () => { if (HF.undo(g)) { HF.sfx('click'); clearSel(); st.pending = null; refresh(); drawerRender(); } };
+    q('#bUndo').onclick = () => {
+      const room = g.online && HF.online && HF.online.room();
+      if (room && Number((room.setup_json || {}).turns_version) === 5) return;
+      if (HF.undo(g)) { HF.sfx('click'); clearSel(); st.pending = null; refresh(); drawerRender(); }
+    };
     q('#bNext').onclick = () => { nextIdleUnit(g); };
 
     // ----- turnos -----
@@ -1071,7 +1087,16 @@
       const tickClock = () => {
         const el = q('#clock'); if (!el) return;
         const room = HF.online.room && HF.online.room();
-        if (!room || room.game_phase !== 'TURN_BASED') { el.textContent = ''; return; }
+        if (!room) { el.textContent = ''; return; }
+        const v5 = Number(room.setup_json && room.setup_json.turns_version) === 5;
+        if (v5 && room.game_phase === 'SIMULTANEOUS') {
+          const me = HF.online.me(room);
+          const remaining = HF.online.timeLeft(room, HF.online.playerId());
+          el.textContent = me && me.is_ready ? 'Turno terminado' :
+            (remaining == null ? 'Reloj no disponible' : 'Tu turno · ⏱' + HF.online.fmtTime(remaining));
+          return;
+        }
+        if (room.game_phase !== 'TURN_BASED') { el.textContent = ''; return; }
         const act = (room.players_data || []).find(p => p.player_id === room.active_player);
         const mine = act && act.player_id === HF.online.playerId();
         el.textContent = (mine ? 'Tu turno · ' : 'Turno rival · ') + '⏱' + HF.online.fmtTime(act ? HF.online.timeLeft(room, act.player_id) : null);
