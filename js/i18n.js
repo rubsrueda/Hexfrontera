@@ -10,7 +10,7 @@
       BTN_ONLINE: '🌐 En línea',
       BTN_DAILY: '🏆 Diario',
       BTN_NEWS: '📢',
-      DOCK_TRIBE: 'Tribu',
+      DOCK_TRIBE: 'Facción',
       DOCK_MAPS: 'Mapas',
       DOCK_STATS: 'Stats',
       RANKING: 'Ranking',

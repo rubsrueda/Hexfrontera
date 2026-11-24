@@ -50,7 +50,7 @@ try { HF.go('hub'); } catch (e) { threw = e; }
 if (threw) console.error(threw);
 ok(!threw, 'el Hub se abre sin errores');
 const html = el.innerHTML;
-ok(html.includes('art/boton-reto-diario.png'), 'Diario usa boton-reto-diario');
+ok(ctaNode.innerHTML.includes('art/boton-papiro.png'), 'Reto diario usa boton-papiro');
 ok(html.includes('art/boton-reproducir.png'), 'Repetición usa boton-reproducir');
 ok(html.includes('art/boton-campana.png'), 'Mapa usa boton-campana');
 ok(html.includes('art/boton-historial.png'), 'Ajustes usa boton-historial');
@@ -64,6 +64,7 @@ ok(!html.includes('id="ranking"'), 'el botón Ranking ya no está en el Hub: se 
 ok(!html.includes('id="hist"'), 'el historial ya no está en la barra superior');
 ok(!html.includes('id="standing"') && !html.includes('id="stOpen"'), 'la tarjeta «Tu posición» ya no está en el Hub');
 ok(html.includes('id="fbFab"') && html.includes('fb-fab'), 'el Hub tiene el botón flotante de comentarios');
+ok(html.includes('hub-wordmark') && html.includes('hub-action'), 'el Hub integra título y acciones metálicas');
 ok(ctaNode.innerHTML.includes('RETO DIARIO'), 'el banner del reto diario aparece');
 ok(ctaNode.innerHTML.includes('cta-go'), 'el banner tiene botón de iniciar');
 ok(!html.includes('⚔️ Campaña') && !html.includes('🎲 Nueva partida'), 'sin iconos delante de Campaña/Nueva partida');

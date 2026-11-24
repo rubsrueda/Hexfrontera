@@ -98,16 +98,32 @@ button.sel{border-color:var(--acc);background:rgba(58,58,32,.82)}
    para que el título, las tarjetas y los botones sigan legibles. */
 body.hub-bg{
   background-image:
-    linear-gradient(180deg,rgba(7,11,22,.55) 0%,rgba(7,11,22,.32) 32%,rgba(7,11,22,.42) 68%,rgba(7,11,22,.72) 100%),
+    linear-gradient(180deg,rgba(6,12,20,.34) 0%,rgba(7,11,22,.12) 34%,rgba(7,11,22,.28) 68%,rgba(7,11,22,.62) 100%),
     url('../art/fondo.png');
   background-size:cover;
   background-position:center;
   background-repeat:no-repeat;
 }
-.hub-mid{display:flex;flex-direction:column;gap:12px;margin:auto 0;width:100%;max-width:420px;align-self:center}
-.dock{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
-.dock button{display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:12px;padding:8px 2px}
-.dock button span{font-size:24px}
+.hub{--metal-serif:"Palatino Linotype","Book Antiqua",Georgia,serif;position:relative;padding-top:calc(var(--sat) + 10px);padding-bottom:calc(var(--sab) + 8px)}
+.hub-header{display:grid;grid-template-columns:48px minmax(0,1fr) 48px;align-items:center;min-height:58px;position:relative;z-index:2}
+.hub-utility{display:flex;align-items:center}
+.hub-utility-right{justify-content:flex-end}
+.hub-utility .art-btn img{width:34px;height:34px}
+.hub-wordmark{margin:0;color:#e8bd66;font-family:var(--metal-serif);font-size:clamp(29px,8vw,42px);font-variant:small-caps;letter-spacing:clamp(4px,1.5vw,8px);line-height:1;background:linear-gradient(180deg,#fff2ba 0%,#d8ad55 32%,#80501c 58%,#e4bc64 74%,#8a561d 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 2px 0 rgba(48,27,8,.95),-1px -1px 0 rgba(255,238,175,.24),1px 3px 0 rgba(10,7,3,.38)}
+.hub-mid{display:flex;flex-direction:column;gap:9px;margin:auto 0;width:100%;max-width:410px;align-self:center;z-index:1}
+.hub-subtitle{text-align:center;color:#f5e8c6;font-family:var(--metal-serif);font-size:12px;letter-spacing:1.2px;text-shadow:0 2px 7px #132033,0 1px 2px #000}
+.hub-action{width:100%;background:linear-gradient(180deg,rgba(15,26,35,.08),rgba(8,15,25,.28));border:1px solid rgba(227,186,97,.38);border-radius:16px;min-height:62px;box-shadow:inset 0 1px 0 rgba(255,240,178,.12),0 5px 16px rgba(4,8,14,.2);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);font-family:var(--metal-serif);transition:transform .15s ease,border-color .15s ease,background .15s ease}
+.hub-action:hover{border-color:rgba(241,204,122,.72);background:linear-gradient(180deg,rgba(35,49,45,.12),rgba(8,15,25,.38))}
+.hub-action img{width:46px;height:46px}
+.hub-action-copy{display:flex;flex-direction:column;align-items:flex-start;color:#e8bd66;font-variant:small-caps;letter-spacing:.8px;background:linear-gradient(180deg,#fff2bd 0%,#d6a94e 48%,#8b5921 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 1px 0 rgba(56,30,8,.95),1px 2px 0 rgba(12,7,2,.6)}
+.hub-action-copy small{font-family:var(--font);font-size:10px;letter-spacing:.4px;color:#ecd7a5;-webkit-text-fill-color:#ecd7a5;text-shadow:0 1px 3px #000}
+.hub-action-continue{background:linear-gradient(135deg,rgba(178,126,38,.24),rgba(17,29,40,.18));border-color:rgba(245,199,101,.68)}
+.hub-action-icon{color:#e3ba61;font-size:23px;text-shadow:0 2px 4px #000}
+.dock{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px;position:relative;z-index:2;padding:4px 0 0}
+.dock button{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px;min-width:0;font-family:var(--metal-serif);font-size:11px;padding:3px 0;border:0;border-radius:12px;background:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;color:#f1dfb2;text-shadow:0 2px 4px #000,0 1px 2px #000}
+.dock button:active{transform:translateY(2px) scale(.96);filter:brightness(1.18)}
+.dock button:hover .dock-medal,.dock button:hover .dock-crest{filter:brightness(1.15) drop-shadow(0 3px 5px rgba(0,0,0,.6))}
+.dock button span{font-size:12px}
 .badge{position:relative}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin:8px 0;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 10px 30px rgba(10,15,29,.24)}
 .card.sel{border-color:var(--acc)}
@@ -123,11 +139,11 @@ body.hub-bg{
 /* blasones: escudos recortados de art2/blasones.jfif */
 .crest-img{display:inline-block;object-fit:contain;vertical-align:middle;flex:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
 .crest-fallback{display:inline-block;line-height:1;vertical-align:middle}
-.dock button span.dock-crest{width:34px;height:34px;border:2px solid;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:rgba(10,18,34,.55);font-size:0;margin-bottom:1px}
+.dock button span.dock-crest{width:48px;height:48px;border:2px solid;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:radial-gradient(circle at 34% 27%,rgba(249,211,128,.3),rgba(25,20,14,.82) 65%,rgba(8,8,7,.94));font-size:0;margin-bottom:1px;box-shadow:inset 0 2px 2px rgba(255,229,160,.24),inset 0 -3px 5px rgba(0,0,0,.65),0 3px 7px rgba(0,0,0,.45)}
 .dock button span.dock-name{font-size:11px;line-height:1.15;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
-.dock-crest .crest-img{width:28px!important;height:28px!important}
-.dock button span.dock-medal{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;font-size:0;margin-bottom:1px}
-.dock-medal .dock-ico{width:30px;height:30px;object-fit:contain;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5)) brightness(1.1)}
+.dock-crest .crest-img{width:34px!important;height:34px!important}
+.dock button span.dock-medal{width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;font-size:0;margin-bottom:1px}
+.dock-medal .dock-ico{width:48px;height:48px;object-fit:contain;filter:drop-shadow(0 2px 3px rgba(0,0,0,.65)) brightness(1.08)}
 .bar .top-ico{display:block;width:26px;height:26px;object-fit:contain;margin:auto;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45)) brightness(1.1)}
 .modal-ico{width:24px;height:24px;object-fit:contain;vertical-align:-5px;margin-right:4px}
 .crest-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:4px}
@@ -347,14 +363,16 @@ html[dir=rtl] .lang-select{padding-right:11px;padding-left:34px;background-posit
 .art-big{display:flex;align-items:center;justify-content:center;gap:10px}
 .art-big img{width:44px;height:44px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.5))}
 
-/* ---------- banner de acción rápida del Hub ---------- */
-.cta-banner{display:flex;align-items:center;gap:10px;width:100%;background:linear-gradient(135deg,rgba(245,185,66,.16),rgba(16,28,54,.94));border:1px solid rgba(245,185,66,.45);border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-.cta-ico{font-size:26px;line-height:1}
-.cta-kicker{font-size:10px;letter-spacing:1.4px;color:var(--acc);font-weight:800;text-transform:uppercase}
-.cta-title{display:block;font-size:16px;line-height:1.2;margin-top:1px}
-.cta-sub{font-size:11px;color:var(--dim);margin-top:2px}
-.cta-go{min-height:42px;white-space:nowrap}
-@media (max-width:420px){.cta-banner{flex-wrap:wrap}.cta-banner .cta-go{width:100%}}
+/* ---------- banda diaria del Hub ---------- */
+.hub-daily{width:100%;max-width:580px;margin:8px auto 0;z-index:2}
+.cta-banner{display:flex;align-items:center;gap:10px;width:100%;min-height:70px;background:linear-gradient(90deg,rgba(10,23,31,.16),rgba(17,27,31,.08));border-top:1px solid rgba(245,211,139,.3);border-bottom:1px solid rgba(245,211,139,.18);padding:7px 8px 7px 2px;box-shadow:0 8px 24px rgba(0,0,0,.08);backdrop-filter:blur(1.5px);-webkit-backdrop-filter:blur(1.5px)}
+.cta-parchment{width:62px;height:62px;object-fit:contain;flex:none;filter:drop-shadow(0 3px 4px rgba(0,0,0,.55))}
+.cta-kicker{font-family:var(--metal-serif);font-size:9px;letter-spacing:1.8px;color:#f0c96e;font-weight:800;text-transform:uppercase;text-shadow:0 2px 4px #000}
+.cta-title{display:block;font-family:var(--metal-serif);font-size:15px;line-height:1.2;margin-top:1px;color:#e6bd64;background:linear-gradient(180deg,#fff1ba 0%,#d5a64d 53%,#87551d 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-shadow:0 1px 0 #3d2408,1px 2px 0 rgba(8,5,2,.55)}
+.cta-sub{font-size:10px;color:#f2e4bd;margin-top:2px;text-shadow:0 1px 0 #000,1px 2px 0 rgba(0,0,0,.45)}
+.cta-go{position:relative;min-height:42px;white-space:nowrap;font-family:var(--metal-serif);font-weight:700;font-size:12px;letter-spacing:.6px;color:#2b1807;padding:8px 14px;border:1px solid #f0cf7d;border-radius:10px;background:linear-gradient(145deg,#f2d68d 0%,#bd8435 22%,#f0c86f 48%,#9a6222 72%,#dca94f 100%);box-shadow:inset 1px 1px 0 #fff0b9,inset -2px -3px 0 rgba(74,39,8,.5),0 4px 8px rgba(0,0,0,.42);text-shadow:0 1px 0 rgba(255,232,164,.55)}
+.cta-go:active{box-shadow:inset -1px -1px 0 #fff0b9,inset 2px 3px 3px rgba(55,28,5,.5),0 2px 4px rgba(0,0,0,.35)}
+@media (max-width:420px){.cta-banner{gap:7px}.cta-parchment{width:52px;height:52px}.cta-title{font-size:13px}.cta-go{padding:7px 9px;font-size:11px}}
 
 /* ---------- comentarios de los jugadores ---------- */
 .fb-fab{position:fixed;right:14px;bottom:calc(var(--sab, 0px) + 86px);z-index:9;width:52px;height:52px;border-radius:50%;border:1px solid rgba(245,185,66,.45);background:linear-gradient(135deg,rgba(245,185,66,.18),rgba(16,28,54,.94));color:var(--ink);font-size:22px;line-height:1;box-shadow:0 8px 24px rgba(10,15,29,.5);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}

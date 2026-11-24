@@ -177,27 +177,25 @@
     // de arte ya no hace falta, así que se quita el símbolo inicial.
     const plain = s => String(s).replace(/^[^\p{L}\p{N}]+/u, '');
     el.innerHTML = `<div class="screen hub">
-      <div class="bar">
-        <button id="daily" class="art-btn" title="Diario"><img src="art/boton-reto-diario.png" alt="Diario">${doneToday ? '' : '<b class="art-dot">!</b>'}</button>
-        <div class="grow"></div>
-        <button id="rep" class="art-btn" title="Ver repetición"><img src="art/boton-reproducir.png" alt="Repetición"></button>
-        <button id="news" class="art-btn" title="${HF.lang() === 'en' ? 'News' : 'Noticias'}" aria-label="${HF.lang() === 'en' ? 'News' : 'Noticias'}"><img src="art/boton-noticias.png" alt="Noticias"></button>
+      <div class="hub-header">
+        <div class="hub-utility hub-utility-left"><button id="rep" class="art-btn" title="Ver repetición"><img src="art/boton-reproducir.png" alt="Repetición"></button></div>
+        <h1 class="hub-wordmark">${HF.t('HUB_TITLE')}</h1>
+        <div class="hub-utility hub-utility-right"><button id="news" class="art-btn" title="${HF.lang() === 'en' ? 'News' : 'Noticias'}" aria-label="${HF.lang() === 'en' ? 'News' : 'Noticias'}"><img src="art/boton-noticias.png" alt="Noticias"></button></div>
       </div>
-      <div id="cta" style="width:100%;max-width:560px;margin:6px auto 0"></div>
+      <div id="cta" class="hub-daily"></div>
       ${crashBanner}
       <div class="hub-mid">
-        <h1>${HF.t('HUB_TITLE')}</h1>
-        <div class="dim" style="text-align:center">${HF.t('HUB_SUBTITLE')}</div>
-        ${save ? `<button class="pri big" id="cont">${HF.t('BTN_CONTINUE')} <span class="dim">· T${save.turn} · ${HF.esc(save.mode)}</span></button>` : ''}
-        <button class="big art-big" id="camp"><img src="art/boton-reclutar.png" alt=""><span>${plain(HF.t('BTN_CAMPAIGN'))} <span class="dim">★ ${HF.totalStars()}/90</span></span></button>
-        <button class="big art-big" id="new"><img src="art/boton-construir.png" alt=""><span>${plain(HF.t('BTN_NEW_GAME'))}</span></button>
+        <div class="hub-subtitle">${HF.t('HUB_SUBTITLE')}</div>
+        ${save ? `<button class="big hub-action hub-action-continue" id="cont"><span class="hub-action-icon">➜</span><span class="hub-action-copy">${plain(HF.t('BTN_CONTINUE'))}<small>T${save.turn} · ${HF.esc(save.mode)}</small></span></button>` : ''}
+        <button class="big art-big hub-action" id="camp"><img src="art/boton-reclutar.png" alt=""><span class="hub-action-copy">${plain(HF.t('BTN_CAMPAIGN'))}<small>★ ${HF.totalStars()}/90</small></span></button>
+        <button class="big art-big hub-action" id="new"><img src="art/boton-construir.png" alt=""><span class="hub-action-copy">${plain(HF.t('BTN_NEW_GAME'))}</span></button>
       </div>
       <div class="dock">
-        <button id="tribe" title="${HF.esc(tribe.name)}" aria-label="${HF.esc(tribe.name)}"><span class="dock-crest" style="border-color:${tribe.color}">${HF.crestHTML(tribe.crest, 30)}</span><span class="dock-name">${HF.esc(tribe.name)}</span></button>
-        <button id="editor"><img class="dock-art" src="art/boton-campana.png" alt="">${HF.t('DOCK_MAPS')}</button>
-        <button id="stats"><img class="dock-art" src="art/boton-estadisticas.png" alt="">${HF.t('DOCK_STATS')}</button>
-        <button id="set" data-nav="settings"><img class="dock-art" src="art/boton-historial.png" alt="">${HF.t('DOCK_SETTINGS')}</button>
-        <button id="wiki"><img class="dock-art" src="art/boton-codice.png" alt="">${HF.t('DOCK_WIKI')}</button>
+        <button id="tribe" title="${HF.esc(tribe.name)}" aria-label="${HF.esc(tribe.name)}"><span class="dock-crest" style="border-color:${tribe.color}">${HF.crestHTML(tribe.crest, 30)}</span><span class="dock-name">${HF.t('DOCK_TRIBE')}</span></button>
+        <button id="editor"><span class="dock-medal"><img class="dock-ico" src="art/boton-campana.png" alt=""></span><span class="dock-name">${HF.t('DOCK_MAPS')}</span></button>
+        <button id="stats"><span class="dock-medal"><img class="dock-ico" src="art/boton-estadisticas.png" alt=""></span><span class="dock-name">${HF.t('DOCK_STATS')}</span></button>
+        <button id="set" data-nav="settings"><span class="dock-medal"><img class="dock-ico" src="art/boton-historial.png" alt=""></span><span class="dock-name">${HF.t('DOCK_SETTINGS')}</span></button>
+        <button id="wiki"><span class="dock-medal"><img class="dock-ico" src="art/boton-codice.png" alt=""></span><span class="dock-name">${HF.t('DOCK_WIKI')}</span></button>
       </div>
       <button id="fbFab" class="fb-fab" title="${HF.esc(HF.t('FB_CTA'))}" aria-label="${HF.esc(HF.t('FB_CTA'))}">💬</button>
     </div>`;
@@ -207,7 +205,7 @@
       if (!r.ok) { HF.sfx('error'); HF.toast(r.msg); }
     });
     on('crashNo', () => { HF.crash.clear(); HF.sfx('click'); HF.go('hub'); });
-    on('daily', () => HF.go('daily')); on('camp', () => HF.go('campaign')); on('new', () => HF.go('newgame'));
+    on('camp', () => HF.go('campaign')); on('new', () => HF.go('newgame'));
     on('tribe', () => HF.go('tribe')); on('editor', () => HF.go('maps')); on('stats', () => HF.go('stats'));
     // delegación: garantiza que Ajustes responda aunque otro handler reemplace el onclick
     el.addEventListener('click', e => {
@@ -220,48 +218,15 @@
     on('cont', () => { try { HF.startGame(HF.deserialize(save)); } catch (e) { console.error(e); HF.store.del('savegame_active'); HF.toast(HF.lang() === 'en' ? 'Corrupted save' : 'Guardado dañado'); HF.go('hub'); } });
     on('news', () => HF.modal(`<h3><img class="modal-ico" src="assets/ui/news.webp" alt="" draggable="false"> ${HF.lang() === 'en' ? 'News' : 'Noticias'}</h3><p class="dim">${HF.lang() === 'en' ? 'Version 1.0 · local offline mode.<br>Multiplayer and online games are coming in future versions.' : 'Versión 1.0 · modo local sin conexión.<br>Multijugador y partidas en línea llegarán en próximas versiones.'}</p>
       <div class="row"><button disabled>Discord</button><button disabled>Web</button><button disabled>${HF.lang() === 'en' ? 'Social' : 'Redes'}</button></div><br><button id="x" class="pri">${HF.lang() === 'en' ? 'Close (X)' : 'Cerrar (X)'}</button>`, m => m.querySelector('#x').onclick = HF.closeModal));
-    // Banner de acción rápida: reto diario → mapa de la comunidad → partida rápida.
+    // Banda diaria: queda integrada visualmente sobre el cielo sin ocultar el mapa.
     const cta = el.querySelector('#cta');
     if (cta) {
-      const paint = (kicker, title, sub, icon, go) => {
-        kicker = HF.tx ? HF.tx(kicker) : kicker;
-        title = HF.tx ? HF.tx(title) : title;
-        sub = HF.tx ? HF.tx(sub) : sub;
-        const start = HF.tx ? HF.tx('▶ Iniciar') : '▶ Iniciar';
-        cta.innerHTML = `<div class="cta-banner"><div class="cta-ico">${icon}</div><div class="grow"><div class="cta-kicker">${kicker}</div><b class="cta-title">${HF.esc(title)}</b><div class="cta-sub">${HF.esc(sub)}</div></div><button class="pri cta-go">${start}</button></div>`;
-        cta.querySelector('.cta-go').onclick = () => { HF.sfx('click'); go(); };
-      };
-      const biomes = Object.keys(HF.BIOMES);
-      const quick = () => {
-        const spec = {
-          mode: 'skirmish', seed: Math.floor(Math.random() * 1e9), size: 'small', n: 2,
-          biome: biomes[Math.floor(Math.random() * biomes.length)],
-          fog: 'FULL', difficulty: 'normal', goal: { type: 'conquer' }
-        };
-        HF.startGame(HF.makeGame(spec, HF.loadTribe()));
-      };
       const daily = HF.dailySpec();
-      if (!doneToday) {
-        const factionWord = HF.tx ? HF.tx('facciones · niebla completa') : 'facciones · niebla completa';
-        paint('RETO DIARIO', HF.dailyName ? HF.dailyName() : 'Reto diario',
-          `${HF.BIOMES[daily.biome].name} · ${daily.n} ${factionWord}`, '📜',
-          () => HF.startGame(HF.makeGame(daily, HF.loadTribe())));
-      } else {
-        paint('PARTIDA RÁPIDA', 'Un mapa en un toque', 'Mapa pequeño · 2 facciones', '⚡', quick);
-        if (HF.cloud && HF.cloud.getCommunityMaps) {
-          HF.cloud.getCommunityMaps().then(maps => {
-            if (!maps || !maps.length || !cta.isConnected) return;
-            const m = maps[Math.floor(Math.random() * Math.min(5, maps.length))];
-            const factionWord = HF.tx ? HF.tx('facciones') : 'facciones';
-            paint('MAPA DE LA COMUNIDAD', m.name || 'Mapa de la comunidad',
-              `${m.author || 'Anónimo'} · R${m.radius || 7} · ${m.factions_count || 2} ${factionWord}`, '🌍', () => {
-                const r = HF.importMap(m.code || '');
-                if (r.error) { HF.sfx('error'); return HF.toast(r.error); }
-                HF.playMap(r.R, r.cells, r.seed, { mapId: m.id, name: m.name });
-              });
-          }).catch(() => { });
-        }
-      }
+      const factionWord = HF.tx ? HF.tx('facciones · niebla completa') : 'facciones · niebla completa';
+      const dailyName = HF.dailyName ? HF.dailyName() : 'Reto diario';
+      const start = doneToday ? HF.t('DAILY_PLAY_PRACTICE') : HF.t('DAILY_PLAY');
+      cta.innerHTML = `<div class="cta-banner"><img class="cta-parchment" src="art/boton-papiro.png" alt="" draggable="false"><div class="grow"><div class="cta-kicker">${HF.tx ? HF.tx('RETO DIARIO') : 'RETO DIARIO'}</div><b class="cta-title">${HF.esc(dailyName)}</b><div class="cta-sub">${HF.esc(HF.BIOMES[daily.biome].name)} · ${daily.n} ${HF.esc(factionWord)}</div></div><button id="daily" class="cta-go hub-metal-button">${HF.esc(start)}${doneToday ? '' : '<span class="art-dot">!</span>'}</button></div>`;
+      cta.querySelector('.cta-go').onclick = () => HF.go('daily');
     }
   });
 
